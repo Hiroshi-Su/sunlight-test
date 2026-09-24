@@ -1,0 +1,24 @@
+{
+  "mode": "verify",
+  "window": {
+    "x": 0,
+    "y": 0,
+    "width": 3840,
+    "height": 1080,
+    "alwaysOnTop": true
+  },
+  "forceDeviceScaleFactor": 1,
+  "dailyReloadAt": "04:00",
+  "statsIntervalSec": 300,
+  "heartbeatTimeoutSec": 30,
+  "logDir": "logs",
+  "_notes": {
+    "mode": "\"kiosk\"=展示用の枠なし全画面 / \"verify\"=検証 UI。起動引数 --mode=kiosk などで上書き可",
+    "window": "展示モードのウィンドウ位置とサイズ（px）。2台のプロジェクターを OS 上で横並びにし、左端のディスプレイの原点に合わせる",
+    "forceDeviceScaleFactor": "OS の表示スケール（125% など）を無視して 1px = 1px にする。null で OS に従う",
+    "dailyReloadAt": "毎日ページを再読み込みする現地時刻 \"HH:MM\"。null で無効",
+    "statsIntervalSec": "稼働状況をログに書く間隔",
+    "heartbeatTimeoutSec": "描画が止まったと判断して再読み込みするまでの秒数",
+    "logDir": "ログの出力先（プロジェクトからの相対パス）"
+  }
+}

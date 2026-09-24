@@ -1,4 +1,4 @@
-import config from '../config/site.json';
+import bundledConfig from '../config/site.json';
 import { resolveSite, solarState } from './solar.js';
 import { skyColors, kelvinAt, kelvinToRgb } from './palette.js';
 import { createScreen, NOISE_PERIOD } from './screen.js';
@@ -6,6 +6,12 @@ import { drawPlan, drawDayChart, drawScreenOverlay } from './diagram.js';
 
 const W = 3840, H = 1080;
 const params = new URLSearchParams(location.search);
+// Electron では preload 経由で実行時に config/site.json を読む。ブラウザではビルド時に埋め込んだ値を使う
+const bridge = window.soracity;
+const config = bridge?.config ?? bundledConfig;
+const mode = bridge?.mode ?? params.get('mode') ?? 'verify';
+const kiosk = mode === 'kiosk';
+document.body.classList.toggle('kiosk', kiosk);
 const site = resolveSite(config, params.get('site') ?? config.activeSite);
 const declination = config.sites[site.name].screen.magneticDeclination;
 const offsetMs = site.utcOffsetMinutes * 60000;
@@ -68,7 +74,17 @@ $('date').addEventListener('change', (e) => {
   const [y, mo, d] = e.target.value.split('-').map(Number);
   state.utcMs = utcFromLocal(y, mo - 1, d, localParts(state.utcMs).min);
 });
-$('showOverlay').addEventListener('change', (e) => { $('overlay').hidden = !e.target.checked; });
+const setOverlay = (on) => { $('overlay').hidden = !on; $('showOverlay').checked = on; };
+$('showOverlay').addEventListener('change', (e) => setOverlay(e.target.checked));
+addEventListener('keydown', (e) => {
+  if (e.key.toLowerCase() === 'd' && !e.ctrlKey && !e.metaKey && !(e.target instanceof HTMLInputElement)) setOverlay($('overlay').hidden);
+});
+setOverlay(kiosk ? params.has('overlay') : true);
+
+$('screen').addEventListener('webglcontextlost', (e) => {
+  e.preventDefault();
+  bridge?.report('webgl-context-lost');
+});
 $('showStripes').addEventListener('change', (e) => { screen.uniforms.uStripes.value = e.target.checked ? 1 : 0; });
 
 function renderHud(s) {
@@ -102,6 +118,23 @@ function renderHud(s) {
 
 let last = performance.now();
 let hudAt = 0;
+let frames = 0;
+let beatAt = performance.now();
+let lastState = null;
+
+function heartbeat(now) {
+  const fps = (frames * 1000) / (now - beatAt);
+  frames = 0;
+  beatAt = now;
+  const s = lastState;
+  bridge?.heartbeat({
+    fps: Math.round(fps * 10) / 10,
+    heapMB: performance.memory ? Math.round(performance.memory.usedJSHeapSize / 1048576) : null,
+    sun: { az: Math.round(s.sun.azimuth * 100) / 100, alt: Math.round(s.sun.altitude * 100) / 100 },
+    entersWindow: s.light.entersWindow,
+    lit: Math.round(state.lit * 1000) / 1000,
+  });
+}
 function frame(now) {
   const dt = (now - last) / 1000;
   last = now;
@@ -123,14 +156,19 @@ function frame(now) {
   u.uDrift.value.set((sec * 0.004) % NOISE_PERIOD, (sec * 0.002) % NOISE_PERIOD);
   u.uSeed.value = Math.random();
   screen.render();
+  frames++;
+  lastState = s;
+  if (now - beatAt > 10000) heartbeat(now);
 
   if (now - hudAt > 100) {
     hudAt = now;
-    const path = dayPath(state.utcMs);
-    drawPlan($('plan'), site, s, path, declination);
-    drawDayChart($('chart'), path, localParts(state.utcMs).min);
-    drawScreenOverlay($('overlay'), site, s);
-    renderHud(s);
+    if (!$('overlay').hidden) drawScreenOverlay($('overlay'), site, s);
+    if (!kiosk) {
+      const path = dayPath(state.utcMs);
+      drawPlan($('plan'), site, s, path, declination);
+      drawDayChart($('chart'), path, localParts(state.utcMs).min);
+      renderHud(s);
+    }
   }
   requestAnimationFrame(frame);
 }
@@ -143,4 +181,5 @@ if (t) {
 } else {
   setLive(true);
 }
+bridge?.report('renderer-ready', { w: innerWidth, h: innerHeight, dpr: devicePixelRatio, canvas: [W, H] });
 requestAnimationFrame(frame);
