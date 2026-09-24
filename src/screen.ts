@@ -58,7 +58,7 @@ void main() {
 
 export const NOISE_PERIOD = 256;
 
-export function createScreen(canvas, width, height) {
+export function createScreen(canvas: HTMLCanvasElement, width: number, height: number) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: false });
   renderer.setPixelRatio(1);
   renderer.setSize(width, height, false);
@@ -84,6 +84,8 @@ export function createScreen(canvas, width, height) {
 
   return {
     uniforms,
-    render() { renderer.render(scene, camera); },
+    render(): void { renderer.render(scene, camera); },
   };
 }
+
+export type Screen = ReturnType<typeof createScreen>;

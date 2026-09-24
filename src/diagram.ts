@@ -1,22 +1,27 @@
 // 検証用の 2D 図。平面図（北が上）と 1 日の高度グラフ、スクリーン上の光ベクトル矢印。
 
+import type { Site, SolarState } from './solar.ts';
+
+export interface PathPoint { min: number; az: number; alt: number; enters: boolean }
+type Pt = [number, number];
+
 const RAD = Math.PI / 180;
 
-function setupCanvas(canvas) {
+function setupCanvas(canvas: HTMLCanvasElement) {
   const dpr = window.devicePixelRatio || 1;
   const { width, height } = canvas.getBoundingClientRect();
   canvas.width = Math.round(width * dpr);
   canvas.height = Math.round(height * dpr);
-  const ctx = canvas.getContext('2d');
+  const ctx = canvas.getContext('2d')!;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   return { ctx, w: width, h: height };
 }
 
-function css(name) {
+function css(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
 
-function arrow(ctx, x0, y0, x1, y1, head = 10) {
+function arrow(ctx: CanvasRenderingContext2D, x0: number, y0: number, x1: number, y1: number, head = 10): void {
   const a = Math.atan2(y1 - y0, x1 - x0);
   ctx.beginPath();
   ctx.moveTo(x0, y0);
@@ -31,10 +36,10 @@ function arrow(ctx, x0, y0, x1, y1, head = 10) {
 }
 
 // 平面図：中心 = 鑑賞者。太陽は天頂=中心、地平線=外周の極座標
-export function drawPlan(canvas, site, state, path, declination) {
+export function drawPlan(canvas: HTMLCanvasElement, site: Site, state: SolarState, path: PathPoint[], declination: number): void {
   const { ctx, w, h } = setupCanvas(canvas);
   const cx = w / 2, cy = h / 2, R = Math.min(w, h) / 2 - 26;
-  const pt = (az, r) => [cx + r * Math.sin(az * RAD), cy - r * Math.cos(az * RAD)];
+  const pt = (az: number, r: number): Pt => [cx + r * Math.sin(az * RAD), cy - r * Math.cos(az * RAD)];
   const fg = css('--fg'), muted = css('--muted'), line = css('--line');
   ctx.clearRect(0, 0, w, h);
   ctx.font = '12px system-ui, sans-serif';
@@ -49,7 +54,7 @@ export function drawPlan(canvas, site, state, path, declination) {
     ctx.stroke();
   }
   ctx.fillStyle = muted;
-  [['N', 0], ['E', 90], ['S', 180], ['W', 270]].forEach(([t, a]) => {
+  ([['N', 0], ['E', 90], ['S', 180], ['W', 270]] as const).forEach(([t, a]) => {
     const [x, y] = pt(a, R + 14);
     ctx.fillText(t, x, y);
   });
@@ -62,7 +67,7 @@ export function drawPlan(canvas, site, state, path, declination) {
   ctx.fillText('磁北', ...pt(-declination - 7, R - 10));
 
   // スクリーンと窓（鑑賞者からの距離 0.5R の壁として描く）
-  const wall = (az, color, label, width) => {
+  const wall = (az: number, color: string, label: string, width: number): void => {
     const [x, y] = pt(az, R * 0.5);
     const [ax, ay] = pt(az + 90, R * 0.34);
     const dx = ax - cx, dy = ay - cy;
@@ -82,7 +87,7 @@ export function drawPlan(canvas, site, state, path, declination) {
 
   // 太陽の軌跡
   ctx.lineWidth = 2;
-  let prev = null;
+  let prev: Pt | null = null;
   for (const p of path) {
     if (p.alt <= 0) { prev = null; continue; }
     const cur = pt(p.az, R * (1 - p.alt / 90));
@@ -110,21 +115,20 @@ export function drawPlan(canvas, site, state, path, declination) {
 }
 
 // 1 日の高度グラフ。金色の帯 = 窓から光が入る時間
-export function drawDayChart(canvas, path, nowMinutes) {
+export function drawDayChart(canvas: HTMLCanvasElement, path: PathPoint[], nowMinutes: number): void {
   const { ctx, w, h } = setupCanvas(canvas);
   const pad = { l: 34, r: 10, t: 10, b: 22 };
-  const X = (m) => pad.l + (m / 1440) * (w - pad.l - pad.r);
-  const Y = (a) => pad.t + (1 - (a + 10) / 90) * (h - pad.t - pad.b);
+  const X = (m: number): number => pad.l + (m / 1440) * (w - pad.l - pad.r);
+  const Y = (a: number): number => pad.t + (1 - (a + 10) / 90) * (h - pad.t - pad.b);
   const muted = css('--muted'), line = css('--line');
   ctx.clearRect(0, 0, w, h);
   ctx.font = '11px system-ui, sans-serif';
 
   ctx.fillStyle = css('--sun-soft');
-  let start = null;
+  let start: number | null = null;
   path.forEach((p, i) => {
     if (p.enters && start === null) start = p.min;
-    const endOfRun = start !== null && (!p.enters || i === path.length - 1);
-    if (endOfRun) {
+    if (start !== null && (!p.enters || i === path.length - 1)) {
       ctx.fillRect(X(start), pad.t, X(p.min) - X(start), h - pad.t - pad.b);
       start = null;
     }
@@ -155,8 +159,8 @@ export function drawDayChart(canvas, path, nowMinutes) {
 }
 
 // スクリーン上に重ねる光ベクトル（3840×1080 の実座標で描く）
-export function drawScreenOverlay(canvas, site, state) {
-  const ctx = canvas.getContext('2d');
+export function drawScreenOverlay(canvas: HTMLCanvasElement, site: Site, state: SolarState): void {
+  const ctx = canvas.getContext('2d')!;
   const w = canvas.width, h = canvas.height;
   ctx.clearRect(0, 0, w, h);
   const { light } = state;

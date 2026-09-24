@@ -1,11 +1,54 @@
 // three.js 非依存。src/solar.py と同じ式・同じ API を保つこと（tests/ で両方を同じ基準値で検証）。
+import type { SiteConfig, WindowSide } from './config.ts';
+
+export interface SunPosition {
+  /** 北=0°, 東=90°（時計回り） */
+  azimuth: number;
+  /** 水平=0°。大気差補正なし */
+  altitude: number;
+  declination: number;
+  /** 均時差（分） */
+  equationOfTime: number;
+}
+
+export interface Site {
+  name: string;
+  label: string;
+  latitude: number;
+  longitude: number;
+  utcOffsetMinutes: number;
+  /** 鑑賞者がスクリーンを見る向き（真北基準） */
+  facingAzimuth: number;
+  rightAzimuth: number;
+  /** 窓の外向き（真北基準） */
+  windowAzimuth: number;
+  windowSide: WindowSide;
+}
+
+/** 光の進む向き（単位ベクトル）をスクリーン座標で表したもの。x=右, y=上, z=奥 */
+export interface LightOnScreen {
+  x: number;
+  y: number;
+  z: number;
+  /** (x, y) を正規化した画面内の向き */
+  dirX: number;
+  dirY: number;
+  /** 太陽方向と窓の外向きの cos */
+  windowIncidence: number;
+  entersWindow: boolean;
+}
+
+export interface SolarState {
+  sun: SunPosition;
+  light: LightOnScreen;
+}
 
 const RAD = Math.PI / 180;
 const DEG = 180 / Math.PI;
-const norm360 = (a) => ((a % 360) + 360) % 360;
+const norm360 = (a: number): number => ((a % 360) + 360) % 360;
 
-// NOAA / Meeus 簡略法。azimuth: 北=0°, 東=90° / altitude: 大気差補正なし
-export function sunPosition(date, lat, lon) {
+// NOAA / Meeus 簡略法
+export function sunPosition(date: Date, lat: number, lon: number): SunPosition {
   const jd = date.getTime() / 86400000 + 2440587.5;
   const T = (jd - 2451545.0) / 36525.0;
   const L0 = norm360(280.46646 + T * (36000.76983 + 0.0003032 * T));
@@ -38,19 +81,14 @@ export function sunPosition(date, lat, lon) {
   return { azimuth, altitude, declination: decl, equationOfTime: eot };
 }
 
-export function resolveSite(config, siteName = config.activeSite) {
+export function resolveSite(config: SiteConfig, siteName: string = config.activeSite): Site {
   const s = config.sites[siteName];
   if (!s) throw new Error(`site "${siteName}" が config にありません`);
   const scr = s.screen;
   const facing = norm360(
     scr.azimuthReference === 'magnetic' ? scr.facingAzimuth + scr.magneticDeclination : scr.facingAzimuth,
   );
-  let windowAz = s.window.facingAzimuth;
-  if (windowAz == null) {
-    if (s.window.side === 'right') windowAz = facing + 90;
-    else if (s.window.side === 'left') windowAz = facing - 90;
-    else throw new Error(`window.side は "left" か "right": ${s.window.side}`);
-  }
+  const windowAz = s.window.facingAzimuth ?? (s.window.side === 'right' ? facing + 90 : facing - 90);
   return {
     name: siteName,
     label: s.label,
@@ -64,8 +102,9 @@ export function resolveSite(config, siteName = config.activeSite) {
   };
 }
 
-// 光の進行方向をスクリーン座標へ。x=右, y=上, z=奥（鑑賞者から見てスクリーンの向こう側）
-export function lightOnScreen(sun, site) {
+type ScreenFrame = Pick<Site, 'facingAzimuth' | 'rightAzimuth' | 'windowAzimuth'>;
+
+export function lightOnScreen(sun: Pick<SunPosition, 'azimuth' | 'altitude'>, site: ScreenFrame): LightOnScreen {
   const a = sun.altitude * RAD;
   const x = -Math.cos(a) * Math.cos((sun.azimuth - site.rightAzimuth) * RAD);
   const y = -Math.sin(a);
@@ -81,7 +120,7 @@ export function lightOnScreen(sun, site) {
   };
 }
 
-export function solarState(date, site) {
+export function solarState(date: Date, site: Site): SolarState {
   const sun = sunPosition(date, site.latitude, site.longitude);
   return { sun, light: lightOnScreen(sun, site) };
 }

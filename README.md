@@ -24,9 +24,11 @@ python3 -m venv .venv
 | コマンド | 内容 |
 |---|---|
 | `npm run dev` | 開発サーバー（保存すると即反映） |
-| `npm run build` | `dist/` に静的ファイルを出力（オフラインで動作） |
-| `npm test` | JS 版のテスト |
+| `npm run build` | `dist/`（描画側）と `dist-electron/`（Electron 側）を出力 |
+| `npm run typecheck` | TypeScript の型チェック |
+| `npm test` | TypeScript 版のテスト（計算・設定の検証） |
 | `npm run test:py` | Python 版のテスト |
+| `npm run check` | 型チェック＋全テスト（TypeScript・Python） |
 | `npm run fixtures` | 基準値 `tests/fixtures.json` を再生成（pvlib が必要） |
 
 ## 検証画面
@@ -68,7 +70,7 @@ URL パラメータ：
 | `Ctrl/Cmd + Shift + I` | DevTools |
 | `D` | 矢印表示の切り替え（展示モードでは初期 OFF） |
 
-`config/site.json` はアプリ起動時に読むので、値を変えたらアプリを再起動するだけでよい（ビルド不要）。アプリの動作設定は `config/app.json`：
+`config/site.json` はアプリ起動時に読むので、値を変えたらアプリを再起動するだけでよい（ビルド不要）。起動時に内容を検証し、誤りがあれば問題点をまとめてエラー表示・`logs/config-error.log` に記録して終了する（監視スクリプトも再起動せずに止まる）。アプリの動作設定は `config/app.json`：
 
 | 項目 | 内容 |
 |---|---|
@@ -131,29 +133,35 @@ URL パラメータ：
 ## 構成
 
 ```
-config/site.json        場所ごとの設定（JS / Python 共通）
-src/solar.js            太陽位置・スクリーン座標変換（three.js 非依存）
-src/solar.py            同じ式・同じ API の Python 版（TouchDesigner 用）
-src/main.js             検証画面（状態管理・描画ループ・UI）
-src/screen.js           three.js のシェーダー（3840×1080）
-src/palette.js          太陽高度 → 空の色・色温度（仮値）
-src/diagram.js          平面図・高度グラフ・矢印
-electron/main.js        Electron メインプロセス（ウィンドウ・監視・ログ）
-electron/preload.cjs    描画側への設定の受け渡し
-config/app.json         アプリの動作設定
-scripts/supervise.mjs   異常終了時の自動再起動
-scripts/log-summary.mjs ログの集計
-tests/gen_fixtures.py   NREL SPA（pvlib）とベクトル射影で基準値を生成
-tests/fixtures.json     基準値（190 ケース）
-tests/solar.test.mjs    JS 版テスト
-tests/test_solar.py     Python 版テスト
+config/site.json          場所ごとの設定（TypeScript / Python 共通）
+config/app.json           アプリの動作設定
+src/config.ts             設定ファイルの型と検証
+src/solar.ts              太陽位置・スクリーン座標変換（three.js 非依存）
+src/solar.py              同じ式・同じ API の Python 版（TouchDesigner 用）
+src/main.ts               検証画面・展示画面（状態管理・描画ループ・UI）
+src/screen.ts             three.js のシェーダー（3840×1080）
+src/palette.ts            太陽高度 → 空の色・色温度（仮値）
+src/diagram.ts            平面図・高度グラフ・矢印
+src/bridge.ts             Electron と描画側で共有する型
+electron/main.ts          Electron メインプロセス（ウィンドウ・監視・ログ）
+electron/preload.ts       描画側への設定の受け渡し
+scripts/build-electron.ts electron/ を dist-electron/ へ変換（esbuild）
+scripts/supervise.ts      異常終了時の自動再起動
+scripts/log-summary.ts    ログの集計
+tests/gen_fixtures.py     NREL SPA（pvlib）とベクトル射影で基準値を生成
+tests/fixtures.json       基準値（190 ケース）
+tests/solar.test.ts       計算のテスト
+tests/config.test.ts      設定検証のテスト
+tests/test_solar.py       Python 版テスト
 ```
 
-`solar.js` と `solar.py` は同じ `fixtures.json` でテストしているため、どちらかを変えたら両方のテストを通すこと。
+`solar.ts` と `solar.py` は同じ `fixtures.json` でテストしているため、どちらかを変えたら `npm run check` で両方のテストを通すこと。
+
+TypeScript は Node 24 の型除去でそのまま実行している（テスト・スクリプト）。そのため enum など変換が必要な構文は使わない（`erasableSyntaxOnly`）。
 
 ## 検証結果
 
-- 太陽位置：NREL SPA との差は最大 約 0.013°（190 ケース、JS・Python とも）
+- 太陽位置：NREL SPA との差は最大 約 0.013°（190 ケース、TypeScript・Python とも）
 - スクリーン座標変換：ベクトル射影による独立計算と 1e-9 以内で一致
 
 ## TouchDesigner で使う場合
