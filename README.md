@@ -4,6 +4,7 @@
 太陽位置の計算（NOAA / Meeus 簡略法）と、それをスクリーン座標の光の向きへ変換する式が正しいかを、three.js の 3840×1080 プレビューと自動テストで確認する。
 
 案件の前提・コンセプトは [sola_city_projection_overview.md](sola_city_projection_overview.md) を参照。
+計算の中身・`light` の意味・検証方法は [docs/verification.md](docs/verification.md) を参照。
 
 ## セットアップ
 
