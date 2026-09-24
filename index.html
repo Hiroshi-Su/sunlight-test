@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Soracity 太陽光 検証</title>
+<style>
+  :root {
+    --bg: #f4f3ef; --panel: #ffffff; --fg: #23232b; --muted: #7a7a86; --line: #dddbd4;
+    --screen: #3563c9; --window: #1f9a8a; --sun: #e0a21b; --sun-soft: rgba(224, 162, 27, 0.18);
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #17171c; --panel: #212128; --fg: #ecebe6; --muted: #9a9aa6; --line: #34343d;
+      --screen: #7fa2ff; --window: #4fd1bd; --sun: #f5c04a; --sun-soft: rgba(245, 192, 74, 0.16);
+      color-scheme: dark;
+    }
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 system-ui, sans-serif; padding: 16px; }
+  .stage { position: relative; width: 100%; aspect-ratio: 32 / 9; background: #000; }
+  .stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .grid { display: grid; grid-template-columns: minmax(260px, 340px) 1fr minmax(260px, 340px); gap: 16px; margin-top: 16px; }
+  @media (max-width: 1000px) { .grid { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px; }
+  .card h2 { margin: 0 0 10px; font-size: 12px; font-weight: 600; color: var(--muted); letter-spacing: .04em; }
+  #plan { width: 100%; aspect-ratio: 1; display: block; }
+  #chart { width: 100%; height: 190px; display: block; }
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 12px; }
+  .controls input[type=range] { flex: 1 1 100%; }
+  button, select, input { font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; }
+  button.on { background: var(--screen); color: #fff; border-color: var(--screen); }
+  dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; margin: 0; font-variant-numeric: tabular-nums; }
+  dt { color: var(--muted); }
+  dd { margin: 0; text-align: right; }
+  .yes { color: var(--sun); font-weight: 600; }
+  .legend { color: var(--muted); font-size: 12px; margin-top: 8px; }
+  .legend b { font-weight: 600; }
+  .clock { font-size: 22px; font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body>
+  <div class="stage">
+    <canvas id="screen"></canvas>
+    <canvas id="overlay" width="3840" height="1080"></canvas>
+  </div>
+
+  <div class="grid">
+    <section class="card">
+      <h2>平面図（北が上・中心＝鑑賞者）</h2>
+      <canvas id="plan"></canvas>
+      <div class="legend">
+        <b style="color:var(--screen)">青</b> スクリーン方向 ／ <b style="color:var(--window)">緑</b> 窓 ／
+        <b style="color:var(--sun)">金</b> 窓から光が入る太陽位置（外周＝地平線、中心＝天頂）
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>時刻</h2>
+      <div class="clock" id="clock"></div>
+      <div class="controls">
+        <input type="date" id="date">
+        <button id="now">現在時刻</button>
+        <button id="play">▶</button>
+        <select id="speed">
+          <option value="1">1×</option>
+          <option value="60">60×（1分/秒）</option>
+          <option value="600" selected>600×（10分/秒）</option>
+          <option value="3600">3600×（1時間/秒）</option>
+        </select>
+        <label><input type="checkbox" id="showOverlay" checked> 矢印表示</label>
+        <label><input type="checkbox" id="showStripes"> 縞表示</label>
+        <input type="range" id="time" min="0" max="1439" step="1">
+      </div>
+      <h2 style="margin-top:14px">1日の太陽高度（金の帯＝窓から光が入る時間）</h2>
+      <canvas id="chart"></canvas>
+    </section>
+
+    <section class="card">
+      <h2>計算値</h2>
+      <dl id="values"></dl>
+    </section>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
