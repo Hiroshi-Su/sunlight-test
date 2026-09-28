@@ -34,12 +34,13 @@ vec3 effect(vec2 uv, vec2 p) {
   // 屈折のずれ。日差しが入るときは光の向きにもずらす（プリズムに光が差す）
   vec2 D = g * uStrength + d * uSunBias * uLit * 0.012;
 
-  // 波長ごとにずれ量を変えて重ねる（分散）。重みの合計で割るので白は白のまま
+  // 波長ごとにずれ量を変えて重ねる（分散）。屈折率は波長が短いほど大きい（コーシーの式）ので、紫ほど大きくずらす。
+  // 重みの合計で割るので白は白のまま
   vec3 acc = vec3(0.0), wsum = vec3(0.0);
   for (int i = 0; i < 9; i++) {
     float x = float(i) / 8.0;
     vec3 w = spectrum(x);
-    vec2 o = D * (1.0 + uDispersion * (x - 0.5) * 2.0);
+    vec2 o = D * (1.0 + uDispersion * (0.5 - x) * 2.0);
     acc += img(uv + o * vec2(1.0 / aspect, 1.0)) * w;
     wsum += w;
   }
