@@ -52,6 +52,8 @@ URL パラメータ：
 |---|---|---|
 | `t` | `?t=2026-09-24T10:00` | 開始日時（現地時刻）。指定時は停止状態で開く |
 | `site` | `?site=production` | `config/site.json` のどの場所を使うか |
+| `mode` | `?mode=visuals` | 表示モード（`verify` / `visuals` / `kiosk`） |
+| `scene` | `?scene=ink-bleed` | 表示する映像を一時的に切り替える（`config/visuals.json` は変わらない） |
 
 ## Electron アプリ（検証・visuals・展示の 3 モード）
 

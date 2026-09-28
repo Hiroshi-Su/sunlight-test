@@ -35,7 +35,9 @@ async function saveVisuals(cfg: VisualsConfig): Promise<void> {
 }
 
 const siteConfig = bridge?.config ?? parseSiteConfig(bundledSite);
-const visualsConfig = bridge?.visuals ?? await loadVisualsInBrowser();
+const loadedVisuals = bridge?.visuals ?? await loadVisualsInBrowser();
+// ?scene=ID で表示する映像を一時的に切り替える（保存はしない）
+const visualsConfig: VisualsConfig = params.get('scene') ? { ...loadedVisuals, activeScene: params.get('scene')! } : loadedVisuals;
 const urlMode = params.get('mode');
 const mode: AppMode = bridge?.mode ?? (APP_MODES.find((m) => m === urlMode) ?? 'verify');
 document.body.classList.add(`mode-${mode}`);

@@ -35,7 +35,9 @@ export function fullscreenShader<U extends Record<string, THREE.IUniform>>(fragm
   };
 }
 
-export const hexToVec3 = (hex: string): THREE.Vector3 => {
-  const c = new THREE.Color(hex);
-  return new THREE.Vector3(c.r, c.g, c.b);
-};
+// THREE.Color は sRGB の hex を線形色空間へ変換してしまう（暗くくすむ）ので使わない。シェーダーは sRGB の値のまま扱う
+export const hexToVec3 = (hex: string): THREE.Vector3 => new THREE.Vector3(
+  parseInt(hex.slice(1, 3), 16) / 255,
+  parseInt(hex.slice(3, 5), 16) / 255,
+  parseInt(hex.slice(5, 7), 16) / 255,
+);

@@ -28,7 +28,7 @@ const SPEEDS: Record<string, number> = {
 
 export function mountVisuals(clock: Clock, initial: VisualsConfig, hooks: VisualsHooks) {
   const cfg: VisualsConfig = structuredClone(initial);
-  const view: VisualsView = { arrow: false, guides: true };
+  const view: VisualsView = { arrow: false, guides: false };
   const sceneValues: Record<string, ParamValues> = {};
   const valuesFor = (def: SceneDef): ParamValues => (sceneValues[def.id] ??= mergeParams(def, cfg.scenes[def.id]));
   let active = findScene(cfg.activeScene);
