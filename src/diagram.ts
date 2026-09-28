@@ -158,11 +158,10 @@ export function drawDayChart(canvas: HTMLCanvasElement, path: PathPoint[], nowMi
   ctx.beginPath(); ctx.moveTo(X(nowMinutes), pad.t); ctx.lineTo(X(nowMinutes), h - pad.b); ctx.stroke();
 }
 
-// スクリーン上に重ねる光ベクトル（3840×1080 の実座標で描く）
-export function drawScreenOverlay(canvas: HTMLCanvasElement, site: Site, state: SolarState): void {
-  const ctx = canvas.getContext('2d')!;
-  const w = canvas.width, h = canvas.height;
-  ctx.clearRect(0, 0, w, h);
+// ---- スクリーン上に重ねる表示（3840×1080 の実座標で描く。消去は呼び出し側）----
+
+export function drawLightArrow(ctx: CanvasRenderingContext2D, site: Site, state: SolarState): void {
+  const w = ctx.canvas.width, h = ctx.canvas.height;
   const { light } = state;
   const cx = w / 2, cy = h / 2, L = 320;
   ctx.lineWidth = 8;
@@ -178,4 +177,37 @@ export function drawScreenOverlay(canvas: HTMLCanvasElement, site: Site, state: 
   ctx.textAlign = 'left';
   ctx.font = '40px system-ui, sans-serif';
   ctx.fillText(`light = (${light.x.toFixed(3)}, ${light.y.toFixed(3)}, ${light.z.toFixed(3)})`, 40, h - 60);
+}
+
+export interface GuideOptions { seamSpacingPx: number; seamOffsetPx: number; overlapPx: number }
+
+/** ガラスの継ぎ目（縦線）と、2 台のプロジェクターが重なる範囲（中央の帯） */
+export function drawGuides(ctx: CanvasRenderingContext2D, g: GuideOptions): void {
+  const w = ctx.canvas.width, h = ctx.canvas.height;
+  ctx.save();
+  if (g.overlapPx > 0) {
+    const x0 = (w - g.overlapPx) / 2;
+    ctx.fillStyle = 'rgba(220, 60, 160, 0.16)';
+    ctx.fillRect(x0, 0, g.overlapPx, h);
+    ctx.strokeStyle = 'rgba(220, 60, 160, 0.8)';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(x0, 0, g.overlapPx, h);
+    ctx.fillStyle = 'rgba(220, 60, 160, 0.9)';
+    ctx.font = '600 36px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(`重なり ${g.overlapPx}px`, w / 2, h - 40);
+  }
+  if (g.seamSpacingPx > 0) {
+    ctx.strokeStyle = 'rgba(20, 170, 190, 0.85)';
+    ctx.lineWidth = 3;
+    ctx.setLineDash([24, 16]);
+    const start = ((g.seamOffsetPx % g.seamSpacingPx) + g.seamSpacingPx) % g.seamSpacingPx;
+    for (let x = start; x <= w; x += g.seamSpacingPx) {
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, h);
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
 }

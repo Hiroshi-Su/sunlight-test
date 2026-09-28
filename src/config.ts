@@ -2,7 +2,8 @@
 
 export type WindowSide = 'left' | 'right';
 export type AzimuthReference = 'magnetic' | 'true';
-export type AppMode = 'kiosk' | 'verify';
+export type AppMode = 'verify' | 'visuals' | 'kiosk';
+export const APP_MODES: readonly AppMode[] = ['verify', 'visuals', 'kiosk'];
 
 export interface SiteEntry {
   label: string;
@@ -136,7 +137,7 @@ export function parseAppConfig(raw: unknown, file = 'config/app.json'): AppConfi
     c.problems.push(`dailyReloadAt は "HH:MM" か null です（現在: ${JSON.stringify(daily)}）`);
   }
   const cfg: AppConfig = {
-    mode: c.oneOf(o, 'mode', '(root)', ['verify', 'kiosk'] as const),
+    mode: c.oneOf(o, 'mode', '(root)', APP_MODES),
     window: {
       x: c.num(w, 'x', 'window'),
       y: c.num(w, 'y', 'window'),
@@ -150,6 +151,55 @@ export function parseAppConfig(raw: unknown, file = 'config/app.json'): AppConfi
     heartbeatTimeoutSec: c.num(o, 'heartbeatTimeoutSec', '(root)', 15),
     logDir: c.str(o, 'logDir', '(root)'),
   };
+  if (c.problems.length) throw new ConfigError(file, c.problems);
+  return cfg;
+}
+
+// ---- config/visuals.json：映像の選択と調整値（visuals モードのパネルから保存される）----
+
+export type ParamValue = number | string | boolean;
+export type ParamValues = Record<string, ParamValue>;
+
+export interface VisualsConfig {
+  activeScene: string;
+  /** 出力の明るさの下限・上限（純黒・純白を避ける） */
+  output: { min: number; max: number };
+  /** visuals モードのガイド表示（px、3840×1080 のキャンバス基準） */
+  guides: { seamSpacingPx: number; seamOffsetPx: number; overlapPx: number };
+  /** visuals モードのプレビュー用。kiosk では使わない */
+  preview: { wash: number; washFollowsSun: boolean };
+  /** シーンごとの調整値。書かれていない項目はシーンの既定値を使う */
+  scenes: Record<string, ParamValues>;
+}
+
+export function parseVisualsConfig(raw: unknown, file = 'config/visuals.json'): VisualsConfig {
+  const c = new Checker();
+  const o = c.obj(raw, '(root)');
+  const out = c.obj(o['output'], 'output');
+  const g = c.obj(o['guides'], 'guides');
+  const p = c.obj(o['preview'], 'preview');
+  const scenesRaw = c.obj(o['scenes'], 'scenes');
+  const scenes: Record<string, ParamValues> = {};
+  for (const [id, values] of Object.entries(scenesRaw)) {
+    const vo = c.obj(values, `scenes.${id}`);
+    scenes[id] = {};
+    for (const [k, v] of Object.entries(vo)) {
+      if (typeof v === 'number' || typeof v === 'string' || typeof v === 'boolean') scenes[id][k] = v;
+      else c.problems.push(`scenes.${id}.${k} は数値・文字列・真偽値のいずれかです（現在: ${JSON.stringify(v)}）`);
+    }
+  }
+  const cfg: VisualsConfig = {
+    activeScene: c.str(o, 'activeScene', '(root)'),
+    output: { min: c.num(out, 'min', 'output', 0, 1), max: c.num(out, 'max', 'output', 0, 1) },
+    guides: {
+      seamSpacingPx: c.num(g, 'seamSpacingPx', 'guides', 0),
+      seamOffsetPx: c.num(g, 'seamOffsetPx', 'guides'),
+      overlapPx: c.num(g, 'overlapPx', 'guides', 0),
+    },
+    preview: { wash: c.num(p, 'wash', 'preview', 0, 1), washFollowsSun: c.bool(p, 'washFollowsSun', 'preview') },
+    scenes,
+  };
+  if (cfg.output.min >= cfg.output.max) c.problems.push(`output.min（${cfg.output.min}）は output.max（${cfg.output.max}）より小さくしてください`);
   if (c.problems.length) throw new ConfigError(file, c.problems);
   return cfg;
 }

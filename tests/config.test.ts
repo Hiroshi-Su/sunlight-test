@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { ConfigError, parseAppConfig, parseSiteConfig } from '../src/config.ts';
+import { ConfigError, parseAppConfig, parseSiteConfig, parseVisualsConfig } from '../src/config.ts';
+import { SCENES } from '../src/scenes/index.ts';
+import { mergeParams } from '../src/scenes/types.ts';
 
 const readJson = (name: string): Record<string, unknown> =>
   JSON.parse(readFileSync(new URL(`../config/${name}`, import.meta.url), 'utf8')) as Record<string, unknown>;
@@ -38,4 +40,25 @@ test('app.json の誤りを報告する', () => {
   const raw = { ...readJson('app.json'), mode: 'fullscreen', dailyReloadAt: '4:00', heartbeatTimeoutSec: 5 };
   const problems = problemsOf(() => parseAppConfig(raw));
   assert.equal(problems.length, 3);
+});
+
+test('visuals.json を検証する', () => {
+  const raw = readJson('visuals.json');
+  assert.doesNotThrow(() => parseVisualsConfig(raw));
+  const bad = { ...raw, output: { min: 0.9, max: 0.2 }, scenes: { a: { ok: 1, ng: { nested: true } } } };
+  const problems = problemsOf(() => parseVisualsConfig(bad));
+  assert.equal(problems.length, 2);
+  assert.ok(problems.some((p) => p.includes('output.min')));
+  assert.ok(problems.some((p) => p.includes('scenes.a.ng')));
+});
+
+test('シーンの保存値は型が合うものだけ既定値に重ねる', () => {
+  const def = SCENES.find((s) => s.id === 'color-field')!;
+  const merged = mergeParams(def, { warmth: 0.1, softness: 'wide', accent: '#112233', useAccent: 1, unknown: 5 });
+  assert.equal(merged['warmth'], 0.1);
+  assert.equal(merged['softness'], def.params['softness']!.value);
+  assert.equal(merged['accent'], '#112233');
+  assert.equal(merged['useAccent'], false);
+  assert.ok(!('unknown' in merged));
+  assert.equal(new Set(SCENES.map((x) => x.id)).size, SCENES.length, 'シーン ID が重複しています');
 });

@@ -1,10 +1,13 @@
 import { BrowserWindow, Menu, app, dialog, ipcMain, net, powerSaveBlocker, protocol } from 'electron';
 import type { BrowserWindowConstructorOptions } from 'electron';
-import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, normalize, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { type Bootstrap, type Heartbeat, IPC, type ReportData } from '../src/bridge.ts';
-import { type AppConfig, type AppMode, ConfigError, type SiteConfig, parseAppConfig, parseSiteConfig } from '../src/config.ts';
+import {
+  APP_MODES, type AppConfig, type AppMode, ConfigError, type SiteConfig, type VisualsConfig,
+  parseAppConfig, parseSiteConfig, parseVisualsConfig,
+} from '../src/config.ts';
 import { EXIT_CONFIG_ERROR } from './exit-codes.ts';
 
 // ビルド後は dist-electron/main.js から実行される
@@ -13,7 +16,7 @@ const DIST = join(ROOT, 'dist');
 const CONFIG_DIR = process.env['SORACITY_CONFIG_DIR'] ?? join(ROOT, 'config');
 
 // ---- 設定の読み込みと検証 ----
-function loadConfigs(): { appConfig: AppConfig; siteConfig: SiteConfig } {
+function loadConfigs(): { appConfig: AppConfig; siteConfig: SiteConfig; visualsConfig: VisualsConfig } {
   const read = (name: string): unknown => {
     const file = join(CONFIG_DIR, name);
     try {
@@ -25,6 +28,7 @@ function loadConfigs(): { appConfig: AppConfig; siteConfig: SiteConfig } {
   return {
     appConfig: parseAppConfig(read('app.json'), join(CONFIG_DIR, 'app.json')),
     siteConfig: parseSiteConfig(read('site.json'), join(CONFIG_DIR, 'site.json')),
+    visualsConfig: parseVisualsConfig(read('visuals.json'), join(CONFIG_DIR, 'visuals.json')),
   };
 }
 
@@ -41,11 +45,13 @@ try {
   process.exit(EXIT_CONFIG_ERROR); // 監視スクリプトはこのコードでは再起動しない
 }
 const { appConfig, siteConfig } = configs;
+let visualsConfig = configs.visualsConfig;
 const site = siteConfig.sites[siteConfig.activeSite]!;
 
 const argMode = process.argv.find((a) => a.startsWith('--mode='))?.split('=')[1];
-if (argMode !== undefined && argMode !== 'kiosk' && argMode !== 'verify') {
-  console.error(`--mode は kiosk か verify です: ${argMode}`);
+const isMode = (m: string): m is AppMode => (APP_MODES as readonly string[]).includes(m);
+if (argMode !== undefined && !isMode(argMode)) {
+  console.error(`--mode は ${APP_MODES.join(' / ')} のいずれかです: ${argMode}`);
   process.exit(EXIT_CONFIG_ERROR);
 }
 let mode: AppMode = argMode ?? appConfig.mode;
@@ -116,7 +122,7 @@ function createWindow(): void {
       frame: false, resizable: false, movable: false, fullscreenable: false,
       enableLargerThanScreen: true, hasShadow: false,
     })
-    : new BrowserWindow({ ...common, width: 1600, height: 1000 });
+    : new BrowserWindow({ ...common, width: 1600, height: mode === 'visuals' ? 1100 : 1000 });
   win = created;
 
   created.once('ready-to-show', () => {
@@ -173,7 +179,7 @@ function createWindow(): void {
     if (key === 'i') { e.preventDefault(); wc.toggleDevTools(); }
     if (key === 'm') {
       e.preventDefault();
-      mode = mode === 'kiosk' ? 'verify' : 'kiosk';
+      mode = APP_MODES[(APP_MODES.indexOf(mode) + 1) % APP_MODES.length]!;
       log('mode-switch', { mode });
       recreateWindow();
     }
@@ -214,8 +220,18 @@ function recover(reason: string, { hard = false }: { hard?: boolean } = {}): voi
 const fromCurrent = (sender: Electron.WebContents): boolean => !!win && !win.isDestroyed() && sender === win.webContents;
 
 ipcMain.on(IPC.bootstrap, (e) => {
-  const boot: Bootstrap = { mode, site: siteConfig };
+  const boot: Bootstrap = { mode, site: siteConfig, visuals: visualsConfig };
   e.returnValue = boot;
+});
+ipcMain.handle(IPC.saveVisuals, (e, raw: unknown) => {
+  if (!fromCurrent(e.sender)) throw new Error('現在のウィンドウ以外からの保存要求');
+  const cfg = parseVisualsConfig(raw);
+  const file = join(CONFIG_DIR, 'visuals.json');
+  // 書き込み途中で落ちても壊れたファイルが残らないよう、一時ファイルから置き換える
+  writeFileSync(`${file}.tmp`, JSON.stringify(cfg, null, 2) + '\n');
+  renameSync(`${file}.tmp`, file);
+  visualsConfig = cfg;
+  log('visuals-saved', { activeScene: cfg.activeScene });
 });
 ipcMain.on(IPC.heartbeat, (e, data: Heartbeat) => {
   if (!fromCurrent(e.sender)) return;

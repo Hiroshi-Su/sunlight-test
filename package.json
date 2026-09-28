@@ -13,11 +13,13 @@
     "fixtures": ".venv/bin/python tests/gen_fixtures.py",
     "check": "npm run typecheck && npm test && npm run test:py",
     "app": "npm run build && electron .",
+    "app:visuals": "npm run build && electron . --mode=visuals",
     "app:kiosk": "npm run build && electron . --mode=kiosk",
     "app:forever": "npm run build && node scripts/supervise.ts",
     "logs": "node scripts/log-summary.ts"
   },
   "dependencies": {
+    "lil-gui": "^0.20.0",
     "three": "^0.170.0"
   },
   "devDependencies": {

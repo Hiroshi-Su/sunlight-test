@@ -53,12 +53,13 @@ URL パラメータ：
 | `t` | `?t=2026-09-24T10:00` | 開始日時（現地時刻）。指定時は停止状態で開く |
 | `site` | `?site=production` | `config/site.json` のどの場所を使うか |
 
-## Electron アプリ（展示モード／検証モード）
+## Electron アプリ（検証・visuals・展示の 3 モード）
 
 | コマンド | 内容 |
 |---|---|
 | `npm run app` | 検証モード（デフォルト）：検証画面をアプリのウィンドウで表示 |
-| `npm run app:kiosk` | 展示モード：3840×1080 の枠なしウィンドウ（描画のみ、カーソル非表示） |
+| `npm run app:visuals` | visuals モード：映像の制作・調整（シーン切り替え、調整パネル、プレビュー） |
+| `npm run app:kiosk` | 展示モード：3840×1080 の枠なしウィンドウ（visuals で保存した映像を表示、カーソル非表示） |
 | `npm run app:forever` | 監視スクリプト付きで起動。アプリが異常終了したら自動で起動し直す（長期稼働テスト用）。展示モードで動かす場合は `npm run app:forever -- --mode=kiosk` |
 | `npm run logs` | ログの集計（期間・FPS・メモリの推移・異常と復帰の履歴）。`-- 2026-09-25` でその日以降に絞る |
 
@@ -67,9 +68,10 @@ URL パラメータ：
 | キー | 内容 |
 |---|---|
 | `Ctrl/Cmd + Shift + Q` | 終了（監視スクリプトも止まる） |
-| `Ctrl/Cmd + Shift + M` | 展示モード ⇔ 検証モードの切り替え |
+| `Ctrl/Cmd + Shift + M` | モードの切り替え（検証 → visuals → 展示 → 検証） |
 | `Ctrl/Cmd + Shift + I` | DevTools |
 | `D` | 矢印表示の切り替え（展示モードでは初期 OFF） |
+| `G` | ガイド表示の切り替え（visuals モード） |
 
 `config/site.json` はアプリ起動時に読むので、値を変えたらアプリを再起動するだけでよい（ビルド不要）。起動時に内容を検証し、誤りがあれば問題点をまとめてエラー表示・`logs/config-error.log` に記録して終了する（監視スクリプトも再起動せずに止まる）。アプリの動作設定は `config/app.json`：
 
@@ -91,6 +93,25 @@ URL パラメータ：
 - 毎日決まった時刻に再読み込み（メモリの蓄積をリセット）
 - アプリ本体が落ちたら監視スクリプトが 5 秒後に起動し直す（10 分に 5 回以上なら 60 秒待つ）
 - `logs/YYYY-MM-DD.log`（JSON Lines）に起動・復帰・エラー・5 分ごとの稼働状況（FPS、メモリ、太陽の値）を記録。監視スクリプトの記録は `logs/supervisor.log`
+
+## visuals モード（映像の制作）
+
+開発サーバーでは `http://localhost:5173/?mode=visuals`、アプリでは `npm run app:visuals`。
+
+- **シーン**：映像を切り替え、パラメータをその場で調整する
+- **時刻**：現在時刻／再生・早送り（1 日を 1 分で見る、など）／時刻・日付の指定
+- **プレビュー**：外光シミュレーション（黒が浮いて色が浅くなる見え方。日差しに連動も可）、矢印、ガイド（ガラスの継ぎ目、2 台の投影の重なり幅）
+- **出力**：明るさの下限・上限（純黒・純白を避ける。展示モードにも効く）
+- **保存**：PNG 書き出し（3840×1080）、設定の保存（`config/visuals.json`。Electron と開発サーバーのどちらでも保存できる）
+
+展示モードは `config/visuals.json` の `activeScene` とその調整値で表示する。プレビュー（外光シミュレーション・ガイド）は展示には出ない。
+
+### 映像（シーン）の追加
+
+1. `src/scenes/` にファイルを作り、`SceneDef`（`src/scenes/types.ts`）を export する。`color-field.ts` がひな形
+2. `src/scenes/index.ts` の `SCENES` に追加する（パネルの選択肢に並ぶ）
+
+シーンは毎フレーム `SceneInput`（太陽の位置、`light`、光の入り具合 `lit`、色温度と光の色、空の色、現地時刻、経過時間）と調整値を受け取って描く。出力範囲の制限・ディザは最終パス（`src/stage.ts`）で全シーン共通にかかるので、シーン側では不要。時間で流す値は GPU の精度対策として `wrap()` で巻き戻して渡す。
 
 ## 設定（`config/site.json`）
 
@@ -140,7 +161,12 @@ src/config.ts             設定ファイルの型と検証
 src/solar.ts              太陽位置・スクリーン座標変換（three.js 非依存）
 src/solar.py              同じ式・同じ API の Python 版（TouchDesigner 用）
 src/main.ts               検証画面・展示画面（状態管理・描画ループ・UI）
-src/screen.ts             three.js のシェーダー（3840×1080）
+src/stage.ts              描画の本体（中間バッファ・最終パス：出力範囲・外光シミュレーション・ディザ）
+src/clock.ts              表示する時刻（現在時刻・早送り・指定）
+src/scenes/               映像（シーン）。types.ts がインターフェース、index.ts が一覧
+src/ui/                   各モードの UI（verify.ts・visuals.ts）
+config/visuals.json       映像の選択と調整値（visuals モードから保存）
+vite.config.ts            開発サーバーでの visuals.json 保存
 src/palette.ts            太陽高度 → 空の色・色温度（仮値）
 src/diagram.ts            平面図・高度グラフ・矢印
 src/bridge.ts             Electron と描画側で共有する型

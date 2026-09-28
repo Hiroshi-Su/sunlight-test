@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ws:">
-<title>Soracity 太陽光 検証</title>
+<title>Soracity 太陽光</title>
 <style>
   :root {
     --bg: #f4f3ef; --panel: #ffffff; --fg: #23232b; --muted: #7a7a86; --line: #dddbd4;
@@ -20,9 +20,14 @@
   }
   * { box-sizing: border-box; }
   [hidden] { display: none !important; }
-  body.kiosk { padding: 0; overflow: hidden; background: #000; cursor: none; }
-  body.kiosk .grid { display: none; }
-  body.kiosk .stage { width: 100vw; height: 100vh; aspect-ratio: auto; }
+  body:not(.mode-verify) .grid { display: none; }
+  body:not(.mode-visuals) .visuals-ui { display: none; }
+  body.mode-kiosk { padding: 0; overflow: hidden; background: #000; cursor: none; }
+  body.mode-kiosk .stage { width: 100vw; height: 100vh; aspect-ratio: auto; }
+  .visuals-ui { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 16px; align-items: flex-start; }
+  .visuals-ui .lil-gui.root { --width: 380px; }
+  #vstatus { margin: 0; padding: 14px; min-width: 280px; flex: 1 1 280px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; font: 13px/1.7 ui-monospace, monospace; white-space: pre; }
+  .keys { color: var(--muted); font-size: 12px; margin-top: 8px; }
   body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 system-ui, sans-serif; padding: 16px; }
   .stage { position: relative; width: 100%; aspect-ratio: 32 / 9; background: #000; }
   .stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
@@ -86,6 +91,14 @@
       <h2>計算値</h2>
       <dl id="values"></dl>
     </section>
+  </div>
+
+  <div class="visuals-ui">
+    <div id="panel"></div>
+    <div style="flex: 1 1 280px">
+      <pre id="vstatus"></pre>
+      <div class="keys">D 矢印 ／ G ガイド ／ Cmd+Shift+M モード切り替え（アプリ）</div>
+    </div>
   </div>
 
   <script type="module" src="/src/main.ts"></script>

@@ -1,0 +1,17 @@
+{
+  "activeScene": "light-debug",
+  "output": {
+    "min": 0.05,
+    "max": 0.93
+  },
+  "guides": {
+    "seamSpacingPx": 480,
+    "seamOffsetPx": 0,
+    "overlapPx": 0
+  },
+  "preview": {
+    "wash": 0.35,
+    "washFollowsSun": true
+  },
+  "scenes": {}
+}

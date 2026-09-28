@@ -7,6 +7,8 @@ const boot = ipcRenderer.sendSync(IPC.bootstrap) as Bootstrap;
 const bridge: SoracityBridge = {
   mode: boot.mode,
   config: boot.site,
+  visuals: boot.visuals,
+  saveVisuals: (cfg) => ipcRenderer.invoke(IPC.saveVisuals, cfg) as Promise<void>,
   heartbeat: (data) => ipcRenderer.send(IPC.heartbeat, data),
   report: (type, data = {}) => ipcRenderer.send(IPC.report, { type, ...data }),
 };
