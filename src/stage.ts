@@ -1,6 +1,7 @@
 // 描画の本体。シーンを半精度の中間バッファに描き、最終パスで出力範囲の制限・外光シミュレーション・ディザをかける
 import * as THREE from 'three';
 import type { ParamValues } from './config.ts';
+import { type GpuStats, GpuTimer } from './gpu-timer.ts';
 import { fullscreenShader } from './scenes/shader.ts';
 import type { SceneDef, SceneInput, SceneInstance } from './scenes/types.ts';
 
@@ -29,13 +30,25 @@ export interface FinalOptions {
   washColor: readonly [number, number, number];
 }
 
+export interface GpuReport {
+  supported: boolean;
+  /** macOS（Apple の GPU）ではフレームの処理が重なって計測され、値が大きく出る */
+  approximate: boolean;
+  /** 映像（シーン）の描画 */
+  scene: GpuStats | null;
+  /** 最終処理（出力範囲の制限・外光シミュレーション・ディザ） */
+  final: GpuStats | null;
+}
+
 export class Stage {
   readonly width: number;
   readonly height: number;
   private readonly renderer: THREE.WebGLRenderer;
   private readonly target: THREE.WebGLRenderTarget;
   private readonly final;
+  private readonly timer: GpuTimer;
   private current: { def: SceneDef; instance: SceneInstance } | null = null;
+  private readonly approximate: boolean;
 
   constructor(canvas: HTMLCanvasElement, width: number, height: number) {
     this.width = width;
@@ -43,6 +56,11 @@ export class Stage {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false });
     this.renderer.setPixelRatio(1);
     this.renderer.setSize(width, height, false);
+    const gl = this.renderer.getContext() as WebGL2RenderingContext;
+    this.timer = new GpuTimer(gl);
+    const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+    const gpuName = dbg ? String(gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL)) : '';
+    this.approximate = /apple/i.test(gpuName);
     this.target = new THREE.WebGLRenderTarget(width, height, { type: THREE.HalfFloatType, depthBuffer: false });
     this.final = fullscreenShader(FINAL_FRAG, {
       tSrc: { value: this.target.texture },
@@ -69,8 +87,11 @@ export class Stage {
     if (!this.current) return;
     const { instance } = this.current;
     instance.update(input, params);
+    this.timer.poll();
     this.renderer.setRenderTarget(this.target);
+    this.timer.begin('scene');
     this.renderer.render(instance.scene, instance.camera);
+    this.timer.end();
     this.renderer.setRenderTarget(null);
     const u = this.final.uniforms;
     u.uOutMin.value = opts.outMin;
@@ -78,7 +99,35 @@ export class Stage {
     u.uWash.value = opts.wash;
     u.uWashColor.value.set(...opts.washColor);
     u.uSeed.value = Math.random();
+    this.timer.begin('final');
     this.renderer.render(this.final.scene, this.final.camera);
+    this.timer.end();
+  }
+
+  /** 直近約 120 フレームの GPU 時間（ms） */
+  gpu(): GpuReport {
+    return {
+      supported: this.timer.supported,
+      approximate: this.approximate,
+      scene: this.timer.stats('scene'),
+      final: this.timer.stats('final'),
+    };
+  }
+
+  /**
+   * 同じフレームを続けて描き、GPU の処理が終わるまで待って 1 フレームあたりの時間（ms）を測る。
+   * 計測の遅れや重なりの影響を受けないので、どの環境でも実際の重さが分かる（その間は描画が止まる）
+   */
+  benchmark(input: SceneInput, params: ParamValues, opts: FinalOptions, frames = 60): number {
+    const gl = this.renderer.getContext();
+    const px = new Uint8Array(4);
+    const sync = (): void => gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    this.render(input, params, opts);
+    sync();
+    const t0 = performance.now();
+    for (let i = 0; i < frames; i++) this.render(input, params, opts);
+    sync();
+    return (performance.now() - t0) / frames;
   }
 
   /** 直前に描いたフレームを PNG で保存する（描画直後の同じタスク内で呼ぶこと） */

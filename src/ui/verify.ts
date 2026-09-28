@@ -62,7 +62,7 @@ export function mountVerify(clock: Clock, site: Site, declination: number, hooks
 
   return {
     syncArrow(on: boolean): void { ui.showOverlay.checked = on; },
-    update(s: SolarState): void {
+    update(s: SolarState, perf: string[]): void {
       const { sun, light } = s;
       const lp = clock.local();
       ui.clock.textContent = clock.format();
@@ -91,6 +91,7 @@ export function mountVerify(clock: Clock, site: Site, declination: number, hooks
         ['窓への入射 cos', light.windowIncidence.toFixed(3)],
         ['窓から光が入る', light.entersWindow ? '<span class="yes">入る</span>' : '入らない'],
         ['色温度（目安）', `${Math.round(kelvinAt(sun.altitude))} K`],
+        ...perf.map((line, i): [string, string] => [i === 0 ? '性能' : '', line.trim()]),
       ];
       ui.values.innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
     },

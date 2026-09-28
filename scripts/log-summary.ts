@@ -30,6 +30,7 @@ for (const r of rows) count[r.type] = (count[r.type] ?? 0) + 1;
 const stats = rows.filter((r) => r.type === 'stats');
 const fps = stats.flatMap((r) => (r.renderer ? [r.renderer.fps] : []));
 const heap = stats.flatMap((r) => (r.renderer?.heapMB != null ? [r.renderer.heapMB] : []));
+const gpu = stats.flatMap((r) => (r.renderer?.gpuMs != null ? [r.renderer.gpuMs] : []));
 const total = stats.map((r) => Object.values(r.memMB ?? {}).reduce((a, b) => a + b, 0));
 const span = (Date.parse(lastRow.t) - Date.parse(first.t)) / 3600000;
 
@@ -40,10 +41,17 @@ const fmt = (a: number[]): string => a.length
 console.log(`期間      ${first.t} 〜 ${lastRow.t}（${span.toFixed(1)} 時間, ${files.length} ファイル）`);
 console.log(`イベント  ${Object.entries(count).map(([k, v]) => `${k}:${v}`).join('  ')}`);
 console.log(`FPS       ${fmt(fps)}`);
+console.log(`GPU 時間  ${fmt(gpu)} ms`);
 console.log(`JS heap   ${fmt(heap)} MB`);
 console.log(`総メモリ  ${fmt(total)} MB`);
 
-const NORMAL = new Set(['stats', 'start', 'renderer-ready', 'daily-reload', 'quit', 'quit-by-key', 'signal', 'mode-switch']);
+const benches = rows.filter((r) => r.type === 'benchmark');
+if (benches.length) {
+  console.log('\nベンチマーク（最新 10 件）');
+  for (const r of benches.slice(-10)) console.log(`  ${r.t}  ${String(r['scene'])}  ${String(r['ms'])} ms`);
+}
+
+const NORMAL = new Set(['stats', 'start', 'renderer-ready', 'daily-reload', 'quit', 'quit-by-key', 'signal', 'mode-switch', 'benchmark']);
 const incidents = rows.filter((r) => !NORMAL.has(r.type));
 if (incidents.length) {
   console.log('\n異常・復帰（最新 20 件）');

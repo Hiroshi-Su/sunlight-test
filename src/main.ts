@@ -11,6 +11,7 @@ import { resolveSite, solarState } from './solar.ts';
 import { type FinalOptions, Stage } from './stage.ts';
 import { el } from './ui/dom.ts';
 import { mountVerify } from './ui/verify.ts';
+import { formatBench, formatPerf, gpuTotalMs } from './ui/perf.ts';
 import { mountVisuals } from './ui/visuals.ts';
 
 const W = 3840, H = 1080;
@@ -57,6 +58,7 @@ const verifyParams: ParamValues = mergeParams(lightDebug, undefined);
 const kioskScene = findScene(visualsConfig.activeScene);
 const kioskParams = mergeParams(kioskScene, visualsConfig.scenes[kioskScene.id]);
 let pngRequested = false;
+let lastFrame: { input: SceneInput; params: ParamValues; opts: FinalOptions; def: SceneDef } | null = null;
 
 const verifyUi = mode === 'verify'
   ? mountVerify(clock, site, siteConfig.sites[site.name]!.screen.magneticDeclination, {
@@ -65,7 +67,16 @@ const verifyUi = mode === 'verify'
   }, arrowOn)
   : null;
 const visualsUi = mode === 'visuals'
-  ? mountVisuals(clock, visualsConfig, { save: saveVisuals, savePng: () => { pngRequested = true; } })
+  ? mountVisuals(clock, visualsConfig, {
+    save: saveVisuals,
+    savePng: () => { pngRequested = true; },
+    benchmark: () => {
+      if (!lastFrame) return '';
+      const ms = stage.benchmark(lastFrame.input, lastFrame.params, lastFrame.opts);
+      bridge?.report('benchmark', { scene: lastFrame.def.id, ms: Math.round(ms * 100) / 100 });
+      return formatBench(ms, lastFrame.def.label);
+    },
+  })
   : null;
 
 if (mode !== 'visuals') {
@@ -101,6 +112,7 @@ let uiAt = 0;
 let frames = 0;
 let beatAt = performance.now();
 let lit = 0;
+let fps = 60;
 
 const jsHeapMB = (): number | null => {
   const mem = (performance as Performance & { memory?: { usedJSHeapSize: number } }).memory;
@@ -110,6 +122,7 @@ const jsHeapMB = (): number | null => {
 function frame(now: number): void {
   const dt = (now - last) / 1000;
   last = now;
+  if (dt > 0) fps += (1 / dt - fps) * 0.05;
   clock.tick(dt);
 
   const s = solarState(clock.date, site);
@@ -135,6 +148,7 @@ function frame(now: number): void {
   const { def, params: p, opts } = current(lit, lightColor);
   stage.setScene(def);
   stage.render(input, p, opts);
+  lastFrame = { input, params: p, opts, def };
   if (pngRequested) {
     pngRequested = false;
     const pad = (n: number): string => String(n).padStart(2, '0');
@@ -149,6 +163,7 @@ function frame(now: number): void {
       sun: { az: Math.round(s.sun.azimuth * 100) / 100, alt: Math.round(s.sun.altitude * 100) / 100 },
       entersWindow: s.light.entersWindow,
       lit: Math.round(lit * 1000) / 1000,
+      gpuMs: gpuTotalMs(stage.gpu()),
     };
     frames = 0;
     beatAt = now;
@@ -163,8 +178,9 @@ function frame(now: number): void {
     overlay.hidden = !showArrow && !showGuides;
     if (showGuides && visualsUi) drawGuides(overlayCtx, visualsUi.config.guides);
     if (showArrow) drawLightArrow(overlayCtx, site, s);
-    verifyUi?.update(s);
-    visualsUi?.updateStatus(s, lit);
+    const perf = formatPerf(stage.gpu(), fps);
+    verifyUi?.update(s, perf);
+    visualsUi?.updateStatus(s, lit, perf);
   }
   requestAnimationFrame(frame);
 }

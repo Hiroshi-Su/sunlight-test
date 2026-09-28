@@ -11,6 +11,8 @@ import { el } from './dom.ts';
 export interface VisualsHooks {
   save(cfg: VisualsConfig): Promise<void>;
   savePng(): void;
+  /** 今の映像を連続で描いて、1 フレームあたりの時間を表示用の文字列で返す */
+  benchmark(): string;
 }
 
 export interface VisualsView {
@@ -107,6 +109,12 @@ export function mountVisuals(clock: Clock, initial: VisualsConfig, hooks: Visual
   fo.add(cfg.output, 'min', 0, 0.5, 0.01).name('明るさの下限');
   fo.add(cfg.output, 'max', 0.5, 1, 0.01).name('明るさの上限');
 
+  // ---- 性能 ----
+  const bench = { text: '' };
+  const fperf = gui.addFolder('性能');
+  fperf.add({ run: () => { bench.text = hooks.benchmark(); } }, 'run').name('ベンチマーク（60 フレーム）');
+  fperf.add(bench, 'text').name('結果').disable().listen();
+
   // ---- 書き出し・保存 ----
   const status = { text: '' };
   const fx = gui.addFolder('保存');
@@ -143,13 +151,16 @@ export function mountVisuals(clock: Clock, initial: VisualsConfig, hooks: Visual
     get scene(): SceneDef { return active; },
     get params(): ParamValues { return valuesFor(active); },
     get config(): VisualsConfig { return cfg; },
-    updateStatus(s: SolarState, lit: number): void {
+    updateStatus(s: SolarState, lit: number, perf: string[]): void {
       const { sun, light } = s;
       statusEl.textContent = [
         clock.format(),
         `太陽  方位 ${sun.azimuth.toFixed(1)}°  高度 ${sun.altitude.toFixed(1)}°`,
         `light (${light.x.toFixed(3)}, ${light.y.toFixed(3)}, ${light.z.toFixed(3)})`,
         `窓から ${light.entersWindow ? '入る' : '入らない'}  lit ${lit.toFixed(2)}  ${Math.round(kelvinAt(sun.altitude))}K`,
+        '',
+        ...perf,
+        ...(bench.text ? [bench.text] : []),
       ].join('\n');
     },
   };

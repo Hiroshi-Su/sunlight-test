@@ -7,6 +7,8 @@ export interface Heartbeat {
   sun: { az: number; alt: number };
   entersWindow: boolean;
   lit: number;
+  /** 1 フレームの GPU 時間の平均（ms）。計測できない環境では null */
+  gpuMs: number | null;
 }
 
 export interface Bootstrap {
