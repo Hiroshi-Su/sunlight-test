@@ -116,6 +116,11 @@ const RAD = Math.PI / 180;
 export const inkBleed: SceneDef = {
   id: 'ink-bleed',
   label: 'にじみ',
+  sunLinks: [
+    { toggle: 'followLight', uses: ['direction'] },
+    { toggle: 'sunVivid', uses: ['lit'] },
+    { toggle: 'skyColors', uses: ['color'] },
+  ],
   params: {
     followLight: { type: 'boolean', label: '光の向きに広がる', value: true },
     angle: { type: 'number', label: '固定の向き（°、右=0）', value: 0, min: 0, max: 360, step: 1 },

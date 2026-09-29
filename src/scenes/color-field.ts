@@ -33,6 +33,7 @@ void main() {
 export const colorField: SceneDef = {
   id: 'color-field',
   label: 'ひな形：光の時計',
+  sunLinks: [{ uses: ['direction', 'lit', 'color'] }],
   params: {
     warmth: { type: 'number', label: '光の色の強さ', value: 0.6, min: 0, max: 1, step: 0.01 },
     softness: { type: 'number', label: 'グラデーションの幅', value: 0.45, min: 0.05, max: 0.8, step: 0.01 },

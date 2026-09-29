@@ -62,6 +62,7 @@ vec3 effect(vec2 uv, vec2 p) {
 export const pixelStretch = imageScene({
   id: 'img-pixel-stretch',
   label: '画像：ピクセルの引き伸ばし',
+  sunLinks: [{ toggle: 'followLight', uses: ['direction'] }, { toggle: 'sunLinked', uses: ['lit'] }],
   glsl,
   params: {
     lo: { type: 'number', label: '引き伸ばす明るさ（下限）', value: 0.2, min: 0, max: 1, step: 0.01 },

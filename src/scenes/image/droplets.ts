@@ -66,6 +66,7 @@ vec3 effect(vec2 uv, vec2 p) {
 export const droplets = imageScene({
   id: 'img-droplets',
   label: '画像：結露・水滴',
+  sunLinks: [{ toggle: 'sunRim', uses: ['lit'] }, { uses: ['color'] }],
   glsl,
   params: {
     fog: { type: 'number', label: '曇り（湿度）', value: 0.5, min: 0, max: 1, step: 0.01 },

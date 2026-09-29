@@ -49,6 +49,7 @@ vec3 effect(vec2 uv, vec2 p) {
 export const glowContour = imageScene({
   id: 'img-glow-contour',
   label: '画像：光のにじみと等高線',
+  sunLinks: [{ toggle: 'followLight', uses: ['direction'] }, { uses: ['color'] }],
   glsl,
   params: {
     smear: { type: 'number', label: 'にじみの長さ', value: 0.35, min: 0, max: 1.5, step: 0.01 },

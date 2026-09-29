@@ -40,6 +40,7 @@ void main() {
 export const lightDebug: SceneDef = {
   id: 'light-debug',
   label: '検証用：光の向き',
+  sunLinks: [{ uses: ['direction', 'lit', 'color'] }],
   params: {
     strength: { type: 'number', label: '光の強さ', value: 0.5, min: 0, max: 1, step: 0.01 },
     stripes: { type: 'boolean', label: '窓枠の影', value: false },

@@ -62,3 +62,14 @@ test('シーンの保存値は型が合うものだけ既定値に重ねる', ()
   assert.ok(!('unknown' in merged));
   assert.equal(new Set(SCENES.map((x) => x.id)).size, SCENES.length, 'シーン ID が重複しています');
 });
+
+test('sunLinks の toggle キーは、そのシーンの真偽値パラメータとして存在する', () => {
+  for (const def of SCENES) {
+    for (const link of def.sunLinks ?? []) {
+      if (link.toggle === undefined) continue;
+      const spec = def.params[link.toggle];
+      assert.ok(spec, `${def.id}: sunLinks の toggle "${link.toggle}" が params にありません`);
+      assert.equal(spec.type, 'boolean', `${def.id}: sunLinks の toggle "${link.toggle}" は真偽値のパラメータではありません`);
+    }
+  }
+});

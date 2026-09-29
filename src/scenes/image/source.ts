@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 import type { ParamValues } from '../../config.ts';
 import { GLSL_NOISE, fullscreenShader } from '../shader.ts';
-import { type ParamSpec, type SceneDef, type SceneInput, num } from '../types.ts';
+import { type ParamSpec, type SceneDef, type SceneInput, type SunLink, num } from '../types.ts';
 
 // Vite がビルド時にアセットとして同梱する（オフラインで動く）
 const SOURCE_URL = new URL('../../img/sea.jpg', import.meta.url).href;
@@ -54,6 +54,7 @@ export interface ImageEffect<U extends Uniforms> {
   id: string;
   label: string;
   params: Record<string, ParamSpec>;
+  sunLinks?: readonly SunLink[];
   /** vec3 effect(vec2 uv, vec2 p) を定義する GLSL。uv は 0..1、p はピクセル座標 */
   glsl: string;
   uniforms(): U;
@@ -70,6 +71,7 @@ export function imageScene<U extends Uniforms>(fx: ImageEffect<U>): SceneDef {
     id: fx.id,
     label: fx.label,
     params: { ...fx.params, ...COMMON_PARAMS },
+    sunLinks: fx.sunLinks,
     create({ width, height }) {
       const tex = sourceTexture();
       const common = {

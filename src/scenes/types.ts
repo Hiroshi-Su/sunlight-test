@@ -36,10 +36,24 @@ export interface SceneInstance {
   dispose(): void;
 }
 
+/**
+ * このシーンが日差し由来の値をどう使っているかの申告。visuals モードのパネルに
+ * 「日差しとの連動」として表示するためのもので、実装（update 内の計算）と食い違わないよう、
+ * 対応するコードを変えたら必ずここも合わせて直すこと。
+ */
+export interface SunLink {
+  /** オン・オフを切り替えるパラメータのキー。省略すると「常時（切替なし）」として表示 */
+  toggle?: string;
+  /** この申告が使う日差し由来の値 */
+  uses: readonly ('direction' | 'lit' | 'altitude' | 'color')[];
+}
+
 export interface SceneDef {
   id: string;
   label: string;
   params: Record<string, ParamSpec>;
+  /** 日差しの値との連動（省略時は「未対応」＝日差しの値を使わない） */
+  sunLinks?: readonly SunLink[];
   create(size: { width: number; height: number }): SceneInstance;
 }
 

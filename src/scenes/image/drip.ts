@@ -47,6 +47,7 @@ vec3 effect(vec2 uv, vec2 p) {
 export const drip = imageScene({
   id: 'img-drip',
   label: '画像：垂れる流れ',
+  sunLinks: [{ toggle: 'followLight', uses: ['direction'] }],
   glsl,
   params: {
     len: { type: 'number', label: '垂れる長さ', value: 0.35, min: 0.02, max: 1, step: 0.01 },

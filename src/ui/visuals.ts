@@ -87,12 +87,54 @@ export function mountVisuals(clock: Clock, initial: VisualsConfig, hooks: Visual
       },
     }, 'reset').name('既定値に戻す');
   };
+
+  // ---- 日差しとの連動：今の映像のどのパラメータが太陽の計算値を使っているかを、その場の値つきで表示 ----
+  let sunFolder: GUI | null = null;
+  const sunLinkState: Record<string, string> = {};
+  const buildSunLinks = (): void => {
+    sunFolder?.destroy();
+    sunFolder = fs.addFolder('日差しとの連動');
+    for (const key of Object.keys(sunLinkState)) delete sunLinkState[key];
+    const links = active.sunLinks ?? [];
+    if (links.length === 0) {
+      sunLinkState['none'] = '日差しの値を使うパラメータはありません';
+      sunFolder.add(sunLinkState, 'none').name('状態').disable();
+      return;
+    }
+    links.forEach((link, i) => {
+      const key = `link${i}`;
+      sunLinkState[key] = '…';
+      const label = link.toggle ? (active.params[link.toggle]?.label ?? link.toggle) : '常時（切替なし）';
+      sunFolder!.add(sunLinkState, key).name(label).disable().listen();
+    });
+  };
+  const USES_LABEL: Record<string, string> = { direction: '光の向き', lit: 'lit', altitude: '太陽高度', color: '色' };
+  const refreshSunLinks = (s: SolarState, lit: number): void => {
+    const links = active.sunLinks ?? [];
+    if (links.length === 0) return;
+    const values = valuesFor(active);
+    const angle = Math.round((Math.atan2(s.light.dirY, s.light.dirX) * 180) / Math.PI);
+    links.forEach((link, i) => {
+      const key = `link${i}`;
+      const on = link.toggle === undefined || values[link.toggle] === true;
+      const uses = link.uses.map((u) => {
+        if (u === 'direction') return `${USES_LABEL[u]} ${angle}°`;
+        if (u === 'lit') return `${USES_LABEL[u]} ${lit.toFixed(2)}`;
+        if (u === 'altitude') return `${USES_LABEL[u]} ${s.sun.altitude.toFixed(1)}°`;
+        return USES_LABEL[u];
+      }).join('・');
+      sunLinkState[key] = on ? `ON → ${uses}` : 'OFF（日差しの影響なし）';
+    });
+  };
+
   fs.add(sceneSel, 'id', options).name('映像').onChange((id: string) => {
     active = findScene(id);
     cfg.activeScene = active.id;
     buildParams();
+    buildSunLinks();
   });
   buildParams();
+  buildSunLinks();
 
   // ---- プレビュー（visuals モードだけの確認用。kiosk には出ない）----
   const fp = gui.addFolder('プレビュー');
@@ -152,6 +194,7 @@ export function mountVisuals(clock: Clock, initial: VisualsConfig, hooks: Visual
     get params(): ParamValues { return valuesFor(active); },
     get config(): VisualsConfig { return cfg; },
     updateStatus(s: SolarState, lit: number, perf: string[]): void {
+      refreshSunLinks(s, lit);
       const { sun, light } = s;
       statusEl.textContent = [
         clock.format(),

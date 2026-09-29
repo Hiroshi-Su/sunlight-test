@@ -35,6 +35,7 @@ vec3 effect(vec2 uv, vec2 p) {
 export const heatHaze = imageScene({
   id: 'img-heat-haze',
   label: '画像：陽炎',
+  sunLinks: [{ toggle: 'sunLinked', uses: ['altitude', 'lit'] }],
   glsl,
   params: {
     strength: { type: 'number', label: '揺らぎの強さ', value: 1.2, min: 0, max: 5, step: 0.05 },

@@ -51,6 +51,7 @@ vec3 effect(vec2 uv, vec2 p) {
 export const prism = imageScene({
   id: 'img-prism',
   label: '画像：分光（プリズム）',
+  sunLinks: [{ toggle: 'sunLinked', uses: ['lit', 'direction'] }],
   glsl,
   params: {
     strength: { type: 'number', label: '屈折の強さ', value: 0.5, min: 0, max: 4, step: 0.05 },
