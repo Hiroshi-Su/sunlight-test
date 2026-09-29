@@ -2,6 +2,8 @@
 import type { Clock } from '../clock.ts';
 import { type PathPoint, drawDayChart, drawPlan } from '../diagram.ts';
 import { kelvinAt } from '../palette.ts';
+import type { ParamValues } from '../config.ts';
+import type { ParamSpec } from '../scenes/types.ts';
 import { type Site, type SolarState, solarState } from '../solar.ts';
 import { el } from './dom.ts';
 
@@ -10,7 +12,17 @@ export interface VerifyHooks {
   setStripes(on: boolean): void;
 }
 
-export function mountVerify(clock: Clock, site: Site, declination: number, hooks: VerifyHooks, arrowOn: boolean) {
+function formatParamValue(spec: ParamSpec, value: unknown): string {
+  if (spec.type === 'boolean') return value === true ? 'ON' : 'OFF';
+  if (spec.type === 'color') return typeof value === 'string' ? value : '#000000';
+  const n = typeof value === 'number' ? value : 0;
+  return Number.isInteger(n) ? String(n) : n.toFixed(2);
+}
+
+export function mountVerify(
+  clock: Clock, site: Site, declination: number, hooks: VerifyHooks, arrowOn: boolean,
+  paramSpecs: Record<string, ParamSpec>,
+) {
   const ui = {
     plan: el('plan', HTMLCanvasElement),
     chart: el('chart', HTMLCanvasElement),
@@ -62,7 +74,7 @@ export function mountVerify(clock: Clock, site: Site, declination: number, hooks
 
   return {
     syncArrow(on: boolean): void { ui.showOverlay.checked = on; },
-    update(s: SolarState, perf: string[]): void {
+    update(s: SolarState, perf: string[], paramValues: ParamValues): void {
       const { sun, light } = s;
       const lp = clock.local();
       ui.clock.textContent = clock.format();
@@ -91,6 +103,8 @@ export function mountVerify(clock: Clock, site: Site, declination: number, hooks
         ['窓への入射 cos', light.windowIncidence.toFixed(3)],
         ['窓から光が入る', light.entersWindow ? '<span class="yes">入る</span>' : '入らない'],
         ['色温度（目安）', `${Math.round(kelvinAt(sun.altitude))} K`],
+        ...Object.entries(paramSpecs).map(([key, spec], i): [string, string] =>
+          [i === 0 ? '映像のパラメータ' : '', `${spec.label}: ${formatParamValue(spec, paramValues[key])}`]),
         ...perf.map((line, i): [string, string] => [i === 0 ? '性能' : '', line.trim()]),
       ];
       ui.values.innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');

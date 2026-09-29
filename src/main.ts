@@ -64,7 +64,7 @@ const verifyUi = mode === 'verify'
   ? mountVerify(clock, site, siteConfig.sites[site.name]!.screen.magneticDeclination, {
     setArrow: (on) => { arrowOn = on; },
     setStripes: (on) => { verifyParams['stripes'] = on; },
-  }, arrowOn)
+  }, arrowOn, lightDebug.params)
   : null;
 const visualsUi = mode === 'visuals'
   ? mountVisuals(clock, visualsConfig, {
@@ -179,7 +179,7 @@ function frame(now: number): void {
     if (showGuides && visualsUi) drawGuides(overlayCtx, visualsUi.config.guides);
     if (showArrow) drawLightArrow(overlayCtx, site, s);
     const perf = formatPerf(stage.gpu(), fps);
-    verifyUi?.update(s, perf);
+    verifyUi?.update(s, perf, verifyParams);
     visualsUi?.updateStatus(s, lit, perf);
   }
   requestAnimationFrame(frame);
