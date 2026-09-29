@@ -8,7 +8,6 @@ const frag = /* glsl */ `
 precision highp float;
 uniform vec2 uRes;
 uniform vec2 uDrift;
-uniform vec3 uLightColor;
 uniform float uBands, uWobble;
 uniform vec3 uC0, uC1, uC2, uC3;
 uniform float uColumnSpacing, uColumnJitter, uColumnWidth, uColumnBase, uGlow, uChroma, uFlicker;
@@ -46,18 +45,31 @@ void main() {
   float jitter = (hash(vec2(idx, 11.0)) - 0.5) * uColumnJitter * uColumnSpacing;
   float d = p.x - (idx * uColumnSpacing + jitter);
 
-  // 色の成分ごとに幅を変えて、縁に虹色のにじみを作る（分光と同じ考え方）
-  float wR = uColumnWidth * (1.0 + uChroma);
-  float wG = uColumnWidth;
-  float wB = uColumnWidth * (1.0 - uChroma);
-  vec3 glow = vec3(exp(-(d * d) / (2.0 * wR * wR)), exp(-(d * d) / (2.0 * wG * wG)), exp(-(d * d) / (2.0 * wB * wB)));
-  float core = exp(-(d * d) / (2.0 * pow(uColumnWidth * 0.3, 2.0)));
+  float ad = abs(d);
+  // 芯：ごく細い、白く飛ぶ部分
+  float coreW = uColumnWidth * 0.35;
+  float core = 1.0 - smoothstep(0.0, coreW, ad);
+
+  // 輪：芯のすぐ外側から立ち上がり、外側でなだらかに消える補色の帯。
+  // 色の成分ごとに外径を変えて、輪の外縁に虹色のにじみを作る（分光と同じ考え方）
+  float ringInner = uColumnWidth * 0.5;
+  float ringOuterR = uColumnWidth * 2.6 * (1.0 + uChroma);
+  float ringOuterG = uColumnWidth * 2.6;
+  float ringOuterB = uColumnWidth * 2.6 * (1.0 - uChroma);
+  vec3 ringOuter = vec3(ringOuterR, ringOuterG, ringOuterB);
+  vec3 ringShape = smoothstep(0.0, ringInner, vec3(ad)) * (1.0 - smoothstep(vec3(ringInner), ringOuter, vec3(ad)));
 
   float shimmer = 1.0 + uFlicker * (noise(vec2(idx * 3.7, uDrift.y * 2.0)) - 0.5) * 2.0;
-  vec3 add = (glow * (uColumnBase + uGlow * shimmer) + vec3(core) * uGlow * shimmer * 0.7) * mix(vec3(1.0), uLightColor, 0.4);
+  float baseGlow = uColumnBase + uGlow * shimmer;
+  // 輪は 1 未満で頭打ちにし、白飛びさせず補色の色味をはっきり残す。芯だけ白まで飛ばす
+  vec3 haloAmount = clamp(ringShape * (0.35 + baseGlow), 0.0, 0.85);
+  float coreAmount = clamp(core * uGlow * shimmer, 0.0, 1.0);
+  vec3 envelope = max(haloAmount, vec3(coreAmount));
 
-  // 加算（スクリーン合成）：明るく重なるほど白へ寄るが、飛びすぎない
-  col = 1.0 - (1.0 - col) * (1.0 - clamp(add, 0.0, 1.0));
+  // 柱の色は、通過する背景色の補色（RGB反転）。足すと白になる（補色を重ねると白色光になるという色彩理論を利用）
+  // envelope が 0〜1 に収まっているので、col + complement * envelope も自動的に 0〜1 に収まる（白飛びしない）
+  vec3 complement = vec3(1.0) - col;
+  col = col + complement * envelope;
 
   gl_FragColor = vec4(col, 1.0);
 }
@@ -93,7 +105,6 @@ export const lightColumns: SceneDef = {
     const s = fullscreenShader(frag, {
       uRes: { value: new THREE.Vector2(width, height) },
       uDrift: { value: new THREE.Vector2() },
-      uLightColor: { value: new THREE.Vector3(1, 1, 1) },
       uBands: { value: 4 },
       uWobble: { value: 0.12 },
       uC0: { value: new THREE.Vector3() },
@@ -116,7 +127,6 @@ export const lightColumns: SceneDef = {
         const flow = num(params, 'flow');
         const flicker = num(params, 'flickerSpeed');
         u.uDrift.value.set(wrap(input.time * 0.03 * flow), wrap(input.time * 0.02 * flow));
-        u.uLightColor.value.set(...input.lightColor);
         u.uBands.value = num(params, 'bands');
         u.uWobble.value = num(params, 'wobble');
         if (bool(params, 'useSkyColors')) {
