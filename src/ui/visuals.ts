@@ -36,7 +36,7 @@ export function mountVisuals(clock: Clock, initial: VisualsConfig, hooks: Visual
   let active = findScene(cfg.activeScene);
   cfg.activeScene = active.id;
 
-  const gui = new GUI({ container: el('panel', HTMLElement), width: 380, title: 'visuals' });
+  const gui = new GUI({ container: el('panel', HTMLElement), width: 480, title: 'visuals' });
 
   // ---- 時刻（getter/setter で Clock に直結）----
   const t = {
@@ -108,7 +108,9 @@ export function mountVisuals(clock: Clock, initial: VisualsConfig, hooks: Visual
       sunFolder!.add(sunLinkState, key).name(label).disable().listen();
     });
   };
-  const USES_LABEL: Record<string, string> = { direction: '光の向き', lit: 'lit', altitude: '太陽高度', color: '色' };
+  const USES_LABEL: Record<string, string> = {
+    direction: '光の向き', lit: '日差しの強さ(lit)', altitude: '太陽高度', color: '光・空の色',
+  };
   const refreshSunLinks = (s: SolarState, lit: number): void => {
     const links = active.sunLinks ?? [];
     if (links.length === 0) return;
