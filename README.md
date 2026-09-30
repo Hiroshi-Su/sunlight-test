@@ -6,7 +6,7 @@
 案件の前提・コンセプトは [sola_city_projection_overview.md](sola_city_projection_overview.md) を参照。
 計算の中身・`light` の意味・検証方法は [docs/verification.md](docs/verification.md) を参照。
 各映像の仕組みと元にした自然現象は [docs/visuals.md](docs/visuals.md) を参照。
-仮想の部屋で日差しを確認する room モードは [docs/room.md](docs/room.md) を参照。
+仮想の部屋で日差しを確認する room モードは [docs/room.md](docs/room.md) を参照。展示用 PC の候補（Mac mini と Windows のゲーミング PC の比較）は [docs/hardware.md](docs/hardware.md) を参照。
 
 ## セットアップ
 
