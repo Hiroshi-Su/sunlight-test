@@ -7,6 +7,7 @@ import { SCENES, findScene } from '../scenes/index.ts';
 import { type SceneDef, defaultParams, mergeParams } from '../scenes/types.ts';
 import type { SolarState } from '../solar.ts';
 import { el } from './dom.ts';
+import { mountTimeControls } from './time-controls.ts';
 
 export interface VisualsHooks {
   save(cfg: VisualsConfig): Promise<void>;
@@ -20,14 +21,6 @@ export interface VisualsView {
   guides: boolean;
 }
 
-const SPEEDS: Record<string, number> = {
-  '1×（実時間）': 1,
-  '60×（1分/秒）': 60,
-  '600×（10分/秒）': 600,
-  '1440×（1日/1分）': 1440,
-  '3600×（1時間/秒）': 3600,
-};
-
 export function mountVisuals(clock: Clock, initial: VisualsConfig, hooks: VisualsHooks) {
   const cfg: VisualsConfig = structuredClone(initial);
   const view: VisualsView = { arrow: false, guides: false };
@@ -39,32 +32,7 @@ export function mountVisuals(clock: Clock, initial: VisualsConfig, hooks: Visual
   const gui = new GUI({ container: el('panel', HTMLElement), width: 480, title: 'visuals' });
 
   // ---- 時刻（getter/setter で Clock に直結）----
-  const t = {
-    get label() { return clock.format(); },
-    get live() { return clock.live; },
-    set live(v: boolean) { clock.setLive(v); },
-    get playing() { return clock.playing; },
-    set playing(v: boolean) { clock.setLive(false); clock.playing = v; },
-    get speed() { return clock.speed; },
-    set speed(v: number) { clock.speed = Number(v); },
-    get minutes() { return clock.local().min; },
-    set minutes(v: number) { clock.setLocalMinutes(v); },
-    get date() { return clock.ymd(); },
-    set date(v: string) { clock.setLocalDate(v); },
-    fastDay() {
-      clock.setLocalMinutes(0);
-      clock.speed = 1440;
-      clock.playing = true;
-    },
-  };
-  const ft = gui.addFolder('時刻');
-  ft.add(t, 'label').name('表示中').disable().listen();
-  ft.add(t, 'live').name('現在時刻').listen();
-  ft.add(t, 'playing').name('再生').listen();
-  ft.add(t, 'speed', SPEEDS).name('速さ').listen();
-  ft.add(t, 'minutes', 0, 1439, 1).name('時刻（分）').listen();
-  ft.add(t, 'date').name('日付 YYYY-MM-DD').listen();
-  ft.add(t, 'fastDay').name('1日を1分で早送り');
+  mountTimeControls(gui, clock);
 
   // ---- シーン ----
   const fs = gui.addFolder('シーン');

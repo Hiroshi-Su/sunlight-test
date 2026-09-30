@@ -6,6 +6,7 @@
 案件の前提・コンセプトは [sola_city_projection_overview.md](sola_city_projection_overview.md) を参照。
 計算の中身・`light` の意味・検証方法は [docs/verification.md](docs/verification.md) を参照。
 各映像の仕組みと元にした自然現象は [docs/visuals.md](docs/visuals.md) を参照。
+仮想の部屋で日差しを確認する room モードは [docs/room.md](docs/room.md) を参照。
 
 ## セットアップ
 
@@ -53,15 +54,16 @@ URL パラメータ：
 |---|---|---|
 | `t` | `?t=2026-09-24T10:00` | 開始日時（現地時刻）。指定時は停止状態で開く |
 | `site` | `?site=production` | `config/site.json` のどの場所を使うか |
-| `mode` | `?mode=visuals` | 表示モード（`verify` / `visuals` / `kiosk`） |
+| `mode` | `?mode=visuals` | 表示モード（`verify` / `visuals` / `room` / `kiosk`） |
 | `scene` | `?scene=ink-bleed` | 表示する映像を一時的に切り替える（`config/visuals.json` は変わらない） |
 
-## Electron アプリ（検証・visuals・展示の 3 モード）
+## Electron アプリ（検証・visuals・room・展示の 4 モード）
 
 | コマンド | 内容 |
 |---|---|
 | `npm run app` | 検証モード（デフォルト）：検証画面をアプリのウィンドウで表示 |
 | `npm run app:visuals` | visuals モード：映像の制作・調整（シーン切り替え、調整パネル、プレビュー） |
+| `npm run app:room` | room モード：仮想の部屋に日差しを再現するプレビュー（[docs/room.md](docs/room.md)） |
 | `npm run app:kiosk` | 展示モード：3840×1080 の枠なしウィンドウ（visuals で保存した映像を表示、カーソル非表示） |
 | `npm run app:forever` | 監視スクリプト付きで起動。アプリが異常終了したら自動で起動し直す（長期稼働テスト用）。展示モードで動かす場合は `npm run app:forever -- --mode=kiosk` |
 | `npm run logs` | ログの集計（期間・FPS・メモリの推移・異常と復帰の履歴）。`-- 2026-09-25` でその日以降に絞る |
@@ -71,7 +73,7 @@ URL パラメータ：
 | キー | 内容 |
 |---|---|
 | `Ctrl/Cmd + Shift + Q` | 終了（監視スクリプトも止まる） |
-| `Ctrl/Cmd + Shift + M` | モードの切り替え（検証 → visuals → 展示 → 検証） |
+| `Ctrl/Cmd + Shift + M` | モードの切り替え（検証 → visuals → room → 展示 → 検証） |
 | `Ctrl/Cmd + Shift + I` | DevTools |
 | `D` | 矢印表示の切り替え（展示モードでは初期 OFF） |
 | `G` | ガイド表示の切り替え（visuals モード） |
@@ -80,7 +82,7 @@ URL パラメータ：
 
 | 項目 | 内容 |
 |---|---|
-| `mode` | 起動時のモード `"verify"`（デフォルト）/ `"kiosk"`。起動引数 `--mode=` で上書き |
+| `mode` | 起動時のモード `"verify"`（デフォルト）/ `"visuals"` / `"room"` / `"kiosk"`。起動引数 `--mode=` で上書き |
 | `window` | 展示モードのウィンドウ位置・サイズ。2 台のプロジェクターを OS 上で横並びにし、左端のディスプレイの原点に合わせる |
 | `forceDeviceScaleFactor` | OS の表示スケール（125% など）を無視して 1px = 1px にする（Windows 向け） |
 | `dailyReloadAt` | 毎日ページを再読み込みする現地時刻（`"04:00"`、`null` で無効） |
@@ -116,6 +118,16 @@ URL パラメータ：
 
 シーンは毎フレーム `SceneInput`（太陽の位置、`light`、光の入り具合 `lit`、色温度と光の色、空の色、現地時刻、経過時間）と調整値を受け取って描く。出力範囲の制限・ディザは最終パス（`src/stage.ts`）で全シーン共通にかかるので、シーン側では不要。時間で流す値は GPU の精度対策として `wrap()` で巻き戻して渡す。
 
+## room モード（仮想の部屋での日差しプレビュー）
+
+開発サーバーでは `http://localhost:5173/?mode=room`、アプリでは `npm run app:room`。
+
+白いボックスの仮想の部屋（sunabako のようなホワイトボックス空間が参考）に、計算した日差しを環境光（`HemisphereLight`）とスポットライト（太陽）として再現する。窓の壁だけ開口を空けてあり、スポットライトの影がその開口の形に切り取られることで、時刻とともに動く光の筋を確認できる。詳しくは [docs/room.md](docs/room.md)。
+
+- マウスドラッグで視点を回転、ホイールでズーム、右ドラッグで平行移動（three.js の `OrbitControls`）
+- 時刻の操作パネルは visuals モードと共通（現在時刻・再生・早送り・時刻や日付の指定）
+- 窓の位置（`window.side`）・緯度経度が変わっても、`src/solar.ts` の光ベクトルをそのまま部屋の座標として使うのでコードの変更は不要（設定を変えるだけでよい）
+
 ## 設定（`config/site.json`）
 
 場所ごとの値をまとめたファイル。JS・Python（TouchDesigner）の両方がこれを読む。
@@ -129,7 +141,8 @@ URL パラメータ：
       "longitude": 139.7832292459908,
       "utcOffsetMinutes": 540,
       "screen": { "facingAzimuth": 66, "azimuthReference": "magnetic", "magneticDeclination": -7.5 },
-      "window": { "side": "right", "facingAzimuth": null }
+      "window": { "side": "right", "facingAzimuth": null, "widthM": 4, "heightM": 2.4, "sillHeightM": 0.4 },
+      "room": { "widthM": 10, "depthM": 6, "heightM": 3.2 }
     }
   }
 }
@@ -142,6 +155,8 @@ URL パラメータ：
 | `magneticDeclination` | 磁気偏角（西偏は負）。真北基準 = コンパス値 + 偏角。東京付近は約 −7.5°（国土地理院の値で要確認） |
 | `window.side` | 鑑賞者から見て窓がある側。`"left"` / `"right"` |
 | `window.facingAzimuth` | 窓が斜めの場合などに、窓の外向き方位（真北基準）を直接指定。`null` なら `side` から算出 |
+| `window.widthM` / `heightM` / `sillHeightM` | 窓の実寸（m）と床からの高さ。room モードでのみ使用。現地未計測の仮値 |
+| `room.widthM` / `depthM` / `heightM` | room モードで表示する仮想の部屋の寸法（m）。実寸ではなく、光の見え方を確認するための仮のボックス |
 | `utcOffsetMinutes` | 現地の UTC オフセット（JST = 540）。PC のタイムゾーン設定に依存しない |
 
 本番の値が決まったら `sites` に `production` を追加し、`activeSite` を切り替える。
@@ -167,7 +182,8 @@ src/main.ts               検証画面・展示画面（状態管理・描画ル
 src/stage.ts              描画の本体（中間バッファ・最終パス：出力範囲・外光シミュレーション・ディザ）
 src/clock.ts              表示する時刻（現在時刻・早送り・指定）
 src/scenes/               映像（シーン）。types.ts がインターフェース、index.ts が一覧
-src/ui/                   各モードの UI（verify.ts・visuals.ts）
+src/room/scene.ts         room モードの 3D シーン（白い部屋・環境光・スポットライト）
+src/ui/                   各モードの UI（verify.ts・visuals.ts・room.ts・time-controls.ts が共通の時刻パネル）
 config/visuals.json       映像の選択と調整値（visuals モードから保存）
 vite.config.ts            開発サーバーでの visuals.json 保存
 src/palette.ts            太陽高度 → 空の色・色温度（仮値）

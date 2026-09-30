@@ -4,6 +4,7 @@ import { Clock } from './clock.ts';
 import { APP_MODES, type AppMode, type ParamValues, type VisualsConfig, parseSiteConfig, parseVisualsConfig } from './config.ts';
 import { drawGuides, drawLightArrow } from './diagram.ts';
 import { kelvinAt, kelvinToRgb, skyColors } from './palette.ts';
+import { createRoomScene } from './room/scene.ts';
 import { findScene } from './scenes/index.ts';
 import { lightDebug } from './scenes/light-debug.ts';
 import { type SceneDef, type SceneInput, mergeParams } from './scenes/types.ts';
@@ -12,6 +13,7 @@ import { type FinalOptions, Stage } from './stage.ts';
 import { el } from './ui/dom.ts';
 import { mountVerify } from './ui/verify.ts';
 import { formatBench, formatPerf, gpuTotalMs } from './ui/perf.ts';
+import { mountRoomUi } from './ui/room.ts';
 import { mountVisuals } from './ui/visuals.ts';
 
 const W = 3840, H = 1080;
@@ -79,7 +81,12 @@ const visualsUi = mode === 'visuals'
   })
   : null;
 
-if (mode !== 'visuals') {
+const roomEntry = siteConfig.sites[site.name]!;
+const room = mode === 'room' ? createRoomScene(el('roomView', HTMLDivElement), site, roomEntry.room, roomEntry.window) : null;
+const roomUi = mode === 'room' ? mountRoomUi(clock) : null;
+if (room) addEventListener('resize', () => room.resize());
+
+if (mode === 'verify' || mode === 'kiosk') {
   addEventListener('keydown', (e) => {
     if (e.key.toLowerCase() !== 'd' || e.ctrlKey || e.metaKey || e.target instanceof HTMLInputElement) return;
     arrowOn = !arrowOn;
@@ -145,14 +152,20 @@ function frame(now: number): void {
     width: W,
     height: H,
   };
-  const { def, params: p, opts } = current(lit, lightColor);
-  stage.setScene(def);
-  stage.render(input, p, opts);
-  lastFrame = { input, params: p, opts, def };
-  if (pngRequested) {
-    pngRequested = false;
-    const pad = (n: number): string => String(n).padStart(2, '0');
-    stage.savePng(`soracity-${def.id}-${clock.ymd()}-${pad(Math.floor(lp.min / 60))}${pad(lp.min % 60)}.png`);
+  if (room) {
+    room.update({ solar: s, lit, lightColor, sky: input.sky });
+    room.controls.update();
+    room.renderer.render(room.scene, room.camera);
+  } else {
+    const { def, params: p, opts } = current(lit, lightColor);
+    stage.setScene(def);
+    stage.render(input, p, opts);
+    lastFrame = { input, params: p, opts, def };
+    if (pngRequested) {
+      pngRequested = false;
+      const pad = (n: number): string => String(n).padStart(2, '0');
+      stage.savePng(`soracity-${def.id}-${clock.ymd()}-${pad(Math.floor(lp.min / 60))}${pad(lp.min % 60)}.png`);
+    }
   }
 
   frames++;
@@ -163,7 +176,7 @@ function frame(now: number): void {
       sun: { az: Math.round(s.sun.azimuth * 100) / 100, alt: Math.round(s.sun.altitude * 100) / 100 },
       entersWindow: s.light.entersWindow,
       lit: Math.round(lit * 1000) / 1000,
-      gpuMs: gpuTotalMs(stage.gpu()),
+      gpuMs: room ? null : gpuTotalMs(stage.gpu()),
     };
     frames = 0;
     beatAt = now;
@@ -181,6 +194,7 @@ function frame(now: number): void {
     const perf = formatPerf(stage.gpu(), fps);
     verifyUi?.update(s, perf, verifyParams);
     visualsUi?.updateStatus(s, lit, perf);
+    roomUi?.updateStatus(s, lit);
   }
   requestAnimationFrame(frame);
 }

@@ -22,11 +22,18 @@
   [hidden] { display: none !important; }
   body:not(.mode-verify) .grid { display: none; }
   body:not(.mode-visuals) .visuals-ui { display: none; }
+  body:not(.mode-room) .room-ui { display: none; }
+  body.mode-room .stage { display: none; }
   body.mode-kiosk { padding: 0; overflow: hidden; background: #000; cursor: none; }
   body.mode-kiosk .stage { width: 100vw; height: 100vh; aspect-ratio: auto; }
   .visuals-ui { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 16px; align-items: flex-start; }
   .visuals-ui .lil-gui.root { --width: 480px; }
-  #vstatus { margin: 0; padding: 14px; min-width: 280px; flex: 1 1 280px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; font: 13px/1.7 ui-monospace, monospace; white-space: pre; }
+  .room-ui { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 16px; align-items: flex-start; }
+  #roomView { flex: 3 1 640px; height: 76vh; min-height: 420px; background: #111114; border-radius: 8px; overflow: hidden; }
+  #roomView canvas { display: block; width: 100%; height: 100%; }
+  .room-side { flex: 1 1 320px; display: flex; flex-direction: column; gap: 12px; }
+  #vstatus, #room-status { margin: 0; padding: 14px; min-width: 280px; flex: 1 1 280px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; font: 13px/1.7 ui-monospace, monospace; white-space: pre; }
+  .room-ui .lil-gui.root { --width: 380px; }
   .keys { color: var(--muted); font-size: 12px; margin-top: 8px; }
   body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 system-ui, sans-serif; padding: 16px; }
   .stage { position: relative; width: 100%; aspect-ratio: 32 / 9; background: #000; }
@@ -98,6 +105,14 @@
     <div style="flex: 1 1 280px">
       <pre id="vstatus"></pre>
       <div class="keys">D 矢印 ／ G ガイド ／ Cmd+Shift+M モード切り替え（アプリ）</div>
+    </div>
+  </div>
+
+  <div class="room-ui">
+    <div id="roomView"></div>
+    <div class="room-side">
+      <div id="room-panel"></div>
+      <pre id="room-status"></pre>
     </div>
   </div>
 

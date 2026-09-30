@@ -2,8 +2,8 @@
 
 export type WindowSide = 'left' | 'right';
 export type AzimuthReference = 'magnetic' | 'true';
-export type AppMode = 'verify' | 'visuals' | 'kiosk';
-export const APP_MODES: readonly AppMode[] = ['verify', 'visuals', 'kiosk'];
+export type AppMode = 'verify' | 'visuals' | 'room' | 'kiosk';
+export const APP_MODES: readonly AppMode[] = ['verify', 'visuals', 'room', 'kiosk'];
 
 export interface SiteEntry {
   label: string;
@@ -18,6 +18,17 @@ export interface SiteEntry {
   window: {
     side: WindowSide;
     facingAzimuth: number | null;
+    /** 窓の実寸（m）。room モードの仮想の部屋で使う */
+    widthM: number;
+    heightM: number;
+    /** 床から窓の下端までの高さ（m） */
+    sillHeightM: number;
+  };
+  /** room モードで使う仮想の部屋の寸法（m） */
+  room: {
+    widthM: number;
+    depthM: number;
+    heightM: number;
   };
 }
 
@@ -97,7 +108,8 @@ function parseSite(c: Checker, raw: unknown, path: string): SiteEntry {
   const o = c.obj(raw, path);
   const screen = c.obj(o['screen'], `${path}.screen`);
   const win = c.obj(o['window'], `${path}.window`);
-  return {
+  const room = c.obj(o['room'], `${path}.room`);
+  const entry: SiteEntry = {
     label: typeof o['label'] === 'string' ? o['label'] : '',
     latitude: c.num(o, 'latitude', path, -90, 90),
     longitude: c.num(o, 'longitude', path, -180, 180),
@@ -110,8 +122,23 @@ function parseSite(c: Checker, raw: unknown, path: string): SiteEntry {
     window: {
       side: c.oneOf(win, 'side', `${path}.window`, ['left', 'right'] as const),
       facingAzimuth: c.numOrNull(win, 'facingAzimuth', `${path}.window`, 0, 360),
+      widthM: c.num(win, 'widthM', `${path}.window`, 0.1, 20),
+      heightM: c.num(win, 'heightM', `${path}.window`, 0.1, 10),
+      sillHeightM: c.num(win, 'sillHeightM', `${path}.window`, 0, 5),
+    },
+    room: {
+      widthM: c.num(room, 'widthM', `${path}.room`, 1, 50),
+      depthM: c.num(room, 'depthM', `${path}.room`, 1, 50),
+      heightM: c.num(room, 'heightM', `${path}.room`, 1, 10),
     },
   };
+  if (entry.window.widthM >= entry.room.widthM) {
+    c.problems.push(`${path}.window.widthM（${entry.window.widthM}）は ${path}.room.widthM（${entry.room.widthM}）より小さくしてください`);
+  }
+  if (entry.window.sillHeightM + entry.window.heightM > entry.room.heightM) {
+    c.problems.push(`${path}.window.sillHeightM + heightM（${entry.window.sillHeightM + entry.window.heightM}）は ${path}.room.heightM（${entry.room.heightM}）以下にしてください`);
+  }
+  return entry;
 }
 
 export function parseSiteConfig(raw: unknown, file = 'config/site.json'): SiteConfig {

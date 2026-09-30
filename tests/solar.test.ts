@@ -64,13 +64,13 @@ test('config の解決（磁北→真北、窓の左右）', () => {
   const base = cfg.sites[cfg.activeSite]!;
   const r = resolveSite({
     activeSite: 'x',
-    sites: { x: { ...base, screen: { facingAzimuth: 66, azimuthReference: 'magnetic', magneticDeclination: -7.5 }, window: { side: 'right', facingAzimuth: null } } },
+    sites: { x: { ...base, screen: { facingAzimuth: 66, azimuthReference: 'magnetic', magneticDeclination: -7.5 }, window: { ...base.window, side: 'right', facingAzimuth: null } } },
   });
   assert.equal(r.facingAzimuth, 58.5);
   assert.equal(r.windowAzimuth, 148.5);
   const l = resolveSite({
     activeSite: 'x',
-    sites: { x: { ...base, screen: { facingAzimuth: 10, azimuthReference: 'true', magneticDeclination: -7.5 }, window: { side: 'left', facingAzimuth: null } } },
+    sites: { x: { ...base, screen: { facingAzimuth: 10, azimuthReference: 'true', magneticDeclination: -7.5 }, window: { ...base.window, side: 'left', facingAzimuth: null } } },
   });
   assert.equal(l.facingAzimuth, 10);
   assert.equal(l.windowAzimuth, 280);

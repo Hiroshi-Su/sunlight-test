@@ -36,6 +36,19 @@ test('site.json の誤りをまとめて報告する', () => {
   assert.ok(problems.some((p) => p.includes('activeSite "production"')));
 });
 
+test('room モードの部屋・窓の寸法の誤りを報告する', () => {
+  const raw = readJson('site.json');
+  const sites = raw['sites'] as Record<string, Record<string, unknown>>;
+  const v = structuredClone(sites['verification']!);
+  (v['window'] as Record<string, unknown>)['widthM'] = 20;
+  (v['room'] as Record<string, unknown>)['widthM'] = 10;
+  (v['window'] as Record<string, unknown>)['sillHeightM'] = 3;
+  const problems = problemsOf(() => parseSiteConfig({ activeSite: 'verification', sites: { verification: v } }));
+  assert.equal(problems.length, 2);
+  assert.ok(problems.some((p) => p.includes('window.widthM') && p.includes('room.widthM')));
+  assert.ok(problems.some((p) => p.includes('sillHeightM') && p.includes('room.heightM')));
+});
+
 test('app.json の誤りを報告する', () => {
   const raw = { ...readJson('app.json'), mode: 'fullscreen', dailyReloadAt: '4:00', heartbeatTimeoutSec: 5 };
   const problems = problemsOf(() => parseAppConfig(raw));
