@@ -10,6 +10,7 @@ const bridge: SoracityBridge = {
   visuals: boot.visuals,
   saveVisuals: (cfg) => ipcRenderer.invoke(IPC.saveVisuals, cfg) as Promise<void>,
   heartbeat: (data) => ipcRenderer.send(IPC.heartbeat, data),
+  setMode: (mode) => ipcRenderer.send(IPC.setMode, mode),
   report: (type, data = {}) => ipcRenderer.send(IPC.report, { type, ...data }),
 };
 

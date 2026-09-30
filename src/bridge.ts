@@ -26,6 +26,8 @@ export interface SoracityBridge {
   /** config/visuals.json に書き込む（main 側で検証する） */
   saveVisuals(cfg: VisualsConfig): Promise<void>;
   heartbeat(data: Heartbeat): void;
+  /** モードを切り替える（main 側でウィンドウを作り直す。展示モードは枠なしウィンドウになるため） */
+  setMode(mode: AppMode): void;
   report(type: string, data?: ReportData): void;
 }
 
@@ -34,6 +36,7 @@ export const IPC = {
   heartbeat: 'heartbeat',
   report: 'report',
   saveVisuals: 'save-visuals',
+  setMode: 'set-mode',
 } as const;
 
 declare global {

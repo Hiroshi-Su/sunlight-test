@@ -54,11 +54,20 @@ URL パラメータ：
 |---|---|---|
 | `t` | `?t=2026-09-24T10:00` | 開始日時（現地時刻）。指定時は停止状態で開く |
 | `site` | `?site=production` | `config/site.json` のどの場所を使うか |
-| `mode` | `?mode=visuals` | 表示モード（`verify` / `visuals` / `room` / `kiosk`） |
+| `mode` | `?mode=visuals` | 表示モード（`verify` / `visuals` / `room` / `kiosk`）。画面上部の「モード」のスイッチでも切り替えられる |
 | `window` | `?window=ceiling` | room モードで最初に表示する窓の位置（`right` / `left` / `ceiling`）。設定ファイルは変わらない |
 | `scene` | `?scene=ink-bleed` | 表示する映像を一時的に切り替える（`config/visuals.json` は変わらない） |
 
 ## Electron アプリ（検証・visuals・room・展示の 4 モード）
+
+| 値 | モード | 内容 |
+|---|---|---|
+| `verify` | 検証（既定） | 平面図・高度グラフ・計算値で、太陽の計算を確かめる |
+| `visuals` | 映像の制作 | 映像の切り替え・調整・保存 |
+| `room` | 部屋のプレビュー | 仮想の部屋に光と影を再現する |
+| `kiosk` | 展示 | 3840×1080 の枠なしウィンドウに映像だけを出す |
+
+検証・visuals・room の画面上部に「モード」のスイッチ（検証／visuals／room／展示）がある。ブラウザでは URL の `mode` を差し替えて開き直し（時刻を指定して見ているときは、その時刻を引き継ぐ）、アプリではアプリ本体がウィンドウを作り直す（`Ctrl/Cmd + Shift + M` と同じ）。展示モードは映像だけを出すのでスイッチは出ない。戻るときはアプリでは `Ctrl/Cmd + Shift + M`、ブラウザでは URL の `mode` を変える。
 
 | コマンド | 内容 |
 |---|---|
@@ -74,7 +83,7 @@ URL パラメータ：
 | キー | 内容 |
 |---|---|
 | `Ctrl/Cmd + Shift + Q` | 終了（監視スクリプトも止まる） |
-| `Ctrl/Cmd + Shift + M` | モードの切り替え（検証 → visuals → room → 展示 → 検証） |
+| `Ctrl/Cmd + Shift + M` | モードの切り替え（検証 → visuals → room → 展示 → 検証）。展示モードから戻るときにも使う |
 | `Ctrl/Cmd + Shift + I` | DevTools |
 | `D` | 矢印表示の切り替え（展示モードでは初期 OFF） |
 | `G` | ガイド表示の切り替え（visuals モード） |
@@ -187,7 +196,7 @@ src/clock.ts              表示する時刻（現在時刻・早送り・指定
 src/scenes/               映像（シーン）。types.ts がインターフェース、index.ts が一覧
 src/room/scene.ts         room モードの光の計算と描画（パストレーシング）
 src/room/daylight.ts      大気を通った日差しの強さ・空の明るさ
-src/ui/                   各モードの UI（verify.ts・visuals.ts・room.ts・time-controls.ts が共通の時刻パネル）
+src/ui/                   各モードの UI（verify.ts・visuals.ts・room.ts・time-controls.ts が共通の時刻パネル、mode-switch.ts がモードのスイッチ）
 config/visuals.json       映像の選択と調整値（visuals モードから保存）
 vite.config.ts            開発サーバーでの visuals.json 保存
 src/palette.ts            太陽高度 → 空の色・色温度（仮値）

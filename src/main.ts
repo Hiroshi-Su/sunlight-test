@@ -13,6 +13,7 @@ import { type FinalOptions, Stage } from './stage.ts';
 import { el } from './ui/dom.ts';
 import { mountVerify } from './ui/verify.ts';
 import { formatBench, formatPerf, gpuTotalMs } from './ui/perf.ts';
+import { mountModeSwitch } from './ui/mode-switch.ts';
 import { mountRoomUi } from './ui/room.ts';
 import { mountVisuals } from './ui/visuals.ts';
 
@@ -48,6 +49,7 @@ document.body.classList.add(`mode-${mode}`);
 const site = resolveSite(siteConfig, params.get('site') ?? siteConfig.activeSite);
 const clock = new Clock(site.utcOffsetMinutes);
 clock.setFromParam(params.get('t'));
+if (mode !== 'kiosk') mountModeSwitch(mode, clock, bridge ? (m) => bridge.setMode(m) : undefined);
 
 const screenCanvas = el('screen', HTMLCanvasElement);
 const overlay = el('overlay', HTMLCanvasElement);

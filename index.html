@@ -26,6 +26,11 @@
   body.mode-room .stage { display: none; }
   body.mode-kiosk { padding: 0; overflow: hidden; background: #000; cursor: none; }
   body.mode-kiosk .stage { width: 100vw; height: 100vh; aspect-ratio: auto; }
+  body.mode-kiosk .mode-bar { display: none; }
+  .mode-bar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 12px; font-size: 13px; }
+  .mode-bar-label { color: var(--muted); margin-right: 4px; }
+  .mode-bar button { padding: 4px 14px; cursor: pointer; }
+  .mode-bar button.on { cursor: default; }
   .visuals-ui { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 16px; align-items: flex-start; }
   .visuals-ui .lil-gui.root { --width: 480px; }
   .room-ui { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 16px; align-items: flex-start; }
@@ -58,6 +63,7 @@
 </style>
 </head>
 <body>
+  <nav class="mode-bar" id="modeBar" aria-label="モードの切り替え"><span class="mode-bar-label">モード</span></nav>
   <div class="stage">
     <canvas id="screen"></canvas>
     <canvas id="overlay" width="3840" height="1080"></canvas>

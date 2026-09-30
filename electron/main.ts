@@ -233,6 +233,12 @@ ipcMain.handle(IPC.saveVisuals, (e, raw: unknown) => {
   visualsConfig = cfg;
   log('visuals-saved', { activeScene: cfg.activeScene });
 });
+ipcMain.on(IPC.setMode, (e, next: unknown) => {
+  if (!fromCurrent(e.sender) || typeof next !== 'string' || !isMode(next) || next === mode) return;
+  mode = next;
+  log('mode-switch', { mode, by: 'switch' });
+  setImmediate(recreateWindow); // 送ってきたウィンドウの処理が終わってから作り直す
+});
 ipcMain.on(IPC.heartbeat, (e, data: Heartbeat) => {
   if (!fromCurrent(e.sender)) return;
   lastBeat = Date.now();
