@@ -1,6 +1,6 @@
 // ひな形：光の時計（最小版）。画面全体の色面グラデーションが、光の向きと太陽高度に合わせて移ろう
 import * as THREE from 'three';
-import { GLSL_NOISE, fullscreenShader, hexToVec3, wrap } from './shader.ts';
+import { GLSL_NOISE, WGSL_NOISE, fullscreenShader, hexToVec3, wrap } from './shader.ts';
 import { type SceneDef, bool, color, num } from './types.ts';
 
 const frag = /* glsl */ `
@@ -30,6 +30,25 @@ void main() {
 }
 `;
 
+const wgsl = /* wgsl */ `
+${WGSL_NOISE}
+fn frag(p: vec2f) -> vec3f {
+  let uv = p / u.uRes;
+  let aspect = u.uRes.x / u.uRes.y;
+
+  // 光の進む向きに沿ったグラデーション（光が来る側 = 0）
+  let d = normalize(u.uDir);
+  let q = vec2f((uv.x - 0.5) * aspect, uv.y - 0.5);
+  var t = dot(q, d) / (0.5 * aspect + 0.5) * 0.5 + 0.5;
+  let warp = (fbm(q * 0.9 + u.uDrift) - 0.5) * u.uNoise;
+  t = smoothstep(0.5 - u.uSoftness, 0.5 + u.uSoftness, t + warp);
+
+  let far = mix(u.uSkyTop, u.uAccent, u.uUseAccent);
+  let near = mix(u.uSkyBottom, u.uLightColor * 0.9, u.uWarmth * (0.35 + 0.65 * u.uLit));
+  return mix(near, far, t);
+}
+`;
+
 export const colorField: SceneDef = {
   id: 'color-field',
   label: 'ひな形：光の時計',
@@ -43,7 +62,7 @@ export const colorField: SceneDef = {
     accent: { type: 'color', label: '奥側の色', value: '#5a6aa8' },
   },
   create({ width, height }) {
-    const s = fullscreenShader(frag, {
+    const s = fullscreenShader({ glsl: frag, wgsl }, {
       uRes: { value: new THREE.Vector2(width, height) },
       uDir: { value: new THREE.Vector2(-1, -0.5) },
       uLit: { value: 0 },
@@ -58,8 +77,7 @@ export const colorField: SceneDef = {
       uUseAccent: { value: 0 },
     });
     return {
-      scene: s.scene,
-      camera: s.camera,
+      pass: s.pass,
       update(input, params) {
         const u = s.uniforms;
         const flow = num(params, 'flow');

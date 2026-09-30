@@ -1,6 +1,6 @@
 // 検証用：光の向きと強さを、窓側から差す光の広がりと窓枠の影で見せる
 import * as THREE from 'three';
-import { GLSL_NOISE, fullscreenShader, wrap } from './shader.ts';
+import { GLSL_NOISE, WGSL_NOISE, fullscreenShader, wrap } from './shader.ts';
 import { type SceneDef, bool, num } from './types.ts';
 
 const frag = /* glsl */ `
@@ -37,6 +37,35 @@ void main() {
 }
 `;
 
+const wgsl = /* wgsl */ `
+${WGSL_NOISE}
+fn frag(p: vec2f) -> vec3f {
+  let uv = p / u.uRes;
+  var col = mix(u.uSkyBottom, u.uSkyTop, smoothstep(0.0, 1.0, uv.y));
+  let n = fbm(vec2f(uv.x * u.uRes.x / u.uRes.y, uv.y) * 1.3 + u.uDrift);
+  col *= 1.0 - u.uNoise * 0.5 + u.uNoise * n;
+
+  let d = normalize(u.uDir);
+  let perp = vec2f(-d.y, d.x);
+  let f = fract(dot(p, perp) / u.uPaneWidth);
+  let pane = mix(1.0, smoothstep(0.0, 0.03, f) * (1.0 - smoothstep(0.82, 0.85, f)), u.uStripes);
+
+  // 光が入ってくる側の画面端を 0、抜けていく側を 1
+  let c1 = dot(vec2f(u.uRes.x, 0.0), d);
+  let c2 = dot(vec2f(0.0, u.uRes.y), d);
+  let c3 = dot(u.uRes, d);
+  let tMin = min(min(0.0, c1), min(c2, c3));
+  let tMax = max(max(0.0, c1), max(c2, c3));
+  let t = (dot(p, d) - tMin) / max(tMax - tMin, 1.0);
+  let fade = mix(1.0, 0.35, smoothstep(0.0, 1.0, t));
+
+  // 窓枠の影は沈め、光の当たる面は光の色へ寄せる（加算で白飛びさせない）
+  col *= 1.0 - u.uShadow * u.uLit * (1.0 - pane);
+  col = mix(col, u.uLightColor * 0.9, u.uStrength * pane * fade * u.uLit);
+  return col;
+}
+`;
+
 export const lightDebug: SceneDef = {
   id: 'light-debug',
   label: '検証用：光の向き',
@@ -49,7 +78,7 @@ export const lightDebug: SceneDef = {
     noise: { type: 'number', label: '揺らぎ', value: 0.1, min: 0, max: 0.4, step: 0.01 },
   },
   create({ width, height }) {
-    const s = fullscreenShader(frag, {
+    const s = fullscreenShader({ glsl: frag, wgsl }, {
       uRes: { value: new THREE.Vector2(width, height) },
       uDir: { value: new THREE.Vector2(-1, -0.5) },
       uLit: { value: 0 },
@@ -64,8 +93,7 @@ export const lightDebug: SceneDef = {
       uNoise: { value: 0.1 },
     });
     return {
-      scene: s.scene,
-      camera: s.camera,
+      pass: s.pass,
       update(input, params) {
         const u = s.uniforms;
         u.uDir.value.set(input.light.dirX, input.light.dirY);

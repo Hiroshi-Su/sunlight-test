@@ -32,11 +32,32 @@ vec3 effect(vec2 uv, vec2 p) {
 }
 `;
 
+// 上と同じもの（WebGPU 用）
+const wgsl = /* wgsl */ `
+fn effect(uv: vec2f, p: vec2f) -> vec3f {
+  let aspect = u.uRes.x / u.uRes.y;
+  let q = vec2f(uv.x * aspect, uv.y);
+  let above = uv.y - u.uGround;
+  let prof = exp(-max(above, 0.0) / u.uHeight) * smoothstep(-0.25, 0.0, above);
+  let amp = u.uStrength * prof * u.uSun;
+  let nq = q * vec2f(u.uScale * 1.6, u.uScale) + u.uRise;
+  let w = vec2f(fbm(nq), fbm(nq + 5.2)) - 0.5;
+  let duv = w * amp * vec2f(0.05 / aspect, 0.04);
+  var col = img(uv + duv);
+  if (above < 0.0 && above > -0.08) {
+    let k = u.uMirage * (1.0 - smoothstep(0.0, 0.08, -above)) * u.uSun;
+    col = mix(col, img(vec2f(uv.x, u.uGround - above * 1.5) + duv * 2.0), clamp(k * 0.7, 0.0, 1.0));
+  }
+  return col;
+}
+`;
+
 export const heatHaze = imageScene({
   id: 'img-heat-haze',
   label: '画像：陽炎',
   sunLinks: [{ toggle: 'sunLinked', uses: ['altitude', 'lit'] }],
   glsl,
+  wgsl,
   params: {
     strength: { type: 'number', label: '揺らぎの強さ', value: 1.2, min: 0, max: 5, step: 0.05 },
     ground: { type: 'number', label: '地面の高さ', value: 0.28, min: 0, max: 1, step: 0.005 },

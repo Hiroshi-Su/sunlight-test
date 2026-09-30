@@ -48,11 +48,47 @@ vec3 effect(vec2 uv, vec2 p) {
 }
 `;
 
+// 上と同じもの（WebGPU 用）
+const wgsl = /* wgsl */ `
+fn spectrum(x: f32) -> vec3f {
+  return clamp(vec3f(
+    smoothstep(0.45, 0.75, x) + 0.35 * (1.0 - smoothstep(0.0, 0.18, x)),
+    1.0 - abs(x - 0.5) * 2.6,
+    1.0 - smoothstep(0.25, 0.55, x)), vec3f(0.0), vec3f(1.0));
+}
+
+fn effect(uv: vec2f, p: vec2f) -> vec3f {
+  let aspect = u.uRes.x / u.uRes.y;
+  let q = vec2f(uv.x * aspect, uv.y);
+  let d = normalize(u.uDir);
+  let perp = vec2f(-d.y, d.x);
+  let e = 0.004;
+  let qa = q * u.uScale + u.uFlow;
+  let h0 = fbm(qa);
+  let gOrg = vec2f(fbm(qa + vec2f(e * u.uScale, 0.0)) - h0, fbm(qa + vec2f(0.0, e * u.uScale)) - h0) / e * 0.02;
+  let r = fract(dot(q, perp) * u.uRibFreq) * 2.0 - 1.0;
+  let gRib = perp * (-r / sqrt(max(1.0 - r * r, 0.05))) * 0.02;
+  let g = mix(gOrg, gRib, u.uRibbed);
+  let D = g * u.uStrength + d * u.uSunBias * u.uLit * 0.012;
+  var acc = vec3f(0.0);
+  var wsum = vec3f(0.0);
+  for (var i = 0; i < 9; i++) {
+    let x = f32(i) / 8.0;
+    let w = spectrum(x);
+    let o = D * (1.0 + u.uDispersion * (0.5 - x) * 2.0);
+    acc += img(uv + o * vec2f(1.0 / aspect, 1.0)) * w;
+    wsum += w;
+  }
+  return acc / wsum;
+}
+`;
+
 export const prism = imageScene({
   id: 'img-prism',
   label: '画像：分光（プリズム）',
   sunLinks: [{ toggle: 'sunLinked', uses: ['lit', 'direction'] }],
   glsl,
+  wgsl,
   params: {
     strength: { type: 'number', label: '屈折の強さ', value: 0.5, min: 0, max: 4, step: 0.05 },
     dispersion: { type: 'number', label: '色の分かれ方', value: 0.8, min: 0, max: 2, step: 0.05 },

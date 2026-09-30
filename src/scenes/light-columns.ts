@@ -1,7 +1,7 @@
 // 光の柱：ガラスの継ぎ目を思わせる縦の光の筋が加算的に輝き、背景には重なるカラーバンド。
 // 柱は光の向きに関わらず固定の縦位置（実際の継ぎ目は動かないため）。日差しが入るほど輝きが増す。
 import * as THREE from 'three';
-import { GLSL_NOISE, fullscreenShader, hexToVec3, wrap } from './shader.ts';
+import { GLSL_NOISE, WGSL_NOISE, fullscreenShader, hexToVec3, wrap } from './shader.ts';
 import { type SceneDef, bool, color, num } from './types.ts';
 
 const frag = /* glsl */ `
@@ -75,6 +75,60 @@ void main() {
 }
 `;
 
+const wgsl = /* wgsl */ `
+${WGSL_NOISE}
+
+// 4 色を周期的に混ぜる（三角基底の重ね合わせ）。phase が 1 増えるごとに次の色へ
+fn cyclicPalette(phase: f32, c0: vec3f, c1: vec3f, c2: vec3f, c3: vec3f) -> vec3f {
+  var cols = array<vec3f, 4>(c0, c1, c2, c3);
+  var acc = vec3f(0.0);
+  var wsum = 0.0;
+  for (var i = 0; i < 4; i++) {
+    var d = phase - f32(i);
+    d -= floor(d / 4.0 + 0.5) * 4.0;
+    let w = max(0.0, 1.0 - abs(d));
+    acc += cols[i] * w;
+    wsum += w;
+  }
+  return acc / max(wsum, 1e-4);
+}
+
+fn frag(p: vec2f) -> vec3f {
+  let uv = p / u.uRes;
+  let aspect = u.uRes.x / u.uRes.y;
+
+  // 背景：うねる境界を持つカラーバンド
+  let wob = (fbm(vec2f(uv.x * aspect * 1.5 + u.uDrift.x, uv.y * 2.0 + u.uDrift.y)) - 0.5) * u.uWobble;
+  let phase = (uv.y + wob) * u.uBands;
+  var col = cyclicPalette(phase, u.uC0, u.uC1, u.uC2, u.uC3);
+  col *= 0.94 + 0.08 * fbm(uv * vec2f(aspect, 1.0) * 3.0 + u.uDrift * 0.6);
+
+  // 柱：継ぎ目を思わせる固定の縦位置。位置ごとに少しずらして不揃いにする
+  let idx = floor(p.x / u.uColumnSpacing + 0.5);
+  let jitter = (hash(vec2f(idx, 11.0)) - 0.5) * u.uColumnJitter * u.uColumnSpacing;
+  let d = p.x - (idx * u.uColumnSpacing + jitter);
+  let ad = abs(d);
+  // 芯：ごく細い、白く飛ぶ部分
+  let coreW = u.uColumnWidth * 0.35;
+  let core = 1.0 - smoothstep(0.0, coreW, ad);
+
+  // 輪：芯のすぐ外側から立ち上がり、外側でなだらかに消える補色の帯（外径を色の成分ごとに変えて虹色ににじませる）
+  let ringInner = u.uColumnWidth * 0.5;
+  let ringOuter = vec3f(u.uColumnWidth * 2.6 * (1.0 + u.uChroma), u.uColumnWidth * 2.6, u.uColumnWidth * 2.6 * (1.0 - u.uChroma));
+  let ringShape = smoothstep(vec3f(0.0), vec3f(ringInner), vec3f(ad)) * (1.0 - smoothstep(vec3f(ringInner), ringOuter, vec3f(ad)));
+
+  let shimmer = 1.0 + u.uFlicker * (noise(vec2f(idx * 3.7, u.uDrift.y * 2.0)) - 0.5) * 2.0;
+  let baseGlow = u.uColumnBase + u.uGlow * shimmer;
+  let haloAmount = clamp(ringShape * (0.35 + baseGlow), vec3f(0.0), vec3f(0.85));
+  let coreAmount = clamp(core * u.uGlow * shimmer, 0.0, 1.0);
+  let envelope = max(haloAmount, vec3f(coreAmount));
+
+  // 柱の色は、通過する背景色の補色（RGB 反転）。足すと白になる
+  let complement = vec3f(1.0) - col;
+  return col + complement * envelope;
+}
+`;
+
 export const lightColumns: SceneDef = {
   id: 'light-columns',
   label: '光の柱',
@@ -102,7 +156,7 @@ export const lightColumns: SceneDef = {
     flickerSpeed: { type: 'number', label: '揺らめきの速さ', value: 1, min: 0, max: 5, step: 0.05 },
   },
   create({ width, height }) {
-    const s = fullscreenShader(frag, {
+    const s = fullscreenShader({ glsl: frag, wgsl }, {
       uRes: { value: new THREE.Vector2(width, height) },
       uDrift: { value: new THREE.Vector2() },
       uBands: { value: 4 },
@@ -120,8 +174,7 @@ export const lightColumns: SceneDef = {
       uFlicker: { value: 0.2 },
     });
     return {
-      scene: s.scene,
-      camera: s.camera,
+      pass: s.pass,
       update(input, params) {
         const u = s.uniforms;
         const flow = num(params, 'flow');

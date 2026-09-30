@@ -7,6 +7,8 @@ import type { RoomGeometry, RoomRenderSettings, WindowGeometry } from '../room/s
 import { SCENES, findScene } from '../scenes/index.ts';
 import type { SceneDef } from '../scenes/types.ts';
 import type { SolarState } from '../solar.ts';
+import type { Backend } from '../stage.ts';
+import { BACKEND_LABEL } from './perf.ts';
 import { el } from './dom.ts';
 import { mountTimeControls } from './time-controls.ts';
 
@@ -24,6 +26,7 @@ export function mountRoomUi(
   configSide: WindowSide,
   initialSide: WindowSide,
   onWindowSide: (side: WindowSide) => void,
+  benchmark: () => Promise<number | null>,
 ) {
   const gui = new GUI({ container: el('room-panel', HTMLElement), width: 380, title: 'room' });
 
@@ -100,6 +103,14 @@ export function mountRoomUi(
   fv.add(settings, 'bounces', 0, 6, 1).name('照り返しの回数');
   fv.add(settings, 'smooth').name('照り返しのざらつきをならす');
   fv.add(settings, 'exposure', 0.1, 8, 0.05).name('露出（明るさ）');
+  // 重さ：今の設定で 60 フレーム続けて描き、GPU の処理が終わるまで待って 1 フレームの時間を測る（その間は描画が止まる）
+  const bench = { text: '' };
+  fv.add({ run: async () => {
+    bench.text = '計測中…';
+    const ms = await benchmark();
+    bench.text = ms === null ? '' : `1 フレーム ${ms.toFixed(1)} ms（最大 ${Math.floor(1000 / ms)} fps 相当）`;
+  } }, 'run').name('重さを測る（60 フレーム）');
+  fv.add(bench, 'text').name('結果').disable().listen();
 
   // 水：3 つはそれぞれ独立に出し消しできる（窓の外の 2 つは、壁の窓のときだけ効く）
   const fw = gui.addFolder('水');
@@ -139,7 +150,7 @@ export function mountRoomUi(
     settings,
     /** スクリーンに映す映像 */
     get screenScene(): SceneDef { return findScene(screen.id); },
-    updateStatus(s: SolarState, lit: number, samples: number): void {
+    updateStatus(s: SolarState, lit: number, samples: number, backend: Backend): void {
       const { sun, light } = s;
       const windowText = state.side === 'ceiling' ? '天井（天窓）' : WINDOW_SIDE_LABEL[state.side];
       statusEl.textContent = [
@@ -153,6 +164,7 @@ export function mountRoomUi(
         ...(state.side === 'ceiling' && (settings.seaView || settings.seaRipples) ? ['※ 窓の外の海・水面の反射は、壁の窓のときだけ効く'] : []),
         ...(settings.screen ? [`スクリーン  ${findScene(screen.id).label}`] : []),
         `1 画素あたりの光線 ${samples} 本${samples < 256 ? '（止めておくと増えて、ざらつきが減る）' : ''}`,
+        `描画 ${BACKEND_LABEL[backend]}`,
         '',
         'ドラッグ：視点回転／ホイール：ズーム／右ドラッグ：平行移動',
       ].join('\n');

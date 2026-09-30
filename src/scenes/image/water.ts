@@ -48,10 +48,42 @@ vec3 effect(vec2 uv, vec2 p) {
 }
 `;
 
+// 上と同じもの（WebGPU 用）
+const wgsl = /* wgsl */ `
+fn effect(uv: vec2f, p: vec2f) -> vec3f {
+  let aspect = u.uRes.x / u.uRes.y;
+  if (u.uReflectMode < 0.5) {
+    let q = vec2f(uv.x * aspect, uv.y) * u.uWaveScale;
+    let w = vec2f(fbm(q + u.uFlow), fbm(q * 1.3 + u.uFlow.yx + 4.0)) - 0.5;
+    return img(uv + w * u.uWind * 0.04 * vec2f(1.0 / aspect, 1.0));
+  }
+  if (uv.y >= u.uHorizon) { return img(uv); }
+  let depth = u.uHorizon - uv.y;
+  let persp = 1.0 / (depth * 6.0 + 0.08);
+  let wq = vec2f(uv.x * aspect * persp * 2.0, persp * 6.0) * u.uWaveScale;
+  let wx = fbm(wq + u.uFlow) - 0.5;
+  let wy = fbm(wq * vec2f(1.0, 2.0) + u.uFlow.yx + 7.0) - 0.5;
+  let dd = pow(depth, 0.6) * 0.5;
+  let ruv = vec2f(uv.x + wx * u.uWind * 0.3 * dd, u.uHorizon + depth * 0.9 + wy * u.uWind * 0.35 * dd);
+  var acc = vec3f(0.0);
+  for (var i = 0; i < 10; i++) {
+    let o = (f32(i) / 9.0 - 0.3) * u.uStreak * depth;
+    acc += imgLod(ruv + vec2f(0.0, o), 1.0);
+  }
+  let refl = acc / 10.0;
+  let fres = mix(0.35, 1.0, pow(1.0 - clamp(depth * 2.0, 0.0, 1.0), 3.0)) * u.uReflect;
+  var water = mix(u.uWaterColor, refl, fres);
+  let slope = fbm(wq * vec2f(1.0, 2.5) + u.uFlow * 1.3 + 3.0) - 0.5;
+  water *= 1.0 + slope * u.uWind * 0.6 * smoothstep(0.0, 0.03, depth);
+  return water * (1.0 - u.uDarken * clamp(depth * 2.0, 0.0, 1.0));
+}
+`;
+
 export const water = imageScene({
   id: 'img-water',
   label: '画像：水面',
   glsl,
+  wgsl,
   params: {
     reflectMode: { type: 'boolean', label: '映り込み（オフで水越しの屈折）', value: true },
     horizon: { type: 'number', label: '水平線の高さ', value: 0.3, min: 0.05, max: 0.95, step: 0.005 },

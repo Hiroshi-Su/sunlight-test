@@ -44,11 +44,46 @@ vec3 effect(vec2 uv, vec2 p) {
 }
 `;
 
+// 上と同じもの（WebGPU 用）
+const wgsl = /* wgsl */ `
+fn effect(uv: vec2f, p: vec2f) -> vec3f {
+  let base = img(uv);
+  let d = normalize(u.uFlowDir);
+  let perp = vec2f(-d.y, d.x);
+  let across = dot(p, perp) / u.uWidth;
+  let colId = floor(across);
+  let cx = fract(across) - 0.5;
+  let h = hash(vec2f(colId, 3.3));
+  let h2 = hash(vec2f(colId, 7.1));
+  if (h2 < 1.0 - u.uAmount) { return base; }
+  let life = fract(h * 5.3 + u.uT * (1.0 + floor(h2 * 5.0)) / ${TIME_PERIOD.toFixed(1)});
+  let len = u.uLen * u.uRes.y * (0.25 + 0.75 * h) * smoothstep(0.0, 0.7, life) * (1.0 - smoothstep(0.9, 1.0, life));
+  if (len < 2.0) { return base; }
+  var hitDist = -1.0;
+  var hitCol = vec3f(0.0);
+  for (var i = 0; i < 28; i++) {
+    let sd = f32(i) / 27.0 * len;
+    let c = imgLod((p - d * sd) / u.uRes, 1.0);
+    var l = luma(c);
+    if (u.uInvert > 0.5) { l = 1.0 - l; }
+    if (l > u.uThreshold) { hitDist = sd; hitCol = c; break; }
+  }
+  if (hitDist <= 0.0) { return base; }
+  let halfW = 0.5 * mix(0.85, 0.5, hitDist / len);
+  let body = (1.0 - smoothstep(halfW - 0.06, halfW, abs(cx))) * (1.0 - smoothstep(len - u.uWidth * 0.3, len, hitDist));
+  let bulbR = u.uWidth * 0.42;
+  let bulb = 1.0 - smoothstep(bulbR - 1.5, bulbR, length(vec2f(cx * u.uWidth, hitDist - (len - bulbR))));
+  let mask = max(body, bulb);
+  return mix(base, hitCol, mask * u.uOpacity);
+}
+`;
+
 export const drip = imageScene({
   id: 'img-drip',
   label: '画像：垂れる流れ',
   sunLinks: [{ toggle: 'followLight', uses: ['direction'] }],
   glsl,
+  wgsl,
   params: {
     len: { type: 'number', label: '垂れる長さ', value: 0.35, min: 0.02, max: 1, step: 0.01 },
     threshold: { type: 'number', label: '垂れる明るさ', value: 0.62, min: 0, max: 1, step: 0.01 },

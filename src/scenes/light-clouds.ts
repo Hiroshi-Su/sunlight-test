@@ -2,7 +2,7 @@
 // 光は画面の外、光が来る側（光の進む向きの上流）にあり、そこに近い雲ほど明るく、光の色に染まる。
 // 動き回る色の光の点（光の点を表示）は既定ではオフ。
 import * as THREE from 'three';
-import { DriftBlend, GLSL_SIMPLEX3, fullscreenShader, hexToVec3 } from './shader.ts';
+import { DriftBlend, GLSL_SIMPLEX3, WGSL_SIMPLEX3, fullscreenShader, hexToVec3 } from './shader.ts';
 import { type SceneDef, bool, color, num } from './types.ts';
 
 
@@ -78,6 +78,56 @@ void main() {
 }
 `;
 
+// 上と同じもの（WebGPU 用）
+const wgsl = /* wgsl */ `
+${WGSL_SIMPLEX3}
+
+fn cloudSum(q: vec2f, off: vec3f) -> f32 {
+  var s = 0.0;
+  var a = 0.55;
+  var f = 1.0;
+  for (var i = 0; i < ${MAX_OCTAVES}; i++) {
+    if (f32(i) >= u.uOctaves) { break; }
+    let shift = vec2f(17.3, -9.1) * f32(i);
+    s += a * snoise(vec3f((q + off.xy) * f * u.uScale + shift, off.z * (1.0 + 0.35 * f32(i))));
+    f *= 2.03;
+    a *= 0.5;
+  }
+  return s;
+}
+
+fn density(q: vec2f) -> f32 {
+  var s = cloudSum(q, u.uOffA);
+  if (u.uBlend > 0.0) {
+    let w = u.uBlend;
+    s = (s * (1.0 - w) + cloudSum(q, u.uOffB) * w) / sqrt((1.0 - w) * (1.0 - w) + w * w);
+  }
+  var d = 0.5 + 0.5 * s;
+  d = (d - 0.5) * u.uContrast + 0.5 + (u.uAmount - 0.5);
+  return clamp(d, 0.0, 1.0);
+}
+
+fn frag(p: vec2f) -> vec3f {
+  let q = p / u.uRes.y;
+  var d = 0.0;
+  if (u.uCloudsOn > 0.5) { d = density(q); }
+  let sky = mix(u.uSkyBottom, u.uSkyTop, p.y / u.uRes.y);
+  var col = sky * u.uBg + d * u.uAmbient * (0.5 * (u.uSkyTop + u.uSkyBottom) + 0.1);
+  let r = distance(q, u.uSrc);
+  let light = u.uGlow * exp(-r / u.uSpread);
+  col += u.uLightCol * light * (d + u.uHaze * (1.0 - d));
+  if (u.uPointsOn > 0.5) {
+    for (var i = 0; i < ${POINTS}; i++) {
+      let rp = distance(q, u.uPointPos[i]);
+      let onCloud = max(0.0, 1.0 - rp / u.uPointReach) * d;
+      let core = u.uPointSize / max(rp, 1e-3);
+      col += u.uPointCol[i] * (onCloud * 0.8 + core);
+    }
+  }
+  return col;
+}
+`;
+
 export const lightClouds: SceneDef = {
   id: 'light-clouds',
   label: '光の雲',
@@ -120,7 +170,7 @@ export const lightClouds: SceneDef = {
   },
   create({ width, height }) {
     const aspect = width / height;
-    const s = fullscreenShader(frag, {
+    const s = fullscreenShader({ glsl: frag, wgsl }, {
       uRes: { value: new THREE.Vector2(width, height) },
       uOffA: { value: new THREE.Vector3() },
       uOffB: { value: new THREE.Vector3() },
@@ -151,8 +201,7 @@ export const lightClouds: SceneDef = {
     let last = -1;
 
     return {
-      scene: s.scene,
-      camera: s.camera,
+      pass: s.pass,
       update(input, params) {
         const u = s.uniforms;
         const dt = last < 0 ? 0 : Math.min(0.25, Math.max(0, input.time - last));

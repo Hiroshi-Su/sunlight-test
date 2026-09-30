@@ -13,7 +13,7 @@ const input = (time: number): SceneInput => ({
 test('光の雲：何時間動かしても雲の動きの量は上限内に収まり、巻き戻しのつなぎ目で見た目が飛ばない', () => {
   const inst = lightClouds.create({ width: 3840, height: 1080 });
   const params = { ...defaultParams(lightClouds), evolve: 5, flow: 5 };
-  const u = (inst.scene.children[0] as unknown as { material: { uniforms: Record<string, { value: any }> } }).material.uniforms;
+  const u = inst.pass.uniforms;
   // 見えている雲 = A と B を重み uBlend で混ぜたもの（0 なら A だけ、1 なら B だけ）
   let prevBlend = 0, blends = 0, maxAbs = 0;
   let prev: number[] = [];

@@ -63,11 +63,62 @@ vec3 effect(vec2 uv, vec2 p) {
 }
 `;
 
+// 上と同じもの（WebGPU 用）
+const wgsl = /* wgsl */ `
+fn hash2(p: vec2f) -> vec2f { return fract(sin(vec2f(dot(p, vec2f(127.1, 311.7)), dot(p, vec2f(269.5, 183.3)))) * 43758.5453); }
+
+fn drops(q: vec2f, scale: f32, seed: f32, density: f32) -> vec3f {
+  let g = q * scale;
+  let id = floor(g);
+  let f = fract(g);
+  var v = 0.0;
+  var grad = vec2f(0.0);
+  for (var j = -1; j <= 1; j++) {
+    for (var i = -1; i <= 1; i++) {
+      let cid = id + vec2f(f32(i), f32(j));
+      if (hash(cid + seed + 9.7) > density) { continue; }
+      let h = hash2(cid + seed);
+      let c = vec2f(f32(i), f32(j)) + 0.15 + 0.7 * h;
+      let life = fract(h.x * 3.7 + u.uT * (2.0 + floor(h.y * 7.0)) / ${TIME_PERIOD.toFixed(1)});
+      let r = (0.16 + 0.3 * hash(cid + seed + 3.1)) * smoothstep(0.0, 0.25, life) * (1.0 - smoothstep(0.8, 1.0, life));
+      let dv = f - c;
+      let d2 = max(dot(dv, dv), 1e-4);
+      let w = r * r / d2;
+      v += w;
+      grad += -2.0 * w * dv / d2;
+    }
+  }
+  return vec3f(v, grad * scale);
+}
+
+fn effect(uv: vec2f, p: vec2f) -> vec3f {
+  let aspect = u.uRes.x / u.uRes.y;
+  let q = vec2f(uv.x * aspect, uv.y);
+  let big = drops(q, 1.0 / u.uDropSize, 0.0, u.uDensity);
+  let small = drops(q, 3.2 / u.uDropSize, 17.0, u.uDensity * u.uSmall);
+  let f = select(small, big, big.x > small.x);
+  let inside = smoothstep(0.96, 1.04, f.x);
+  let hgt = sqrt(clamp(1.0 - 1.0 / max(f.x, 1e-3), 0.0, 1.0));
+  let n = f.yz / (length(f.yz) + 1e-3);
+  let off = -n * (1.0 - hgt) * u.uRefract;
+  let clear = img(uv + off * vec2f(1.0 / aspect, 1.0)) * (0.94 + 0.1 * hgt);
+  var fog = mix(imgLod(uv, u.uBlur), u.uFogColor, u.uFog);
+  fog *= 1.0 + (noise(p * 0.35) - 0.5) * 0.04 * u.uFog;
+  var col = mix(fog, clear, inside);
+  let rim = smoothstep(1.0, 1.12, f.x) * (1.0 - smoothstep(1.12, 1.8, f.x));
+  let shadow = smoothstep(0.75, 1.0, f.x) * (1.0 - smoothstep(0.97, 1.03, f.x));
+  col *= 1.0 - 0.3 * shadow;
+  col += mix(u.uRimColor, u.uLightColor, 0.35) * rim * u.uRim * u.uSunRim;
+  return col;
+}
+`;
+
 export const droplets = imageScene({
   id: 'img-droplets',
   label: '画像：結露・水滴',
   sunLinks: [{ toggle: 'sunRim', uses: ['lit'] }, { uses: ['color'] }],
   glsl,
+  wgsl,
   params: {
     fog: { type: 'number', label: '曇り（湿度）', value: 0.5, min: 0, max: 1, step: 0.01 },
     blur: { type: 'number', label: '曇りのぼけ', value: 5, min: 0, max: 8, step: 0.1 },

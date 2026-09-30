@@ -1,5 +1,5 @@
 // 映像（シーン）の共通インターフェース。新しい映像は SceneDef を作って scenes/index.ts に登録する。
-import type * as THREE from 'three';
+import type { FullscreenPass } from './shader.ts';
 import type { ParamValues } from '../config.ts';
 import type { RGB } from '../palette.ts';
 import type { LightOnScreen, SunPosition } from '../solar.ts';
@@ -30,8 +30,8 @@ export type ParamSpec =
   | { type: 'boolean'; label: string; value: boolean };
 
 export interface SceneInstance {
-  readonly scene: THREE.Scene;
-  readonly camera: THREE.Camera;
+  /** シェーダー（GLSL・WGSL）と値。WebGL2・WebGPU のどちらで描くかは土台が決める */
+  readonly pass: FullscreenPass;
   update(input: SceneInput, params: ParamValues): void;
   dispose(): void;
 }

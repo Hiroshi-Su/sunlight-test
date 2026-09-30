@@ -95,6 +95,38 @@ float fresnelWater(float cosI) {
 }
 `;
 
+const wgslSet = (name: string, waves: Wave[]): string => {
+  const n = waves.length;
+  const list = waves.map((w) => `vec3f(${w.kx.toFixed(5)}, ${w.kz.toFixed(5)}, ${w.amp.toExponential(5)})`).join(',\n  ');
+  return `
+var<private> ${name}_W: array<vec3f, ${n}> = array<vec3f, ${n}>(
+  ${list}
+);
+fn ${name.toLowerCase()}Wave(p: vec2f) -> vec3f {
+  var r = vec3f(0.0);
+  for (var i = 0; i < ${n}; i++) {
+    let w = ${name}_W[i];
+    let a = dot(w.xy, p) - u.u${name}Ph[i];
+    r += w.z * vec3f(sin(a), w.x * cos(a), w.y * cos(a));
+  }
+  return r * u.uWaveAmp;
+}`;
+};
+
+/** WATER_GLSL と同じもの（WGSL）。値は u.uWaveAmp・u.u*Ph（room の値の構造体から読む） */
+export const WATER_WGSL = /* wgsl */ `
+${wgslSet('POOL', POOL)}
+${wgslSet('SEA', SEA)}
+${wgslSet('FINE', FINE)}
+
+fn waveNormal(hw: vec3f) -> vec3f { return normalize(vec3f(-hw.y, 1.0, -hw.z)); }
+
+fn fresnelWater(cosI: f32) -> f32 {
+  let f0 = ${(((WATER_IOR - 1) / (WATER_IOR + 1)) ** 2).toFixed(5)};
+  return f0 + (1.0 - f0) * pow(1.0 - clamp(cosI, 0.0, 1.0), 5.0);
+}
+`;
+
 /** 時刻 t（秒）での各波の位相。ω·t を 2π で巻き戻す */
 export function wavePhases(t: number): { pool: Float32Array; sea: Float32Array; fine: Float32Array } {
   const ph = (ws: Wave[]): Float32Array => Float32Array.from(ws, (w) => (w.omega * t) % (2 * Math.PI));

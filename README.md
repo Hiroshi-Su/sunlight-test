@@ -6,7 +6,7 @@
 案件の前提・コンセプトは [sola_city_projection_overview.md](sola_city_projection_overview.md) を参照。
 計算の中身・`light` の意味・検証方法は [docs/verification.md](docs/verification.md) を参照。
 各映像の仕組みと元にした自然現象は [docs/visuals.md](docs/visuals.md) を参照。
-仮想の部屋で日差しを確認する room モードは [docs/room.md](docs/room.md) を参照。展示用 PC の候補（Mac mini と Windows のゲーミング PC の比較）は [docs/hardware.md](docs/hardware.md) を参照。
+仮想の部屋で日差しを確認する room モードは [docs/room.md](docs/room.md) を参照。展示用 PC の候補（Mac mini と Windows のゲーミング PC の比較）は [docs/hardware.md](docs/hardware.md) を参照。描画は WebGPU で行い、使えない環境では自動で WebGL2 になる（[docs/webgpu.md](docs/webgpu.md)）。
 
 ## セットアップ
 
@@ -60,6 +60,8 @@ URL パラメータ：
 | `clouds` / `screen` | `?clouds=1&screen=1` | room モードで窓の外の空の雲、スクリーンへの映像の投影を最初からオンにする（`?screen=映像の ID` で映す映像も指定できる） |
 | `pool` / `sea` / `ripples` | `?pool=1&sea=1` | room モードの水のオプション（床の水盤／窓の外の海／窓の外の水面の反射）を最初からオンにする |
 | `scene` | `?scene=ink-bleed` | 表示する映像を一時的に切り替える（`config/visuals.json` は変わらない） |
+| `gpu` | `?gpu=webgl` | WebGL2 で描く（既定は WebGPU。使えない環境では自動で WebGL2。[docs/webgpu.md](docs/webgpu.md)） |
+| `animTime` | `?animTime=100` | 映像の動きの時間を止める（秒）。WebGPU と WebGL2 の見比べや、同じ絵の撮影用 |
 
 ## Electron アプリ（検証・visuals・room・展示の 4 モード）
 
@@ -107,7 +109,7 @@ URL パラメータ：
 
 - スリープ・画面オフの防止、バックグラウンド時の描画間引きの無効化
 - 描画が 10 秒ごとにハートビートを送信。途絶えたら描画プロセスを落として読み込み直し、それでも戻らなければウィンドウごと作り直す
-- 描画プロセスのクラッシュ、応答なし、WebGL コンテキストロストを検知して自動復帰
+- 描画プロセスのクラッシュ、応答なし、WebGL コンテキストロスト・WebGPU の装置の喪失を検知して自動復帰。WebGPU の命令の誤りはログに記録（`gpu-error`）
 - 毎日決まった時刻に再読み込み（メモリの蓄積をリセット）
 - アプリ本体が落ちたら監視スクリプトが 5 秒後に起動し直す（10 分に 5 回以上なら 60 秒待つ）
 - `logs/YYYY-MM-DD.log`（JSON Lines）に起動・復帰・エラー・5 分ごとの稼働状況（FPS、メモリ、太陽の値）を記録。監視スクリプトの記録は `logs/supervisor.log`
@@ -139,7 +141,7 @@ URL パラメータ：
 
 - マウスドラッグで視点を回転、ホイールでズーム、右ドラッグで平行移動（three.js の `OrbitControls`）
 - 時刻の操作パネルは visuals モードと共通（現在時刻・再生・早送り・時刻や日付の指定）
-- 「光の計算」で照り返しの回数（0 にすると照り返しなし）、ざらつきをならすか、露出を変えられる。1 フレームで追う光線の本数は `?spp=4` などで変更可（既定 2）
+- 「光の計算」で照り返しの回数（0 にすると照り返しなし）、ざらつきをならすか、露出を変えられる。「重さを測る（60 フレーム）」で今の設定の 1 フレームの時間を測れる。1 フレームで追う光線の本数は `?spp=4` などで変更可（既定 2）
 - 窓の位置（`window.side`）・緯度経度が変わっても、`src/solar.ts` の光ベクトルを部屋の座標として使うのでコードの変更は不要（設定を変えるだけでよい）
 - パネルの「部屋 → 窓の位置」で右・左・天井（天窓）を切り替えられる（`?window=ceiling` でも指定可）。room モードの表示と光の計算だけの切り替えで、設定ファイルは変えない
 - 窓の大きさ（幅・高さ・床からの高さ）もパネルのスライダーで変えられる（`?winW=1.5&winH=1.2&sill=0.9` でも指定可、m）。これも room モードだけの変更
@@ -199,8 +201,11 @@ src/solar.py              同じ式・同じ API の Python 版（TouchDesigner 
 src/main.ts               検証画面・展示画面（状態管理・描画ループ・UI）
 src/stage.ts              描画の本体（中間バッファ・最終パス：出力範囲・外光シミュレーション・ディザ）
 src/clock.ts              表示する時刻（現在時刻・早送り・指定）
-src/scenes/               映像（シーン）。types.ts がインターフェース、index.ts が一覧
-src/room/scene.ts         room モードの光の計算と描画（パストレーシング）
+src/scenes/               映像（シーン）。types.ts がインターフェース、index.ts が一覧。各映像は GLSL（WebGL2）と WGSL（WebGPU）のシェーダーを持つ
+src/gpu/                  WebGPU の土台（webgpu.ts：装置・全画面の描画・画像・GPU 時間、layout.ts：値の並べ方、stage.ts：描画の本体）
+src/room/scene.ts         room モードの入口（視点の操作と、描く方式の選択）
+src/room/core.ts          room モードの 1 フレームごとの値の計算（描く方式によらない）
+src/room/gl.ts・gpu.ts    room モードのパストレーシング（gl.ts：WebGL2・GLSL、gpu.ts：WebGPU・WGSL）
 src/room/daylight.ts      大気を通った日差しの強さ・空の明るさ
 src/room/water.ts         room モードの水の波（水面の光の揺らぎ）
 src/ui/                   各モードの UI（verify.ts・visuals.ts・room.ts・time-controls.ts が共通の時刻パネル、mode-switch.ts がモードのスイッチ）

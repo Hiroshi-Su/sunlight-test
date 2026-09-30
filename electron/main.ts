@@ -247,7 +247,7 @@ ipcMain.on(IPC.heartbeat, (e, data: Heartbeat) => {
 });
 ipcMain.on(IPC.report, (e, { type, ...data }: { type: string } & ReportData) => {
   log(type, data);
-  if (type === 'webgl-context-lost' && fromCurrent(e.sender)) recover('webgl-context-lost');
+  if ((type === 'webgl-context-lost' || type === 'gpu-device-lost') && fromCurrent(e.sender)) recover(type);
 });
 
 // ---- 監視・定期処理 ----

@@ -1,10 +1,12 @@
-import type { GpuReport } from '../stage.ts';
+import type { Backend, GpuReport } from '../stage.ts';
 
 const BUDGET_MS = 1000 / 60;
 
 /** 画面に出す性能の表示。GPU 時間は 60fps の持ち時間（16.7ms）に対する割合も出す */
-export function formatPerf(gpu: GpuReport, fps: number): string[] {
-  const lines = [`FPS ${fps.toFixed(1)}`];
+export const BACKEND_LABEL: Record<Backend, string> = { webgpu: 'WebGPU', webgl: 'WebGL2' };
+
+export function formatPerf(gpu: GpuReport, fps: number, backend: Backend): string[] {
+  const lines = [`FPS ${fps.toFixed(1)}  描画 ${BACKEND_LABEL[backend]}`];
   if (!gpu.supported) return [...lines, 'GPU 時間：この環境では計測できません'];
   if (!gpu.scene || !gpu.final) return [...lines, 'GPU 時間：計測中…'];
   const total = gpu.scene.avg + gpu.final.avg;

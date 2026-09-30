@@ -9,7 +9,9 @@ import { findScene } from './scenes/index.ts';
 import { lightDebug } from './scenes/light-debug.ts';
 import { type SceneDef, type SceneInput, mergeParams } from './scenes/types.ts';
 import { type Site, resolveSite, solarState, withWindowSide } from './solar.ts';
-import { type FinalOptions, Stage } from './stage.ts';
+import { GpuStage } from './gpu/stage.ts';
+import { initWebGpu } from './gpu/webgpu.ts';
+import { type FinalOptions, Stage, type StageLike } from './stage.ts';
 import { el } from './ui/dom.ts';
 import { mountVerify } from './ui/verify.ts';
 import { formatBench, formatPerf, gpuTotalMs } from './ui/perf.ts';
@@ -54,7 +56,23 @@ if (mode !== 'kiosk') mountModeSwitch(mode, clock, bridge ? (m) => bridge.setMod
 const screenCanvas = el('screen', HTMLCanvasElement);
 const overlay = el('overlay', HTMLCanvasElement);
 const overlayCtx = overlay.getContext('2d')!;
-const stage = new Stage(screenCanvas, W, H);
+// 描画の方式：WebGPU が使えれば WebGPU、使えない環境や ?gpu=webgl のときは WebGL2（どちらも同じ映像になる）
+const webgpu = params.get('gpu') === 'webgl' ? null : await initWebGpu();
+const stage: StageLike = webgpu ? new GpuStage(screenCanvas, W, H, webgpu) : new Stage(screenCanvas, W, H);
+// WebGPU の命令の誤り（シェーダーの書き間違いなど）は黙って描かれなくなるので、画面の console とログに出す（最初の 20 件まで）
+let gpuErrors = 0;
+webgpu?.device.addEventListener('uncapturederror', (e) => {
+  if (gpuErrors++ >= 20) return;
+  const message = (e as GPUUncapturedErrorEvent).error.message.slice(0, 500);
+  console.error('WebGPU:', message);
+  bridge?.report('gpu-error', { message });
+});
+// GPU の装置が失われたら（ドライバの再起動など）、アプリ本体に知らせて読み込み直してもらう。ブラウザでは自分で読み込み直す
+void webgpu?.device.lost.then((info) => {
+  if (info.reason === 'destroyed') return;
+  if (bridge) bridge.report('gpu-device-lost', { message: info.message });
+  else location.reload();
+});
 
 // ---- モードごとの設定 ----
 let arrowOn = mode === 'verify' || (mode === 'kiosk' && params.has('overlay'));
@@ -74,9 +92,9 @@ const visualsUi = mode === 'visuals'
   ? mountVisuals(clock, visualsConfig, {
     save: saveVisuals,
     savePng: () => { pngRequested = true; },
-    benchmark: () => {
+    benchmark: async () => {
       if (!lastFrame) return '';
-      const ms = stage.benchmark(lastFrame.input, lastFrame.params, lastFrame.opts);
+      const ms = await stage.benchmark(lastFrame.input, lastFrame.params, lastFrame.opts);
       bridge?.report('benchmark', { scene: lastFrame.def.id, ms: Math.round(ms * 100) / 100 });
       return formatBench(ms, lastFrame.def.label);
     },
@@ -89,7 +107,7 @@ const roomEntry = siteConfig.sites[site.name]!;
 const windowParam = params.get('window');
 let roomSite: Site = withWindowSide(site, WINDOW_SIDES.find((w) => w === windowParam) ?? site.windowSide);
 const buildRoom = (view?: RoomView) =>
-  createRoomScene(el('roomView', HTMLDivElement), roomSite.windowSide, roomEntry.room, roomSite.facingAzimuth, view);
+  createRoomScene(el('roomView', HTMLDivElement), roomSite.windowSide, roomEntry.room, roomSite.facingAzimuth, view, webgpu);
 let room = mode === 'room' ? buildRoom() : null;
 const roomUi = mode === 'room'
   ? mountRoomUi(clock, roomEntry.room, roomEntry.window, site.windowSide, roomSite.windowSide, (side) => {
@@ -97,7 +115,7 @@ const roomUi = mode === 'room'
     const view = room?.currentView();
     room?.dispose();
     room = buildRoom(view);
-  })
+  }, async () => (room ? room.benchmark() : null))
   : null;
 if (room) addEventListener('resize', () => room?.resize());
 // 開発サーバーだけ：動作確認のスクリプトから room の視点を動かせるようにする
@@ -136,6 +154,9 @@ function current(lit: number, lightColor: readonly [number, number, number]): { 
   return { def: lightDebug, params: verifyParams, opts: base };
 }
 
+// ?animTime=秒 で映像の動きの時間を止める（WebGL2 と WebGPU の見比べ、同じ絵の撮影用）
+const animTime = params.has('animTime') ? Number(params.get('animTime')) : null;
+
 // ---- 描画ループ ----
 let last = performance.now();
 let uiAt = 0;
@@ -170,7 +191,7 @@ function frame(now: number): void {
     lightColor,
     sky: skyColors(s.sun.altitude),
     localMinutes: lp.min + lp.sec / 60,
-    time: now / 1000,
+    time: animTime ?? now / 1000,
     dt,
     width: W,
     height: H,
@@ -217,10 +238,10 @@ function frame(now: number): void {
     overlay.hidden = !showArrow && !showGuides;
     if (showGuides && visualsUi) drawGuides(overlayCtx, visualsUi.config.guides);
     if (showArrow) drawLightArrow(overlayCtx, site, s);
-    const perf = formatPerf(stage.gpu(), fps);
+    const perf = formatPerf(stage.gpu(), fps, stage.backend);
     verifyUi?.update(s, perf, verifyParams);
     visualsUi?.updateStatus(s, lit, perf);
-    if (room) roomUi?.updateStatus(s, lit, room.samples);
+    if (room) roomUi?.updateStatus(s, lit, room.samples, room.backend);
   }
   requestAnimationFrame(frame);
 }

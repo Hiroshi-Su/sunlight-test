@@ -59,11 +59,55 @@ vec3 effect(vec2 uv, vec2 p) {
 }
 `;
 
+// 上と同じもの（WebGPU 用）
+const wgsl = /* wgsl */ `
+fn inRange(c: vec3f) -> bool {
+  var l = luma(c);
+  if (u.uInvert > 0.5) { l = 1.0 - l; }
+  return l >= u.uLo && l <= u.uHi;
+}
+
+fn outside(q: vec2f, bid: vec2f, bsz: vec2f) -> bool {
+  return any(floor(q / bsz) != bid) || !inRange(img(q / u.uRes));
+}
+
+fn effect(uv: vec2f, p: vec2f) -> vec3f {
+  let base = img(uv);
+  let bsz = vec2f(u.uBlock * 1.6, u.uBlock);
+  let bid = floor(p / bsz);
+  let phase = hash(bid + 4.1) * 6.28318 + u.uT * 6.28318 * floor(u.uSwap) * (1.0 + floor(hash(bid + 8.3) * 3.0)) / ${TIME_PERIOD.toFixed(1)};
+  if (hash(bid + 1.7) > u.uAmount * (0.65 + 0.35 * sin(phase))) { return base; }
+  var d = normalize(u.uFlowDir);
+  if (hash(bid + 2.9) < u.uHoriz) { d = select(vec2f(-1.0, 0.0), vec2f(1.0, 0.0), hash(bid + 5.3) < 0.5); }
+  let perp = vec2f(-d.y, d.x);
+  let a = dot(p, perp);
+  let pq = p + perp * ((floor(a / u.uWidth) + 0.5) * u.uWidth - a);
+  let c0 = img(pq / u.uRes);
+  if (!inRange(c0)) { return base; }
+  let stepPx = u.uMaxLen * u.uRes.y / 32.0;
+  var okDist = 0.0;
+  var ngDist = -1.0;
+  for (var i = 1; i <= 32; i++) {
+    let dist = stepPx * f32(i);
+    if (outside(pq - d * dist, bid, bsz)) { ngDist = dist; break; }
+    okDist = dist;
+  }
+  if (ngDist > 0.0) {
+    for (var j = 0; j < 6; j++) {
+      let mid = 0.5 * (okDist + ngDist);
+      if (outside(pq - d * mid, bid, bsz)) { ngDist = mid; } else { okDist = mid; }
+    }
+  }
+  return img((pq - d * okDist) / u.uRes);
+}
+`;
+
 export const pixelStretch = imageScene({
   id: 'img-pixel-stretch',
   label: '画像：ピクセルの引き伸ばし',
   sunLinks: [{ toggle: 'followLight', uses: ['direction'] }, { toggle: 'sunLinked', uses: ['lit'] }],
   glsl,
+  wgsl,
   params: {
     lo: { type: 'number', label: '引き伸ばす明るさ（下限）', value: 0.2, min: 0, max: 1, step: 0.01 },
     hi: { type: 'number', label: '引き伸ばす明るさ（上限）', value: 0.7, min: 0, max: 1, step: 0.01 },

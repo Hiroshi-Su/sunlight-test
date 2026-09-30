@@ -1,6 +1,6 @@
 // にじみ：紙に染み込んだ色が、光の進む向きへゆっくり広がる。先端には色が溜まり、虹色に分離する（水彩・クロマトグラフィー）
 import * as THREE from 'three';
-import { GLSL_NOISE, fullscreenShader, hexToVec3, wrap } from './shader.ts';
+import { GLSL_NOISE, WGSL_NOISE, fullscreenShader, hexToVec3, wrap } from './shader.ts';
 import { type SceneDef, bool, color, num } from './types.ts';
 
 const frag = /* glsl */ `
@@ -111,6 +111,106 @@ void main() {
 }
 `;
 
+const wgsl = /* wgsl */ `
+${WGSL_NOISE}
+
+// 縁の色：スペクトル上の位置 sp で決まる。0 黄 → 橙 → マゼンタ → 青（ところどころシアン）→ 1 紺
+fn spectrum(sp: f32, cyan: f32) -> vec3f {
+  var col = vec3f(1.0, 0.88, 0.18);
+  col = mix(col, vec3f(0.99, 0.52, 0.26), smoothstep(0.18, 0.34, sp));
+  col = mix(col, vec3f(0.92, 0.22, 0.52), smoothstep(0.32, 0.48, sp));
+  col = mix(col, mix(vec3f(0.14, 0.28, 0.88), vec3f(0.08, 0.66, 0.86), cyan), smoothstep(0.48, 0.66, sp));
+  return mix(col, vec3f(0.03, 0.05, 0.36), smoothstep(0.70, 0.92, sp));
+}
+// 帯の色：先端側（u=0）→ 奥（u=1）
+fn bodyRamp(x: f32) -> vec3f {
+  var col = mix(u.uC0, u.uC1, smoothstep(0.0, 0.35, x));
+  col = mix(col, u.uC2, smoothstep(0.35, 0.7, x));
+  return mix(col, u.uC3, smoothstep(0.7, 1.0, x));
+}
+
+fn frag(p: vec2f) -> vec3f {
+  let q = (p - 0.5 * u.uRes) / u.uRes.y;
+  let d = normalize(u.uDir);
+  let perp = vec2f(-d.y, d.x);
+  let s = dot(q, d);      // 広がる向き
+  let t = dot(q, perp);   // 帯が並ぶ向き
+  let dr = u.uDrift;
+
+  // 先端の輪郭：大きなうねり（なめらか）＋外側へ丸く膨らむ凹凸＋紙の繊維によるけば立ち
+  let waveLow = (fbm(vec2f(t * 2.2 + dr.x, dr.y)) - 0.5) * u.uWave;
+  let lobe = pow(abs(sin(3.14159 * (t * u.uScallopFreq + (fbm(vec2f(t * 1.2, dr.y)) - 0.5) * 4.0))), 0.7);
+  let lobeAmp = u.uScallop * (0.25 + 1.1 * noise(vec2f(t * 3.0, 2.0 + dr.y)));
+  let fray = ((noise(vec2f(t * 70.0, 1.0)) - 0.5) * 0.004 + (noise(vec2f(t * 160.0, 3.0)) - 0.5) * 0.002) * u.uFray;
+  let tip = u.uFront + waveLow + (noise(vec2f(t * 9.0, dr.y * 2.0)) - 0.5) * u.uWave * 0.1 + lobe * lobeAmp + fray;
+  let x = s - tip;   // 負 = 染みている側、正 = まだ乾いた紙
+
+  // 縁が薄く細くなって白く抜ける所（0 = 抜ける）
+  let gap = smoothstep(0.3, 0.55, fbm(vec2f(t * 2.0, 17.0) + dr * 0.5));
+  let rimW = u.uRim * (0.8 + 0.4 * noise(vec2f(t * 3.0 + 4.0, dr.y))) * mix(1.0 - 0.45 * u.uGaps, 1.0, gap);
+  let inner = u.uFront + waveLow + 0.3 * u.uScallop - rimW;
+  let k = (s - inner) / max(tip - inner, 1e-3);   // 0 = 縁の内端, 1 = 先端
+  let bay = 1.0 - lobe;
+
+  // 紙
+  var col = u.uGround * (0.97 + 0.06 * fbm(q * 2.0 + 7.0));
+
+  // 帯（染みている側だけ。奥ほど薄く溶け、縁の上では薄くなる）
+  let uu = clamp(-x / u.uReach, 0.0, 1.0);
+  let phase = t * u.uBands + (fbm(vec2f(t * 1.5, s * 0.8) + dr * 0.7) - 0.5) * 1.3;
+  let m = 0.5 + 0.5 * cos(6.28318 * phase);
+  let bandAmp = 0.45 + 0.55 * noise(vec2f(phase * 1.3, 11.0));
+  let band = smoothstep(0.5 - u.uBandSoft, 0.5 + u.uBandSoft, m + (bandAmp - 0.6) * 0.5) * bandAmp;
+  let mottle = 0.75 + 0.5 * (fbm(q * 3.0 + dr * 0.5) - 0.5);
+  let wet = 1.0 - smoothstep(-0.5 / u.uRes.y, 0.5 / u.uRes.y, x);
+  let onRim = smoothstep(-0.1, 0.4, k);
+  let bodyA = u.uBody * wet * pow(1.0 - uu, 0.8) * mottle * (0.12 + 0.88 * band) * (1.0 - 0.75 * onRim);
+  col *= mix(vec3f(1.0), bodyRamp(uu), clamp(bodyA, 0.0, 1.0));
+
+  // 先端に溜まる色（紺は湾やノイズで決まる所にだけ塊として溜まり、それ以外は先端がマゼンタや橙で止まる）
+  let navyN = fbm(vec2f(t * 2.6, 13.0) + dr * 0.6);
+  let navyAmt = clamp((smoothstep(0.3, 0.6, navyN) + bay * 0.6 - 0.2) * u.uDeep, 0.0, 1.0);
+  let stageMax = mix(0.5, 1.05, navyAmt);
+  let yellowGamma = mix(0.7, 1.3, noise(vec2f(t * 3.3, 21.0) + dr * 0.4));
+  let cyan = smoothstep(0.6, 0.85, noise(vec2f(t * 4.1, 31.0) + dr));
+  let rimA = smoothstep(0.0, 0.32, k) * wet;
+  let conc = u.uRimStrength * mix(1.0 - 0.85 * u.uGaps, 1.0, gap) * mix(0.9, 1.2, navyAmt);
+
+  // 紺のにじみ：紺が溜まる所から内側へ、ぼけながら広がる
+  let cloudFall = exp(min(x + rimW * 0.3, 0.0) / (rimW * 1.3));
+  let cloudA = u.uNavyBleed * navyAmt * (0.35 + 0.65 * bay) * cloudFall * wet
+             * (0.55 + 0.9 * (fbm(q * 4.0 + dr * 0.6) - 0.5)) * (1.0 - smoothstep(0.55, 0.95, k));
+  var cloudCol = mix(vec3f(0.22, 0.34, 0.84), vec3f(0.08, 0.10, 0.45), navyAmt);
+  cloudCol = mix(vec3f(dot(cloudCol, vec3f(0.3, 0.55, 0.15))), cloudCol, 0.55 + 0.45 * u.uVivid);
+  col *= mix(vec3f(1.0), cloudCol, clamp(cloudA * 0.85, 0.0, 1.0));
+  // 色の境目をゆがませて不規則なむらにする（先端は保つ）
+  let kw = clamp(k + (fbm(vec2f(t * 5.0, s * 5.0) + dr * 0.8) - 0.5) * u.uBlotch * (1.0 - smoothstep(0.8, 1.0, k)), 0.0, 1.0);
+  var rim = vec3f(0.0);
+  for (var i = 0; i < 3; i++) {
+    // 色の成分ごとに位置を少しずらして虹色に分離（縁の内側だけで。外へははみ出さない）
+    let ki = clamp(kw + (f32(i) - 1.0) * u.uChroma * u.uVivid * (1.0 - kw), 0.0, 1.0);
+    let sp = pow(ki, yellowGamma) * stageMax + navyAmt * bay * 0.45 * smoothstep(0.3, 1.0, ki);
+    rim[i] = spectrum(sp, cyan)[i];
+  }
+  // 日差しが弱い時間は、濃さは保ったまま鮮やかさだけ落とす
+  rim = mix(vec3f(dot(rim, vec3f(0.3, 0.55, 0.15))), rim, 0.55 + 0.45 * u.uVivid);
+  // 半透明にして紙の目に顔料が沈む見え方にする（紺の溜まりだけは濃く残す）
+  let g1 = noise(p * 0.3);
+  let g2 = noise(p * 0.08);
+  let g3 = fbm(q * 18.0 + dr);
+  let gran = mix(1.0, smoothstep(0.1, 0.9, g1 * 0.45 + g2 * 0.3 + g3 * 0.25), u.uGranulate);
+  let opacity = mix(0.88, 1.0, navyAmt * smoothstep(0.6, 1.0, k));
+  rim = mix(vec3f(1.0), rim, clamp(rimA * conc * opacity * mix(gran, 1.0, 0.3 * navyAmt), 0.0, 1.0));
+  col *= rim;
+
+  // 紙の質感。絵の具のある所ほど粒が見える（投影では細部が消えやすいので控えめに）
+  let pigment = clamp(rimA * conc + bodyA + cloudA, 0.0, 1.5);
+  let grain = mix(noise(p * 0.45), noise(p * 0.15), 0.5) - 0.5;
+  col *= 1.0 - u.uGrain * (1.0 + 2.5 * pigment) * grain;
+  return col;
+}
+`;
+
 const RAD = Math.PI / 180;
 
 export const inkBleed: SceneDef = {
@@ -154,7 +254,7 @@ export const inkBleed: SceneDef = {
     c3: { type: 'color', label: '帯の色 4（奥）', value: '#a79fdc' },
   },
   create({ width, height }) {
-    const s = fullscreenShader(frag, {
+    const s = fullscreenShader({ glsl: frag, wgsl }, {
       uRes: { value: new THREE.Vector2(width, height) },
       uDir: { value: new THREE.Vector2(1, 0) },
       uDrift: { value: new THREE.Vector2() },
@@ -189,8 +289,7 @@ export const inkBleed: SceneDef = {
     let initialized = false;
 
     return {
-      scene: s.scene,
-      camera: s.camera,
+      pass: s.pass,
       update(input, params) {
         const u = s.uniforms;
         if (bool(params, 'followLight')) target.set(input.light.dirX, input.light.dirY);

@@ -46,11 +46,46 @@ vec3 effect(vec2 uv, vec2 p) {
 }
 `;
 
+// 上と同じもの（WebGPU 用）
+const wgsl = /* wgsl */ `
+fn topoColor(x: f32) -> vec3f {
+  var c = vec3f(0.05, 0.10, 0.45);
+  c = mix(c, vec3f(0.10, 0.45, 0.90), smoothstep(0.0, 0.2, x));
+  c = mix(c, vec3f(0.10, 0.75, 0.35), smoothstep(0.2, 0.45, x));
+  c = mix(c, vec3f(0.95, 0.85, 0.20), smoothstep(0.45, 0.7, x));
+  return mix(c, vec3f(0.90, 0.20, 0.20), smoothstep(0.7, 0.95, x));
+}
+
+fn effect(uv: vec2f, p: vec2f) -> vec3f {
+  let aspect = u.uRes.x / u.uRes.y;
+  var acc = vec3f(0.0);
+  var ws = 0.0;
+  for (var i = 0; i < 12; i++) {
+    let t = f32(i) / 11.0;
+    let w = 1.0 - t * 0.7;
+    acc += imgLod(uv - u.uSmearDir * t * u.uSmear * vec2f(1.0 / aspect, 1.0), 2.0 + t * 3.0) * w;
+    ws += w;
+  }
+  let smear = acc / ws;
+  var col = mix(img(uv), smear, u.uSmearMix);
+  col += max(smear - u.uThreshold, vec3f(0.0)) * u.uGlow * 2.0 * mix(vec3f(1.0), u.uLightColor, 0.5);
+  let q = vec2f(uv.x * aspect, uv.y);
+  let L = luma(imgLod(uv, u.uContourBlur)) + (fbm(q * 3.0 + u.uFlow) - 0.5) * u.uWobble;
+  let band = L * u.uLevels;
+  let fb = fract(band);
+  let line = 1.0 - smoothstep(0.0, fwidth(band) * 1.5 * u.uLineWidth, min(fb, 1.0 - fb));
+  let topo = mix(topoColor(floor(band) / u.uLevels), vec3f(0.9, 0.2, 0.2), line);
+  let region = 1.0 - smoothstep(u.uRegion - 0.04, u.uRegion + 0.04, L);
+  return mix(col, topo, u.uContour * region);
+}
+`;
+
 export const glowContour = imageScene({
   id: 'img-glow-contour',
   label: '画像：光のにじみと等高線',
   sunLinks: [{ toggle: 'followLight', uses: ['direction'] }, { uses: ['color'] }],
   glsl,
+  wgsl,
   params: {
     smear: { type: 'number', label: 'にじみの長さ', value: 0.35, min: 0, max: 1.5, step: 0.01 },
     smearMix: { type: 'number', label: 'にじみの混ざり', value: 0.7, min: 0, max: 1, step: 0.01 },

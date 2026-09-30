@@ -2,7 +2,7 @@
 // 後で複数の効果を重ねるときは tImage を前の効果の出力に差し替えるだけで済むようにしておく。
 import * as THREE from 'three';
 import type { ParamValues } from '../../config.ts';
-import { GLSL_NOISE, fullscreenShader } from '../shader.ts';
+import { GLSL_NOISE, WGSL_NOISE, fullscreenShader } from '../shader.ts';
 import { type ParamSpec, type SceneDef, type SceneInput, type SunLink, num } from '../types.ts';
 
 // Vite がビルド時にアセットとして同梱する（オフラインで動く）
@@ -48,6 +48,20 @@ void main() {
 }
 `;
 
+// 上と同じもの（WebGPU 用）。画像は WebGL と同じく上下を反転して載せているので、読む座標も同じ（下が 0）。
+// 読む位置が分岐やくり返しの中で変わるので、ぼかしの段（lod）はいつも指定して読む（img は 0 段目。画像と画面の画素はほぼ 1 対 1）
+const WGSL_HEADER = /* wgsl */ `
+${WGSL_NOISE}
+fn coverUv(uv: vec2f) -> vec2f { return uv * u.uCover.xy + u.uCover.zw; }
+fn img(uv: vec2f) -> vec3f { return textureSampleLevel(tImage, tImage_s, coverUv(uv), 0.0).rgb; }
+fn imgLod(uv: vec2f, lod: f32) -> vec3f { return textureSampleLevel(tImage, tImage_s, coverUv(uv), lod).rgb; }
+fn luma(c: vec3f) -> f32 { return dot(c, vec3f(0.299, 0.587, 0.114)); }
+`;
+
+const WGSL_MAIN = /* wgsl */ `
+fn frag(p: vec2f) -> vec3f { return effect(p / u.uRes, p); }
+`;
+
 type Uniforms = Record<string, THREE.IUniform>;
 
 export interface ImageEffect<U extends Uniforms> {
@@ -57,6 +71,8 @@ export interface ImageEffect<U extends Uniforms> {
   sunLinks?: readonly SunLink[];
   /** vec3 effect(vec2 uv, vec2 p) を定義する GLSL。uv は 0..1、p はピクセル座標 */
   glsl: string;
+  /** 同じものを WGSL で（fn effect(uv: vec2f, p: vec2f) -> vec3f。値は u.名前） */
+  wgsl: string;
   uniforms(): U;
   update(u: U, input: SceneInput, params: ParamValues): void;
 }
@@ -85,10 +101,9 @@ export function imageScene<U extends Uniforms>(fx: ImageEffect<U>): SceneDef {
         uT: { value: 0 },
       };
       const own = fx.uniforms();
-      const s = fullscreenShader(HEADER + fx.glsl + MAIN, { ...common, ...own });
+      const s = fullscreenShader({ glsl: HEADER + fx.glsl + MAIN, wgsl: WGSL_HEADER + fx.wgsl + WGSL_MAIN }, { ...common, ...own });
       return {
-        scene: s.scene,
-        camera: s.camera,
+        pass: s.pass,
         update(input, params) {
           // 画像を画面いっぱいに切り出す（はみ出す方向だけ位置を選べる）
           const im = tex.image as { width?: number; height?: number } | undefined;

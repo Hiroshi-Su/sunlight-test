@@ -1,4 +1,6 @@
-// 全画面シェーダー 1 枚で描くシーン用の共通部品
+// 全画面シェーダー 1 枚で描くシーン用の共通部品。
+// 映像は GLSL（WebGL2 用）と WGSL（WebGPU 用）の 2 つのシェーダーを持ち、値（uniform）はどちらも同じ「名前 → { value }」で渡す。
+// どちらで描くかは土台（src/stage.ts・src/gpu/stage.ts）が決める
 import * as THREE from 'three';
 
 /** 格子を NOISE_PERIOD で繰り返すタイル化ノイズ。流す量を wrap() で巻き戻しても継ぎ目が出ない */
@@ -14,6 +16,26 @@ float noise(vec2 p) {
   return mix(mix(hashTiled(i), hashTiled(i + vec2(1, 0)), u.x), mix(hashTiled(i + vec2(0, 1)), hashTiled(i + vec2(1, 1)), u.x), u.y);
 }
 float fbm(vec2 p) { float v = 0.0, a = 0.5; for (int i = 0; i < 4; i++) { v += a * noise(p); p *= 2.0; a *= 0.5; } return v; }
+`;
+
+/** GLSL_NOISE と同じもの（WGSL）。GLSL の mod(x, y) は x - y·floor(x / y)（WGSL の % とは負の数で結果が違う） */
+export const WGSL_NOISE = /* wgsl */ `
+const NOISE_PERIOD: f32 = ${NOISE_PERIOD.toFixed(1)};
+fn hash(p: vec2f) -> f32 { return fract(sin(dot(p, vec2f(12.9898, 78.233))) * 43758.5453); }
+fn hashTiled(i: vec2f) -> f32 { return hash(i - NOISE_PERIOD * floor(i / NOISE_PERIOD)); }
+fn noise(p: vec2f) -> f32 {
+  let i = floor(p);
+  let f = fract(p);
+  let s = f * f * (3.0 - 2.0 * f); // GLSL 版の u（WGSL では u が値の構造体の名前なので、別の名前にする）
+  return mix(mix(hashTiled(i), hashTiled(i + vec2f(1.0, 0.0)), s.x), mix(hashTiled(i + vec2f(0.0, 1.0)), hashTiled(i + vec2f(1.0, 1.0)), s.x), s.y);
+}
+fn fbm(p0: vec2f) -> f32 {
+  var p = p0;
+  var v = 0.0;
+  var a = 0.5;
+  for (var i = 0; i < 4; i++) { v += a * noise(p); p *= 2.0; a *= 0.5; }
+  return v;
+}
 `;
 
 /** 長時間稼働で GPU の float 精度が落ちないよう、流す量を周期内に巻き戻す（CPU 側の倍精度で計算） */
@@ -75,6 +97,56 @@ float snoise(vec3 v) {
 }
 `;
 
+/** GLSL_SIMPLEX3 と同じもの（WGSL）。webgl-noise（MIT ライセンス、上の表記のとおり）を WGSL に書き直したもの */
+export const WGSL_SIMPLEX3 = /* wgsl */ `
+fn mod289v3(x: vec3f) -> vec3f { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+fn mod289v4(x: vec4f) -> vec4f { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+fn permute4(x: vec4f) -> vec4f { return mod289v4(((x * 34.0) + 1.0) * x); }
+fn taylorInvSqrt4(r: vec4f) -> vec4f { return 1.79284291400159 - 0.85373472095314 * r; }
+fn snoise(v: vec3f) -> f32 {
+  let C = vec2f(1.0 / 6.0, 1.0 / 3.0);
+  let D = vec4f(0.0, 0.5, 1.0, 2.0);
+  var i = floor(v + dot(v, C.yyy));
+  let x0 = v - i + dot(i, C.xxx);
+  let g = step(x0.yzx, x0.xyz);
+  let l = 1.0 - g;
+  let i1 = min(g.xyz, l.zxy);
+  let i2 = max(g.xyz, l.zxy);
+  let x1 = x0 - i1 + C.xxx;
+  let x2 = x0 - i2 + C.yyy;
+  let x3 = x0 - D.yyy;
+  i = mod289v3(i);
+  let p = permute4(permute4(permute4(
+      i.z + vec4f(0.0, i1.z, i2.z, 1.0))
+    + i.y + vec4f(0.0, i1.y, i2.y, 1.0))
+    + i.x + vec4f(0.0, i1.x, i2.x, 1.0));
+  let n_ = 0.142857142857;
+  let ns = n_ * D.wyz - D.xzx;
+  let j = p - 49.0 * floor(p * ns.z * ns.z);
+  let x_ = floor(j * ns.z);
+  let y_ = floor(j - 7.0 * x_);
+  let x = x_ * ns.x + ns.yyyy;
+  let y = y_ * ns.x + ns.yyyy;
+  let h = 1.0 - abs(x) - abs(y);
+  let b0 = vec4f(x.xy, y.xy);
+  let b1 = vec4f(x.zw, y.zw);
+  let s0 = floor(b0) * 2.0 + 1.0;
+  let s1 = floor(b1) * 2.0 + 1.0;
+  let sh = -step(h, vec4f(0.0));
+  let a0 = b0.xzyw + s0.xzyw * sh.xxyy;
+  let a1 = b1.xzyw + s1.xzyw * sh.zzww;
+  var p0 = vec3f(a0.xy, h.x);
+  var p1 = vec3f(a0.zw, h.y);
+  var p2 = vec3f(a1.xy, h.z);
+  var p3 = vec3f(a1.zw, h.w);
+  let norm = taylorInvSqrt4(vec4f(dot(p0, p0), dot(p1, p1), dot(p2, p2), dot(p3, p3)));
+  p0 *= norm.x; p1 *= norm.y; p2 *= norm.z; p3 *= norm.w;
+  var m = max(0.6 - vec4f(dot(x0, x0), dot(x1, x1), dot(x2, x2), dot(x3, x3)), vec4f(0.0));
+  m = m * m;
+  return 42.0 * dot(m * m, vec4f(dot(p0, x0), dot(p1, x1), dot(p2, x2), dot(p3, x3)));
+}
+`;
+
 /**
  * 流れ・形の変化など、足し続ける動きの量（3 次元）。そのままだと大きくなって GPU の float の精度が落ち、動きがカクつく。
  * そこで量が limit を超えたら、0 から始まる同じ動き（b）へ blendSec 秒かけて移り、移り終えたら a = b に巻き戻す。
@@ -109,18 +181,37 @@ export class DriftBlend {
   }
 }
 
+/** 映像のシェーダー。wgsl は `fn frag(p: vec2f) -> vec3f` を定義する（p は WebGL の gl_FragCoord.xy と同じ向き。値は `u.名前`） */
+export interface ShaderSource {
+  glsl: string;
+  wgsl: string;
+}
+
+/** 全画面を 1 枚のシェーダーで描く映像。どちらの方式で描くかは土台が決める */
+export interface FullscreenPass extends ShaderSource {
+  uniforms: Record<string, THREE.IUniform>;
+}
+
+export function fullscreenShader<U extends Record<string, THREE.IUniform>>(src: ShaderSource, uniforms: U) {
+  return {
+    uniforms,
+    pass: { ...src, uniforms } as FullscreenPass,
+    dispose(): void {},
+  };
+}
+
 const VERT = /* glsl */ `void main() { gl_Position = vec4(position.xy, 0.0, 1.0); }`;
 
-export function fullscreenShader<U extends Record<string, THREE.IUniform>>(fragmentShader: string, uniforms: U) {
+/** WebGL2（three.js）で描くための物を作る */
+export function glPass(pass: FullscreenPass) {
   const scene = new THREE.Scene();
   const camera = new THREE.Camera();
   const geometry = new THREE.PlaneGeometry(2, 2);
-  const material = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader, uniforms });
+  const material = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: pass.glsl, uniforms: pass.uniforms });
   scene.add(new THREE.Mesh(geometry, material));
   return {
     scene,
     camera,
-    uniforms,
     dispose(): void { geometry.dispose(); material.dispose(); },
   };
 }

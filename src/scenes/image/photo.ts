@@ -8,6 +8,9 @@ export const photo = imageScene({
   glsl: /* glsl */ `
 vec3 effect(vec2 uv, vec2 p) { return img(uv); }
 `,
+  wgsl: /* wgsl */ `
+fn effect(uv: vec2f, p: vec2f) -> vec3f { return img(uv); }
+`,
   uniforms: () => ({}),
   update() {},
 });

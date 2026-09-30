@@ -13,7 +13,7 @@ export interface VisualsHooks {
   save(cfg: VisualsConfig): Promise<void>;
   savePng(): void;
   /** 今の映像を連続で描いて、1 フレームあたりの時間を表示用の文字列で返す */
-  benchmark(): string;
+  benchmark(): Promise<string>;
 }
 
 export interface VisualsView {
@@ -124,7 +124,7 @@ export function mountVisuals(clock: Clock, initial: VisualsConfig, hooks: Visual
   // ---- 性能 ----
   const bench = { text: '' };
   const fperf = gui.addFolder('性能');
-  fperf.add({ run: () => { bench.text = hooks.benchmark(); } }, 'run').name('ベンチマーク（60 フレーム）');
+  fperf.add({ run: async () => { bench.text = '計測中…'; bench.text = await hooks.benchmark(); } }, 'run').name('ベンチマーク（60 フレーム）');
   fperf.add(bench, 'text').name('結果').disable().listen();
 
   // ---- 書き出し・保存 ----
