@@ -59,6 +59,20 @@ test('向きの直感チェック（右窓）', () => {
   assert.equal(o.entersWindow, false);
 });
 
+test('天窓：入射は太陽高度の sin、方位によらず太陽が出ていれば入る', () => {
+  const s = { ...site, windowSide: 'ceiling' as const };
+  for (const az of [0, 90, 180, 270]) {
+    const l = lightOnScreen({ azimuth: az, altitude: 30 }, s);
+    assert.ok(Math.abs(l.windowIncidence - 0.5) < 1e-12, `az ${az}: ${l.windowIncidence}`);
+    assert.equal(l.entersWindow, true);
+  }
+  assert.equal(lightOnScreen({ azimuth: 180, altitude: -5 }, s).entersWindow, false);
+  // 光の向き（x, y, z）は窓の位置によらない
+  const wallLight = lightOnScreen({ azimuth: 200, altitude: 40 }, site);
+  const skyLight = lightOnScreen({ azimuth: 200, altitude: 40 }, s);
+  for (const k of ['x', 'y', 'z'] as const) assert.equal(skyLight[k], wallLight[k]);
+});
+
 test('config の解決（磁北→真北、窓の左右）', () => {
   const cfg = parseSiteConfig(JSON.parse(readFileSync(new URL('../config/site.json', import.meta.url), 'utf8')));
   const base = cfg.sites[cfg.activeSite]!;

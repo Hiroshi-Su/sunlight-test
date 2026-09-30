@@ -40,10 +40,18 @@ class SolarTest(unittest.TestCase):
                 self.assertAlmostEqual(l[k], c["screen"][k], places=9, msg=f'{c["local"]} {k}')
             self.assertEqual(l["entersWindow"], c["screen"]["entersWindow"], c["local"])
 
+    def test_skylight_incidence(self):
+        s = dict(SITE, windowSide="ceiling")
+        for az in (0, 90, 180, 270):
+            l = solar.light_on_screen({"azimuth": az, "altitude": 30}, s)
+            self.assertAlmostEqual(l["windowIncidence"], 0.5, places=12)
+            self.assertTrue(l["entersWindow"])
+        self.assertFalse(solar.light_on_screen({"azimuth": 180, "altitude": -5}, s)["entersWindow"])
+
     def test_resolve_active_config(self):
         cfg = solar.load_config(os.path.join(HERE, "..", "config", "site.json"))
         site = solar.resolve_site(cfg)
-        self.assertIn(site["windowSide"], ("left", "right"))
+        self.assertIn(site["windowSide"], ("left", "right", "ceiling"))
         self.assertTrue(0 <= site["facingAzimuth"] < 360)
 
 

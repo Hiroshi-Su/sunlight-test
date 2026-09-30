@@ -55,6 +55,7 @@ URL パラメータ：
 | `t` | `?t=2026-09-24T10:00` | 開始日時（現地時刻）。指定時は停止状態で開く |
 | `site` | `?site=production` | `config/site.json` のどの場所を使うか |
 | `mode` | `?mode=visuals` | 表示モード（`verify` / `visuals` / `room` / `kiosk`） |
+| `window` | `?window=ceiling` | room モードで最初に表示する窓の位置（`right` / `left` / `ceiling`）。設定ファイルは変わらない |
 | `scene` | `?scene=ink-bleed` | 表示する映像を一時的に切り替える（`config/visuals.json` は変わらない） |
 
 ## Electron アプリ（検証・visuals・room・展示の 4 モード）
@@ -126,7 +127,8 @@ URL パラメータ：
 
 - マウスドラッグで視点を回転、ホイールでズーム、右ドラッグで平行移動（three.js の `OrbitControls`）
 - 時刻の操作パネルは visuals モードと共通（現在時刻・再生・早送り・時刻や日付の指定）
-- 窓の位置（`window.side`）・緯度経度が変わっても、`src/solar.ts` の光ベクトルをそのまま部屋の座標として使うのでコードの変更は不要（設定を変えるだけでよい）
+- 窓の位置（`window.side`）・緯度経度が変わっても、`src/solar.ts` の光ベクトルを部屋の座標として使うのでコードの変更は不要（設定を変えるだけでよい）
+- パネルの「部屋 → 窓の位置」で右・左・天井（天窓）を切り替えられる（`?window=ceiling` でも指定可）。room モードの表示と光の計算だけの切り替えで、設定ファイルは変えない
 
 ## 設定（`config/site.json`）
 
@@ -153,9 +155,9 @@ URL パラメータ：
 | `facingAzimuth` | 鑑賞者がスクリーンを見る向き（北=0°, 東=90°, 時計回り） |
 | `azimuthReference` | `"magnetic"`＝コンパスで測った値、`"true"`＝地図・図面の真北基準 |
 | `magneticDeclination` | 磁気偏角（西偏は負）。真北基準 = コンパス値 + 偏角。東京付近は約 −7.5°（国土地理院の値で要確認） |
-| `window.side` | 鑑賞者から見て窓がある側。`"left"` / `"right"` |
+| `window.side` | 窓の位置。鑑賞者から見て `"left"` / `"right"` の壁、または `"ceiling"`（天窓） |
 | `window.facingAzimuth` | 窓が斜めの場合などに、窓の外向き方位（真北基準）を直接指定。`null` なら `side` から算出 |
-| `window.widthM` / `heightM` / `sillHeightM` | 窓の実寸（m）と床からの高さ。room モードでのみ使用。現地未計測の仮値 |
+| `window.widthM` / `heightM` / `sillHeightM` | 窓の実寸（m）と床からの高さ。room モードでのみ使用。壁の窓は幅＝奥行き方向、天窓は幅＝左右・高さ＝奥行き方向（`sillHeightM` は使わない）。現地未計測の仮値 |
 | `room.widthM` / `depthM` / `heightM` | room モードで表示する仮想の部屋の寸法（m）。実寸ではなく、光の見え方を確認するための仮のボックス |
 | `utcOffsetMinutes` | 現地の UTC オフセット（JST = 540）。PC のタイムゾーン設定に依存しない |
 
@@ -167,7 +169,7 @@ URL パラメータ：
 - 光ベクトル `light` は光の**進む向き**をスクリーン座標で表したもの
   - `x`：右が +、`y`：上が +、`z`：スクリーンの奥（鑑賞者から離れる向き）が +
   - `dirX`, `dirY`：`(x, y)` を正規化したもの。画面内の光の帯・影の向きに使う
-- `windowIncidence`：太陽方向と窓の外向きとの cos。`高度 > 0` かつ `> 0` のとき「窓から光が入る」
+- `windowIncidence`：太陽方向と窓の外向きとの cos（天窓は外向きが真上なので `sin 高度`）。`高度 > 0` かつ `> 0` のとき「窓から光が入る」
   - 周囲の建物による遮蔽は未考慮（現地観察で遮蔽テーブルを作る予定）
 
 ## 構成

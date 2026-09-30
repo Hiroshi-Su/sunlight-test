@@ -2,7 +2,7 @@
 import type { Clock } from '../clock.ts';
 import { type PathPoint, drawDayChart, drawPlan } from '../diagram.ts';
 import { kelvinAt } from '../palette.ts';
-import type { ParamValues } from '../config.ts';
+import { type ParamValues, WINDOW_SIDE_LABEL } from '../config.ts';
 import type { ParamSpec } from '../scenes/types.ts';
 import { type Site, type SolarState, solarState } from '../solar.ts';
 import { el } from './dom.ts';
@@ -91,7 +91,9 @@ export function mountVerify(
         ['場所', `${site.label}（${site.name}）`],
         ['緯度 / 経度', `${site.latitude.toFixed(5)} / ${site.longitude.toFixed(5)}`],
         ['スクリーン向き（真北）', `${site.facingAzimuth.toFixed(1)}°`],
-        ['窓の外向き（真北）', `${site.windowAzimuth.toFixed(1)}°（${site.windowSide === 'right' ? '右' : '左'}）`],
+        site.windowSide === 'ceiling'
+          ? ['窓', '天井（天窓・外向きは真上）']
+          : ['窓の外向き（真北）', `${site.windowAzimuth.toFixed(1)}°（${WINDOW_SIDE_LABEL[site.windowSide]}）`],
         ['太陽 方位角', `${sun.azimuth.toFixed(2)}°`],
         ['太陽 高度', `${sun.altitude.toFixed(2)}°`],
         ['赤緯', `${sun.declination.toFixed(2)}°`],

@@ -25,9 +25,21 @@
 
 ## 2. 部屋の構成
 
-- 床・天井・壁 4 面（白いマット素材）でできた直方体。寸法は `config/site.json` の `room.widthM` / `depthM` / `heightM`
-- 窓のある壁だけ、窓の実寸（`window.widthM` / `heightM` / `sillHeightM`）ぶんの開口を、4 枚の壁パネル（窓の上・下・手前・奥）で囲んで作る
-- 奥の壁（three.js では −z 側）がスクリーン側。中央に 32:9 のスクリーン面の目印を置く（投影面の実寸は未計測なので、奥の壁に収まる大きさ）。窓は `window.side` に応じて左右どちらかの壁に開く
+- 床・天井・壁 4 面（手前の壁も含む。白いマット素材）で閉じた直方体。寸法は `config/site.json` の `room.widthM` / `depthM` / `heightM`
+- 面はすべて室内側を向く片面なので、外から見ると手前の壁は描かれず、室内が見える
+- 外殻のすべての面が影を落とすので、光は窓の開口からだけ入る。面どうしの継ぎ目から光が漏れないよう、部屋の外周に当たる縁は 5cm 外へ延ばして重ねている
+- 窓の開口は、窓のある面を 4 枚のパネル（開口の上下・左右）で囲んで作る
+  - 壁の窓（`right` / `left`）：幅 `window.widthM` は奥行き方向、高さ `heightM`、床からの高さ `sillHeightM`。奥行きの中央に開く
+  - 天窓（`ceiling`）：天井の中央に、幅 `window.widthM`（左右）× `heightM`（奥行き方向）で開く。`sillHeightM` は使わない
+- 奥の壁（three.js では −z 側）がスクリーン側。中央に 32:9 のスクリーン面の目印を置く（投影面の実寸は未計測なので、奥の壁に収まる大きさ）
+
+### 窓の位置の切り替え
+
+パネルの「部屋 → 窓の位置」で、右・左・天井を切り替えられる（URL の `?window=ceiling` でも指定できる）。
+
+- 切り替えは **room モードの表示と光の計算だけ**に効く。`config/site.json` は変わらないので、verify・visuals・展示の `lit` は設定どおりの窓で計算される
+- 切り替えると、部屋を作り直し、`窓から入るか`・`lit` もその窓の向きで計算し直す（天窓なら `windowIncidence = sin h`）。視点はそのまま引き継ぐ
+- 本番が天窓の場合は、`config/site.json` の `window.side` を `"ceiling"` にすれば、全モードが天窓として計算する
 - カメラは鑑賞者の位置（部屋の幅の中央、目の高さ 1.5m、奥の壁から少し離れた位置）に置き、スクリーン（奥の壁）を正面に見る。画面の右 = 鑑賞者の右。`OrbitControls` で自由に視点を動かせる
 
 ## 3. 光の設定
@@ -55,11 +67,12 @@
 
 | 項目 | 内容 |
 |---|---|
-| `window.widthM` / `heightM` | 窓の実寸（m） |
-| `window.sillHeightM` | 床から窓の下端までの高さ（m） |
+| `window.side` | `"right"` / `"left"` / `"ceiling"`（天窓） |
+| `window.widthM` / `heightM` | 窓の実寸（m）。壁の窓は幅＝奥行き方向、天窓は幅＝左右・高さ＝奥行き方向 |
+| `window.sillHeightM` | 床から窓の下端までの高さ（m）。天窓では使わない |
 | `room.widthM` / `depthM` / `heightM` | 部屋の寸法（m）。実際の部屋の寸法ではなく、光の見え方を確認するための仮のボックス |
 
-いずれも現地未計測の仮値。検証場所・本番の実測値が分かり次第、更新すること（`window.widthM` は `room.widthM` より、`window.sillHeightM + heightM` は `room.heightM` 以下である必要があり、外れると起動時にエラーになる）。
+いずれも現地未計測の仮値。検証場所・本番の実測値が分かり次第、更新すること。窓が部屋に収まらないと起動時にエラーになる（壁の窓：`widthM` < `room.depthM`、`sillHeightM + heightM` ≦ `room.heightM`。天窓：`widthM` < `room.widthM`、`heightM` < `room.depthM`）。
 
 ## 6. 分かっている課題
 

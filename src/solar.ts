@@ -20,7 +20,7 @@ export interface Site {
   /** 鑑賞者がスクリーンを見る向き（真北基準） */
   facingAzimuth: number;
   rightAzimuth: number;
-  /** 窓の外向き（真北基準） */
+  /** 窓の外向き（真北基準）。天窓（windowSide = "ceiling"）では入射の計算に使わない */
   windowAzimuth: number;
   windowSide: WindowSide;
 }
@@ -33,7 +33,7 @@ export interface LightOnScreen {
   /** (x, y) を正規化した画面内の向き */
   dirX: number;
   dirY: number;
-  /** 太陽方向と窓の外向きの cos */
+  /** 太陽方向と窓の外向き（天窓は真上）の cos */
   windowIncidence: number;
   entersWindow: boolean;
 }
@@ -88,7 +88,8 @@ export function resolveSite(config: SiteConfig, siteName: string = config.active
   const facing = norm360(
     scr.azimuthReference === 'magnetic' ? scr.facingAzimuth + scr.magneticDeclination : scr.facingAzimuth,
   );
-  const windowAz = s.window.facingAzimuth ?? (s.window.side === 'right' ? facing + 90 : facing - 90);
+  const side = s.window.side;
+  const windowAz = s.window.facingAzimuth ?? (side === 'right' ? facing + 90 : side === 'left' ? facing - 90 : facing);
   return {
     name: siteName,
     label: s.label,
@@ -102,14 +103,17 @@ export function resolveSite(config: SiteConfig, siteName: string = config.active
   };
 }
 
-type ScreenFrame = Pick<Site, 'facingAzimuth' | 'rightAzimuth' | 'windowAzimuth'>;
+type ScreenFrame = Pick<Site, 'facingAzimuth' | 'rightAzimuth' | 'windowAzimuth'> & Partial<Pick<Site, 'windowSide'>>;
 
 export function lightOnScreen(sun: Pick<SunPosition, 'azimuth' | 'altitude'>, site: ScreenFrame): LightOnScreen {
   const a = sun.altitude * RAD;
   const x = -Math.cos(a) * Math.cos((sun.azimuth - site.rightAzimuth) * RAD);
   const y = -Math.sin(a);
   const z = -Math.cos(a) * Math.cos((sun.azimuth - site.facingAzimuth) * RAD);
-  const windowIncidence = Math.cos(a) * Math.cos((sun.azimuth - site.windowAzimuth) * RAD);
+  // 壁の窓は外向きが水平（方位 windowAzimuth）、天窓は外向きが真上
+  const windowIncidence = site.windowSide === 'ceiling'
+    ? Math.sin(a)
+    : Math.cos(a) * Math.cos((sun.azimuth - site.windowAzimuth) * RAD);
   const len = Math.hypot(x, y);
   return {
     x, y, z,

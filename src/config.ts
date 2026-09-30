@@ -1,6 +1,9 @@
 // config/*.json の型と検証。現地で手編集されるファイルなので、起動時に問題点をまとめて報告する。
 
-export type WindowSide = 'left' | 'right';
+/** 窓の位置。left / right = 鑑賞者から見て左右の壁、ceiling = 天井（天窓） */
+export type WindowSide = 'left' | 'right' | 'ceiling';
+export const WINDOW_SIDES: readonly WindowSide[] = ['left', 'right', 'ceiling'];
+export const WINDOW_SIDE_LABEL: Record<WindowSide, string> = { left: '左', right: '右', ceiling: '天井' };
 export type AzimuthReference = 'magnetic' | 'true';
 export type AppMode = 'verify' | 'visuals' | 'room' | 'kiosk';
 export const APP_MODES: readonly AppMode[] = ['verify', 'visuals', 'room', 'kiosk'];
@@ -18,10 +21,10 @@ export interface SiteEntry {
   window: {
     side: WindowSide;
     facingAzimuth: number | null;
-    /** 窓の実寸（m）。room モードの仮想の部屋で使う */
+    /** 窓の実寸（m）。room モードの仮想の部屋で使う。壁の窓は幅＝奥行き方向、天窓は幅＝左右・高さ＝奥行き方向 */
     widthM: number;
     heightM: number;
-    /** 床から窓の下端までの高さ（m） */
+    /** 床から窓の下端までの高さ（m）。天窓では使わない */
     sillHeightM: number;
   };
   /** room モードで使う仮想の部屋の寸法（m） */
@@ -120,7 +123,7 @@ function parseSite(c: Checker, raw: unknown, path: string): SiteEntry {
       magneticDeclination: c.num(screen, 'magneticDeclination', `${path}.screen`, -30, 30),
     },
     window: {
-      side: c.oneOf(win, 'side', `${path}.window`, ['left', 'right'] as const),
+      side: c.oneOf(win, 'side', `${path}.window`, WINDOW_SIDES),
       facingAzimuth: c.numOrNull(win, 'facingAzimuth', `${path}.window`, 0, 360),
       widthM: c.num(win, 'widthM', `${path}.window`, 0.1, 20),
       heightM: c.num(win, 'heightM', `${path}.window`, 0.1, 10),
@@ -132,13 +135,23 @@ function parseSite(c: Checker, raw: unknown, path: string): SiteEntry {
       heightM: c.num(room, 'heightM', `${path}.room`, 1, 10),
     },
   };
-  if (entry.window.widthM >= entry.room.widthM) {
-    c.problems.push(`${path}.window.widthM（${entry.window.widthM}）は ${path}.room.widthM（${entry.room.widthM}）より小さくしてください`);
-  }
-  if (entry.window.sillHeightM + entry.window.heightM > entry.room.heightM) {
-    c.problems.push(`${path}.window.sillHeightM + heightM（${entry.window.sillHeightM + entry.window.heightM}）は ${path}.room.heightM（${entry.room.heightM}）以下にしてください`);
-  }
+  c.problems.push(...windowFitProblems(entry, path));
   return entry;
+}
+
+/** 窓が部屋に収まるか。壁の窓は奥行き方向に並び、天窓は天井（幅×奥行き）に開く */
+export function windowFitProblems(entry: Pick<SiteEntry, 'window' | 'room'>, path: string): string[] {
+  const { window: w, room: r } = entry;
+  const out: string[] = [];
+  const need = (ok: boolean, msg: string): void => { if (!ok) out.push(msg); };
+  if (w.side === 'ceiling') {
+    need(w.widthM < r.widthM, `${path}.window.widthM（${w.widthM}）は天窓のとき ${path}.room.widthM（${r.widthM}）より小さくしてください`);
+    need(w.heightM < r.depthM, `${path}.window.heightM（${w.heightM}）は天窓のとき ${path}.room.depthM（${r.depthM}）より小さくしてください`);
+  } else {
+    need(w.widthM < r.depthM, `${path}.window.widthM（${w.widthM}）は ${path}.room.depthM（${r.depthM}）より小さくしてください（壁の窓は奥行き方向に並ぶ）`);
+    need(w.sillHeightM + w.heightM <= r.heightM, `${path}.window.sillHeightM + heightM（${w.sillHeightM + w.heightM}）は ${path}.room.heightM（${r.heightM}）以下にしてください`);
+  }
+  return out;
 }
 
 export function parseSiteConfig(raw: unknown, file = 'config/site.json'): SiteConfig {

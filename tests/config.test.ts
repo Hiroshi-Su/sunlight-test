@@ -45,8 +45,23 @@ test('room モードの部屋・窓の寸法の誤りを報告する', () => {
   (v['window'] as Record<string, unknown>)['sillHeightM'] = 3;
   const problems = problemsOf(() => parseSiteConfig({ activeSite: 'verification', sites: { verification: v } }));
   assert.equal(problems.length, 2);
-  assert.ok(problems.some((p) => p.includes('window.widthM') && p.includes('room.widthM')));
+  // 壁の窓は奥行き方向に並ぶので、比べる相手は部屋の奥行き
+  assert.ok(problems.some((p) => p.includes('window.widthM') && p.includes('room.depthM')));
   assert.ok(problems.some((p) => p.includes('sillHeightM') && p.includes('room.heightM')));
+});
+
+test('天窓（window.side = "ceiling"）は天井に収まるかを検証し、下端の高さは問わない', () => {
+  const raw = readJson('site.json');
+  const sites = raw['sites'] as Record<string, Record<string, unknown>>;
+  const v = structuredClone(sites['verification']!);
+  const w = v['window'] as Record<string, unknown>;
+  w['side'] = 'ceiling';
+  w['sillHeightM'] = 3; // 天窓では使わない
+  assert.doesNotThrow(() => parseSiteConfig({ activeSite: 'verification', sites: { verification: v } }));
+  w['widthM'] = 12;
+  const problems = problemsOf(() => parseSiteConfig({ activeSite: 'verification', sites: { verification: v } }));
+  assert.equal(problems.length, 1);
+  assert.ok(problems[0]!.includes('天窓') && problems[0]!.includes('room.widthM'));
 });
 
 test('app.json の誤りを報告する', () => {

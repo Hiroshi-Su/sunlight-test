@@ -29,9 +29,9 @@
     "facingAzimuth": "鑑賞者がスクリーンを見る向き（北=0°, 東=90°, 時計回り）",
     "azimuthReference": "\"magnetic\"=スマホ等のコンパス値, \"true\"=地図・図面の真北基準",
     "magneticDeclination": "磁気偏角。西偏は負。真北基準 = コンパス値 + 偏角。東京付近は約 -7.5°（国土地理院の地磁気値で要確認）",
-    "window.side": "鑑賞者から見て窓がある側: \"left\" | \"right\"。窓の外向き方位 = スクリーン向き ∓ 90°",
+    "window.side": "窓の位置: \"left\" | \"right\"（鑑賞者から見た左右の壁。窓の外向き方位 = スクリーン向き ∓ 90°）| \"ceiling\"（天窓。外向きは真上）",
     "window.facingAzimuth": "窓が斜めの場合などに窓の外向き方位（真北基準）を直接指定。null なら side から算出",
-    "window.widthM/heightM/sillHeightM": "窓の実寸（m）。room モードの仮想の部屋で使う。現地未計測の仮値（要現地測定）",
+    "window.widthM/heightM/sillHeightM": "窓の実寸（m）。room モードの仮想の部屋で使う。壁の窓は幅＝奥行き方向、天窓は幅＝左右・高さ＝奥行き方向（sillHeightM は使わない）。現地未計測の仮値（要現地測定）",
     "room": "room モードで表示する仮想の部屋の寸法（m）。実際の部屋の寸法ではなく、光の見え方を確認するための仮のボックス。現地未計測の仮値（要現地測定）",
     "utcOffsetMinutes": "現地の UTC オフセット（JST=540）。PC のタイムゾーン設定に依存させないため明示"
   }

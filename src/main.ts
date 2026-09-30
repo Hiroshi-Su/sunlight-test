@@ -1,14 +1,14 @@
 import bundledSite from '../config/site.json';
 import type { Heartbeat } from './bridge.ts';
 import { Clock } from './clock.ts';
-import { APP_MODES, type AppMode, type ParamValues, type VisualsConfig, parseSiteConfig, parseVisualsConfig } from './config.ts';
+import { APP_MODES, type AppMode, WINDOW_SIDES, type ParamValues, type VisualsConfig, parseSiteConfig, parseVisualsConfig } from './config.ts';
 import { drawGuides, drawLightArrow } from './diagram.ts';
 import { kelvinAt, kelvinToRgb, skyColors } from './palette.ts';
-import { createRoomScene } from './room/scene.ts';
+import { type RoomView, createRoomScene } from './room/scene.ts';
 import { findScene } from './scenes/index.ts';
 import { lightDebug } from './scenes/light-debug.ts';
 import { type SceneDef, type SceneInput, mergeParams } from './scenes/types.ts';
-import { resolveSite, solarState } from './solar.ts';
+import { type Site, resolveSite, solarState } from './solar.ts';
 import { type FinalOptions, Stage } from './stage.ts';
 import { el } from './ui/dom.ts';
 import { mountVerify } from './ui/verify.ts';
@@ -81,10 +81,23 @@ const visualsUi = mode === 'visuals'
   })
   : null;
 
+// room モード：窓の位置はパネルで切り替えられる（room の表示と光の計算だけ。設定ファイルは変えない）
 const roomEntry = siteConfig.sites[site.name]!;
-const room = mode === 'room' ? createRoomScene(el('roomView', HTMLDivElement), site, roomEntry.room, roomEntry.window) : null;
-const roomUi = mode === 'room' ? mountRoomUi(clock, site) : null;
-if (room) addEventListener('resize', () => room.resize());
+// ?window=ceiling などで、最初に表示する窓の位置を指定できる
+const windowParam = params.get('window');
+let roomSite: Site = { ...site, windowSide: WINDOW_SIDES.find((w) => w === windowParam) ?? site.windowSide };
+const buildRoom = (view?: RoomView) =>
+  createRoomScene(el('roomView', HTMLDivElement), roomSite.windowSide, roomEntry.room, roomEntry.window, view);
+let room = mode === 'room' ? buildRoom() : null;
+const roomUi = mode === 'room'
+  ? mountRoomUi(clock, site.windowSide, roomSite.windowSide, (side) => {
+    roomSite = { ...site, windowSide: side };
+    const view = room?.currentView();
+    room?.dispose();
+    room = buildRoom(view);
+  })
+  : null;
+if (room) addEventListener('resize', () => room?.resize());
 
 if (mode === 'verify' || mode === 'kiosk') {
   addEventListener('keydown', (e) => {
@@ -132,7 +145,7 @@ function frame(now: number): void {
   if (dt > 0) fps += (1 / dt - fps) * 0.05;
   clock.tick(dt);
 
-  const s = solarState(clock.date, site);
+  const s = solarState(clock.date, room ? roomSite : site);
   const target = s.light.entersWindow ? Math.min(1, s.light.windowIncidence * 3) : 0;
   lit += (target - lit) * Math.min(1, dt * 2);
 

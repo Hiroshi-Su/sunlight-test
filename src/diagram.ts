@@ -78,7 +78,16 @@ export function drawPlan(canvas: HTMLCanvasElement, site: Site, state: SolarStat
     ctx.fillText(label, ...pt(az, R * 0.5 + 16));
   };
   wall(site.facingAzimuth, css('--screen'), 'スクリーン', 5);
-  wall(site.windowAzimuth, css('--window'), '窓', 3);
+  if (site.windowSide === 'ceiling') {
+    // 天窓：鑑賞者の真上に四角で示す
+    const s = R * 0.12;
+    ctx.strokeStyle = ctx.fillStyle = css('--window');
+    ctx.lineWidth = 3;
+    ctx.strokeRect(cx - s, cy - s, s * 2, s * 2);
+    ctx.fillText('天窓', cx + s + 4, cy - s);
+  } else {
+    wall(site.windowAzimuth, css('--window'), '窓', 3);
+  }
 
   ctx.strokeStyle = css('--screen');
   ctx.fillStyle = css('--screen');
@@ -173,7 +182,8 @@ export function drawLightArrow(ctx: CanvasRenderingContext2D, site: Site, state:
   ctx.fillStyle = 'rgba(30,30,50,0.7)';
   const winText = '窓';
   if (site.windowSide === 'right') { ctx.textAlign = 'right'; ctx.fillText(`${winText} ▶`, w - 40, 70); }
-  else { ctx.textAlign = 'left'; ctx.fillText(`◀ ${winText}`, 40, 70); }
+  else if (site.windowSide === 'left') { ctx.textAlign = 'left'; ctx.fillText(`◀ ${winText}`, 40, 70); }
+  else { ctx.textAlign = 'center'; ctx.fillText(`▲ ${winText}（天井）`, w / 2, 70); }
   ctx.textAlign = 'left';
   ctx.font = '40px system-ui, sans-serif';
   ctx.fillText(`light = (${light.x.toFixed(3)}, ${light.y.toFixed(3)}, ${light.z.toFixed(3)})`, 40, h - 60);
