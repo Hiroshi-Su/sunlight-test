@@ -91,6 +91,15 @@ export function createRoomScene(container: HTMLElement, site: Pick<Site, 'window
   back.receiveShadow = true;
   scene.add(back);
 
+  // スクリーン（投影面、32:9）の目印。寸法は未計測なので、奥の壁に収まる大きさで置く
+  const screenW = Math.min(W * 0.8, (H * 0.7 * 32) / 9);
+  const screenH = (screenW * 9) / 32;
+  const screenMat = new THREE.MeshStandardMaterial({ color: 0x9aa3b5, roughness: 0.6, metalness: 0 });
+  const screenPanel = new THREE.Mesh(new THREE.PlaneGeometry(screenW, screenH), screenMat);
+  screenPanel.position.set(0, Math.max(screenH / 2 + 0.2, Math.min(1.5, H * 0.5)), -D + 0.01);
+  screenPanel.receiveShadow = true;
+  scene.add(screenPanel);
+
   // 側面の壁の向き：右の壁（+x）は -x を、左の壁（-x）は +x を向く
   const sideRotY = (sign: number): number => (sign > 0 ? -Math.PI / 2 : Math.PI / 2);
 

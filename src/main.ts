@@ -83,7 +83,7 @@ const visualsUi = mode === 'visuals'
 
 const roomEntry = siteConfig.sites[site.name]!;
 const room = mode === 'room' ? createRoomScene(el('roomView', HTMLDivElement), site, roomEntry.room, roomEntry.window) : null;
-const roomUi = mode === 'room' ? mountRoomUi(clock) : null;
+const roomUi = mode === 'room' ? mountRoomUi(clock, site) : null;
 if (room) addEventListener('resize', () => room.resize());
 
 if (mode === 'verify' || mode === 'kiosk') {
