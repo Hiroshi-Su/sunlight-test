@@ -47,10 +47,11 @@ export function createRoomScene(container: HTMLElement, site: Pick<Site, 'window
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x2a2f3a);
 
-  // 鑑賞者の後ろから、スクリーン（-z）の方を見る（画面の右 = 鑑賞者の右）。窓と反対側に少し寄せる
+  // 鑑賞者の位置（部屋の幅の中央・目の高さ）から、スクリーン（奥の壁、-z）を正面に見る。画面の右 = 鑑賞者の右
+  const eyeY = Math.min(1.5, H * 0.5);
   const camera = new THREE.PerspectiveCamera(60, 1, 0.05, 200);
-  const controlsTarget = new THREE.Vector3(0, H * 0.4, midZ);
-  camera.position.set(-wallSign * W * 0.1, H * 0.6, D * 0.6);
+  const controlsTarget = new THREE.Vector3(0, eyeY, -D);
+  camera.position.set(0, eyeY, D * 0.4);
   camera.lookAt(controlsTarget);
 
   const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -63,7 +64,7 @@ export function createRoomScene(container: HTMLElement, site: Pick<Site, 'window
 
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.target.copy(controlsTarget);
-  controls.maxPolarAngle = Math.PI * 0.49;
+  controls.maxPolarAngle = Math.PI * 0.6; // 水平（鑑賞者の目線）より少し見上げるところまで
   controls.minDistance = 1;
   controls.maxDistance = Math.max(W, D, H) * 4;
   controls.update();
