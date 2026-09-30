@@ -103,6 +103,13 @@ export function resolveSite(config: SiteConfig, siteName: string = config.active
   };
 }
 
+/** 窓の位置だけ差し替えた Site（room モードの切り替え用）。窓の外向きの方位も位置に合わせて計算し直す */
+export function withWindowSide(site: Site, side: WindowSide): Site {
+  if (side === site.windowSide) return site;
+  const f = site.facingAzimuth;
+  return { ...site, windowSide: side, windowAzimuth: norm360(side === 'right' ? f + 90 : side === 'left' ? f - 90 : f) };
+}
+
 type ScreenFrame = Pick<Site, 'facingAzimuth' | 'rightAzimuth' | 'windowAzimuth'> & Partial<Pick<Site, 'windowSide'>>;
 
 export function lightOnScreen(sun: Pick<SunPosition, 'azimuth' | 'altitude'>, site: ScreenFrame): LightOnScreen {

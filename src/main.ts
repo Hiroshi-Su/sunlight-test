@@ -8,7 +8,7 @@ import { type RoomView, createRoomScene } from './room/scene.ts';
 import { findScene } from './scenes/index.ts';
 import { lightDebug } from './scenes/light-debug.ts';
 import { type SceneDef, type SceneInput, mergeParams } from './scenes/types.ts';
-import { type Site, resolveSite, solarState } from './solar.ts';
+import { type Site, resolveSite, solarState, withWindowSide } from './solar.ts';
 import { type FinalOptions, Stage } from './stage.ts';
 import { el } from './ui/dom.ts';
 import { mountVerify } from './ui/verify.ts';
@@ -85,13 +85,13 @@ const visualsUi = mode === 'visuals'
 const roomEntry = siteConfig.sites[site.name]!;
 // ?window=ceiling などで、最初に表示する窓の位置を指定できる
 const windowParam = params.get('window');
-let roomSite: Site = { ...site, windowSide: WINDOW_SIDES.find((w) => w === windowParam) ?? site.windowSide };
+let roomSite: Site = withWindowSide(site, WINDOW_SIDES.find((w) => w === windowParam) ?? site.windowSide);
 const buildRoom = (view?: RoomView) =>
   createRoomScene(el('roomView', HTMLDivElement), roomSite.windowSide, roomEntry.room, roomEntry.window, view);
 let room = mode === 'room' ? buildRoom() : null;
 const roomUi = mode === 'room'
   ? mountRoomUi(clock, site.windowSide, roomSite.windowSide, (side) => {
-    roomSite = { ...site, windowSide: side };
+    roomSite = withWindowSide(site, side);
     const view = room?.currentView();
     room?.dispose();
     room = buildRoom(view);

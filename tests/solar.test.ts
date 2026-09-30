@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { parseSiteConfig } from '../src/config.ts';
-import { type LightOnScreen, lightOnScreen, resolveSite, sunPosition } from '../src/solar.ts';
+import { type LightOnScreen, lightOnScreen, resolveSite, sunPosition, withWindowSide } from '../src/solar.ts';
 
 interface Fixtures {
   source: string;
@@ -88,4 +88,17 @@ test('config の解決（磁北→真北、窓の左右）', () => {
   });
   assert.equal(l.facingAzimuth, 10);
   assert.equal(l.windowAzimuth, 280);
+});
+
+test('窓の位置の切り替え：窓の外向きも位置に合わせて変わる', () => {
+  const cfg = parseSiteConfig(JSON.parse(readFileSync(new URL('../config/site.json', import.meta.url), 'utf8')));
+  const right = resolveSite(cfg); // 検証場所は右窓（外向き 148.5°）
+  const left = withWindowSide(right, 'left');
+  assert.equal(left.windowAzimuth, 328.5);
+  assert.equal(withWindowSide(left, 'right').windowAzimuth, 148.5);
+  // 冬至 10 時ごろの太陽（方位 154.7°・高度 26.4°）は右側にあるので、右窓からは入り、左窓からは入らない
+  const sun = { azimuth: 154.7, altitude: 26.4 };
+  assert.equal(lightOnScreen(sun, right).entersWindow, true);
+  assert.equal(lightOnScreen(sun, left).entersWindow, false);
+  assert.equal(lightOnScreen(sun, withWindowSide(right, 'ceiling')).entersWindow, true);
 });

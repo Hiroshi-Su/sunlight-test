@@ -14,14 +14,16 @@ import { mountTimeControls } from './time-controls.ts';
  */
 export function mountRoomUi(clock: Clock, configSide: WindowSide, initialSide: WindowSide, onWindowSide: (side: WindowSide) => void) {
   const gui = new GUI({ container: el('room-panel', HTMLElement), width: 380, title: 'room' });
-  mountTimeControls(gui, clock);
 
+  // 窓の位置の切り替えスイッチ（パネルのいちばん上）
   const state = { side: initialSide };
   const options = Object.fromEntries(
     WINDOW_SIDES.map((s) => [`${WINDOW_SIDE_LABEL[s]}${s === configSide ? '（設定どおり）' : ''}`, s]),
   );
   const fr = gui.addFolder('部屋');
   fr.add(state, 'side', options).name('窓の位置').onChange((v: WindowSide) => onWindowSide(v));
+
+  mountTimeControls(gui, clock);
 
   const statusEl = el('room-status', HTMLElement);
   return {
