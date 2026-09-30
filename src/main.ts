@@ -165,10 +165,8 @@ function frame(now: number): void {
     width: W,
     height: H,
   };
-  if (room) {
-    room.update({ solar: s, lit, lightColor, sky: input.sky });
-    room.controls.update();
-    room.renderer.render(room.scene, room.camera);
+  if (room && roomUi) {
+    room.render({ solar: s, lightColor, sky: input.sky }, roomUi.settings);
   } else {
     const { def, params: p, opts } = current(lit, lightColor);
     stage.setScene(def);
@@ -207,7 +205,7 @@ function frame(now: number): void {
     const perf = formatPerf(stage.gpu(), fps);
     verifyUi?.update(s, perf, verifyParams);
     visualsUi?.updateStatus(s, lit, perf);
-    roomUi?.updateStatus(s, lit);
+    if (room) roomUi?.updateStatus(s, lit, room.samples);
   }
   requestAnimationFrame(frame);
 }
