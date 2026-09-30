@@ -9,12 +9,13 @@ import { pixelStretch } from './image/pixel-stretch.ts';
 import { prism } from './image/prism.ts';
 import { water } from './image/water.ts';
 import { inkBleed } from './ink-bleed.ts';
+import { lightClouds } from './light-clouds.ts';
 import { lightColumns } from './light-columns.ts';
 import { lightDebug } from './light-debug.ts';
 import type { SceneDef } from './types.ts';
 
 export const SCENES: readonly SceneDef[] = [
-  lightDebug, colorField, inkBleed, lightColumns,
+  lightDebug, colorField, inkBleed, lightColumns, lightClouds,
   photo, droplets, prism, water, glowContour, heatHaze, drip, pixelStretch,
 ];
 
