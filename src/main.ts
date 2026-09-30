@@ -89,10 +89,10 @@ const roomEntry = siteConfig.sites[site.name]!;
 const windowParam = params.get('window');
 let roomSite: Site = withWindowSide(site, WINDOW_SIDES.find((w) => w === windowParam) ?? site.windowSide);
 const buildRoom = (view?: RoomView) =>
-  createRoomScene(el('roomView', HTMLDivElement), roomSite.windowSide, roomEntry.room, roomEntry.window, view);
+  createRoomScene(el('roomView', HTMLDivElement), roomSite.windowSide, roomEntry.room, view);
 let room = mode === 'room' ? buildRoom() : null;
 const roomUi = mode === 'room'
-  ? mountRoomUi(clock, site.windowSide, roomSite.windowSide, (side) => {
+  ? mountRoomUi(clock, roomEntry.room, roomEntry.window, site.windowSide, roomSite.windowSide, (side) => {
     roomSite = withWindowSide(site, side);
     const view = room?.currentView();
     room?.dispose();

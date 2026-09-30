@@ -56,6 +56,8 @@ export interface RoomRenderSettings {
   poolDepthM: number;
   /** 窓の外の水面の高さ（床を 0 とした m。負なら床より下） */
   seaLevelM: number;
+  /** 窓の大きさ（パネルで変えられる。初期値は config/site.json） */
+  window: WindowGeometry;
 }
 
 export interface RoomView {
@@ -592,15 +594,29 @@ void main() {
 
 const WINDOW_FACE: Record<WindowSide, number> = { right: 0, left: 1, ceiling: 2 };
 
+/**
+ * 窓の範囲（窓のある面の上の座標 u0, u1, v0, v1）。壁の窓は奥行きの中央に (z, y)、天窓は天井の中央に (x, z)。
+ * 部屋からはみ出す大きさは、部屋に収まるように切り詰める
+ */
+export function windowRect(side: WindowSide, room: RoomGeometry, win: WindowGeometry): [number, number, number, number] {
+  const { widthM: W, depthM: D, heightM: H } = room;
+  const midZ = -D / 2;
+  if (side === 'ceiling') {
+    const w = Math.min(win.widthM, W * 0.95) / 2, d = Math.min(win.heightM, D * 0.95) / 2;
+    return [-w, w, midZ - d, midZ + d];
+  }
+  const w = Math.min(win.widthM, D * 0.95) / 2;
+  const y0 = Math.min(win.sillHeightM, H * 0.9), y1 = Math.min(win.sillHeightM + win.heightM, H * 0.98);
+  return [midZ - w, midZ + w, y0, Math.max(y1, y0 + 0.01)];
+}
+
 export function createRoomScene(
   container: HTMLElement,
   windowSide: WindowSide,
   room: RoomGeometry,
-  win: WindowGeometry,
   view?: RoomView,
 ) {
   const { widthM: W, depthM: D, heightM: H } = room;
-  const midZ = -D / 2;
   // 1 フレームで 1 画素あたり追う光線の本数（多いほど早くきれいになるが重い）。URL の ?spp= で変えられる
   const SPP = Math.max(1, Math.min(8, Number(new URLSearchParams(location.search).get('spp') ?? 2) || 2));
 
@@ -621,17 +637,8 @@ export function createRoomScene(
   controls.maxDistance = Math.max(W, D, H) * 4;
   controls.update();
 
-  // 窓の範囲（面上の座標）。壁の窓は奥行きの中央、天窓は天井の中央
-  const winRect = windowSide === 'ceiling'
-    ? (() => {
-      const w = Math.min(win.widthM, W * 0.95) / 2, d = Math.min(win.heightM, D * 0.95) / 2;
-      return new THREE.Vector4(-w, w, midZ - d, midZ + d);
-    })()
-    : (() => {
-      const w = Math.min(win.widthM, D * 0.95) / 2;
-      const y0 = Math.min(win.sillHeightM, H * 0.9), y1 = Math.min(win.sillHeightM + win.heightM, H * 0.98);
-      return new THREE.Vector4(midZ - w, midZ + w, y0, y1);
-    })();
+  // 窓の範囲（面上の座標）。大きさはパネルで変えられるので、毎フレーム設定から計算し直す（render）
+  const winRect = new THREE.Vector4();
 
   // スクリーン（投影面、32:9）の目印。寸法は未計測なので、奥の壁に収まる大きさ
   const screenW = Math.min(W * 0.8, (H * 0.7 * 32) / 9);
@@ -854,8 +861,10 @@ export function createRoomScene(
     const horizSun = sunE.clone().multiplyScalar(Math.max(0, Math.sin((sun.altitude * Math.PI) / 180)));
     const ground = horizSun.add(top.clone().add(bottom).multiplyScalar(0.5 * Math.PI)).multiplyScalar(GROUND_ALBEDO / Math.PI);
 
-    // 重ね合わせのやり直し：視点や設定が変わったら最初から
-    const key = [settings.bounces, settings.seaView, settings.seaRipples, settings.pool, settings.waveAmp, settings.poolDepthM, settings.seaLevelM].join();
+    winRect.fromArray(windowRect(windowSide, room, settings.window));
+
+    // 重ね合わせのやり直し：視点や設定（窓の大きさを含む）が変わったら最初から
+    const key = [settings.bounces, settings.seaView, settings.seaRipples, settings.pool, settings.waveAmp, settings.poolDepthM, settings.seaLevelM, winRect.toArray()].join();
     if (!lastCam.equals(camera.matrixWorld) || !lastProj.equals(camera.projectionMatrix) || key !== refKey) {
       samples = 0;
       lastCam.copy(camera.matrixWorld);
