@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import * as THREE from 'three';
-import { toThree, windowRect } from '../src/room/scene.ts';
+import { cloudFlowDir, toThree, windowRect } from '../src/room/scene.ts';
 import { lightOnScreen } from '../src/solar.ts';
 
 test('room：screen 座標（左手系）を three.js（右手系）へ左右反転せずに移す', () => {
@@ -32,4 +32,15 @@ test('窓の範囲：大きさの変更がそのまま反映され、部屋か�
   assert.ok(Math.abs(y1 - 3.2 * 0.98) < 1e-9);
   // 天窓：天井の中央に 幅（左右）× 奥行き
   assert.deepEqual(windowRect('ceiling', room, { widthM: 4, heightM: 2, sillHeightM: 0.4 }), [-2, 2, -4, -2]);
+});
+
+test('雲の流れる向き：風が吹いてくる方位から、部屋の座標での向きへ', () => {
+  const near = (a: { x: number; z: number }, x: number, z: number): boolean => Math.abs(a.x - x) < 1e-9 && Math.abs(a.z - z) < 1e-9;
+  // スクリーンが東向き（90°）で西風（270°）：雲は東へ＝スクリーンの方（-z）へ流れる
+  assert.ok(near(cloudFlowDir(270, 90), 0, -1));
+  // スクリーンが北向き（0°）で西風：雲は東＝鑑賞者の右（+x）へ
+  assert.ok(near(cloudFlowDir(270, 0), 1, 0));
+  // 検証場所（スクリーン 58.5°）で西風：東（90°）はスクリーンから右へ 31.5°
+  const r = (31.5 * Math.PI) / 180;
+  assert.ok(near(cloudFlowDir(270, 58.5), Math.sin(r), -Math.cos(r)));
 });

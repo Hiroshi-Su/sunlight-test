@@ -16,6 +16,9 @@ import type { WindowSide } from '../config.ts';
 import type { RGB } from '../palette.ts';
 import type { SolarState } from '../solar.ts';
 import { SUN_ANGULAR_RADIUS_DEG, directSunFactor, skyBrightness } from './daylight.ts';
+import type { ParamValues } from '../config.ts';
+import { DriftBlend, GLSL_SIMPLEX3 } from '../scenes/shader.ts';
+import type { SceneDef, SceneInput, SceneInstance } from '../scenes/types.ts';
 import { WATER_ABSORPTION, WATER_GLSL, WATER_IOR, wavePhases } from './water.ts';
 
 export interface RoomGeometry {
@@ -30,10 +33,22 @@ export interface WindowGeometry {
   sillHeightM: number;
 }
 
+/** スクリーンに映す映像（visuals の映像をそのまま使う） */
+export interface RoomScreenImage {
+  def: SceneDef;
+  params: ParamValues;
+  input: SceneInput;
+  /** 出力の明るさの範囲（config/visuals.json の output。展示と同じ） */
+  outMin: number;
+  outMax: number;
+}
+
 export interface RoomInput {
   solar: SolarState;
   lightColor: RGB;
   sky: { top: RGB; bottom: RGB };
+  /** スクリーンに映す映像（映さないときは null） */
+  screen?: RoomScreenImage | null;
 }
 
 /** 画面の設定（パネルから変える） */
@@ -58,6 +73,23 @@ export interface RoomRenderSettings {
   seaLevelM: number;
   /** 窓の大きさ（パネルで変えられる。初期値は config/site.json） */
   window: WindowGeometry;
+  /** 窓の外の空に雲を浮かべる */
+  clouds: boolean;
+  /** 雲が太陽を横切ると日差しが弱まる（雲の影） */
+  cloudShadow: boolean;
+  /** 雲の量（0〜1）・厚さ（日差しをさえぎる割合 0〜1） */
+  cloudAmount: number;
+  cloudOpacity: number;
+  /** 雲のかたまりの大きさ（m）・高さ（m） */
+  cloudSizeM: number;
+  cloudHeightM: number;
+  /** 雲の高さでの風速（m/s）と、風が吹いてくる方位（度、真北 0・東 90） */
+  windMS: number;
+  windFromDeg: number;
+  /** スクリーンに映像を映す（映像は RoomInput.screen） */
+  screen: boolean;
+  /** スクリーンの明るさ（プロジェクターの明るさ） */
+  screenGain: number;
 }
 
 export interface RoomView {
@@ -118,6 +150,17 @@ uniform float uSeaY;         // 窓の外の水面の高さ
 uniform vec3 uSeaBody;       // 水の中から出てくる光（水の色）
 uniform int uPoolOn;         // 床の水盤
 uniform float uPoolDepth;    // 水盤の深さ
+uniform int uCloudOn;        // 窓の外の空に雲
+uniform int uCloudShadow;    // 雲が日差しをさえぎる
+uniform float uCloudY;       // 雲の高さ（m）
+uniform float uCloudScale;   // 1 / 雲のかたまりの大きさ（1/m）
+uniform float uCloudAmount, uCloudContrast, uCloudOpacity;
+uniform vec3 uCloudOffA, uCloudOffB;  // 雲の流れ（xy）と形の変化（z）。B は巻き戻した後の同じ動き
+uniform float uCloudBlend;
+uniform int uScreenOn;       // スクリーンに映像を映す
+uniform sampler2D uScreenTex;
+uniform float uScreenGain;
+uniform vec2 uScreenOut;     // 映像の出力の明るさの範囲（下限・上限）
 
 const float PI = 3.14159265358979;
 const float EPS = 1e-4;
@@ -212,6 +255,60 @@ vec3 skyRadiance(vec3 d) {
   return mix(uSkyBottom, uSkyTop, sqrt(max(d.y, 0.0)));
 }
 
+${GLSL_SIMPLEX3}
+// 雲の濃さ（0〜1）。visuals の「光の雲」と同じ作り方（大きさを約半分ずつにしたノイズの重ね合わせ）を、空の水平な面の上に置く
+float cloudSum(vec2 q, vec3 off, int octaves) {
+  float s = 0.0, a = 0.55, f = 1.0;
+  for (int i = 0; i < 5; i++) {
+    if (i >= octaves) break;
+    s += a * snoise(vec3((q + off.xy) * f + vec2(17.3, -9.1) * float(i), off.z * (1.0 + 0.35 * float(i))));
+    f *= 2.03;
+    a *= 0.5;
+  }
+  return s;
+}
+float cloudDensity(vec2 xz, int octaves) {
+  vec2 q = xz * uCloudScale;
+  float s = cloudSum(q, uCloudOffA, octaves);
+  if (uCloudBlend > 0.0) {
+    float w = uCloudBlend;
+    s = (s * (1.0 - w) + cloudSum(q, uCloudOffB, octaves) * w) / sqrt((1.0 - w) * (1.0 - w) + w * w);
+  }
+  // 雲の量でしきい値を決め、それより濃い所を雲にする（量 0 で快晴、1 で全天の雲）。境目は少しぼかす
+  float d = 0.5 + 0.5 * s * uCloudContrast;
+  float th = 0.8 - 0.6 * uCloudAmount;
+  return smoothstep(th - 0.12, th + 0.12, d);
+}
+// 日差しが雲を通り抜ける割合。点 p から太陽の向きへ進んで雲の高さに届いた所の濃さで決める
+// （雲の影の縁は数十〜数百 m の幅でぼけるので、細かい層は省いて 3 層で求める）
+float cloudTrans(vec3 p) {
+  if (uCloudOn == 0 || uCloudShadow == 0 || uSunDir.y <= 0.0) return 1.0;
+  float t = (uCloudY - p.y) / max(uSunDir.y, 0.02);
+  return 1.0 - uCloudOpacity * cloudDensity(p.xz + uSunDir.xz * t, 3);
+}
+// 雲のある空：点 o から向き d（上向き）に見える空の明るさ
+vec3 cloudySky(vec3 o, vec3 d) {
+  vec3 sky = skyRadiance(d);
+  if (uCloudOn == 0 || d.y <= 0.0) return sky;
+  float t = (uCloudY - o.y) / max(d.y, 1e-3);
+  float dens = cloudDensity(o.xz + d.xz * t, 5);
+  // 地平線に近い雲は遠すぎて、空気でかすむ
+  float alpha = uCloudOpacity * dens * smoothstep(0.02, 0.2, d.y);
+  // 雲の明るさ：日差しを受けて白く光り（太陽に近い向きほど明るい：前方散乱）、厚い所ほど暗い。空の光も受ける
+  float fwd = pow(max(dot(d, uSunDir), 0.0), 6.0);
+  vec3 lit = uSunE * (0.16 + 0.6 * fwd) * (1.0 - 0.45 * dens) + 0.5 * (uSkyTop + uSkyBottom);
+  return mix(sky, lit, alpha);
+}
+
+// スクリーンに映した映像が出す光（放射輝度）。lod < 0 なら画面の画素の大きさに合わせてぼかす
+vec3 screenLight(int face, vec3 p, float lod) {
+  if (uScreenOn == 0 || !onScreen(face, p)) return vec3(0.0);
+  vec2 uv = vec2((p.x - uScreenRect.x) / (uScreenRect.y - uScreenRect.x), (p.y - uScreenRect.z) / (uScreenRect.w - uScreenRect.z));
+  vec3 c = lod < 0.0 ? texture(uScreenTex, uv).rgb : textureLod(uScreenTex, uv, lod).rgb;
+  c = clamp(c, uScreenOut.x, uScreenOut.y);
+  return uScreenGain * pow(c, vec3(2.2)); // 映像の色（sRGB）→ 光の強さ（線形）
+}
+
 // 太陽の円盤に向かう向きほど強い、鋭い山（水面に映る太陽のきらめき）。面積で割ってあるので、放射照度を掛けると放射輝度になる
 float sunLobe(vec3 r) {
   return pow(max(dot(r, uSunDir), 0.0), 3000.0) * (3002.0 / (2.0 * PI));
@@ -225,14 +322,14 @@ vec3 seaRadiance(vec3 o, vec3 d) {
   float F = fresnelWater(dot(-d, n));
   vec3 r = reflect(d, n);
   r.y = abs(r.y);
-  vec3 c = F * (skyRadiance(r) + uSunE * sunLobe(r)) + (1.0 - F) * uSeaBody;
+  vec3 c = F * (cloudySky(x, r) + uSunE * sunLobe(r) * cloudTrans(x)) + (1.0 - F) * uSeaBody;
   // 遠くはかすんで、地平線の空の色に近づく
   return mix(c, skyRadiance(normalize(vec3(d.x, 0.02, d.z))), 1.0 - exp(-t / 600.0));
 }
 
 // 窓の外の明るさ：上は空、下は海（オフなら地面）
 vec3 outsideRadiance(vec3 o, vec3 d) {
-  if (d.y >= 0.0) return skyRadiance(d);
+  if (d.y >= 0.0) return cloudySky(o, d);
   return uSeaOn == 1 ? seaRadiance(o, d) : uGround;
 }
 
@@ -336,7 +433,7 @@ void main() {
   float F = fresnelWater(ci);
   vec3 L = uMode == 1 ? refract(-uSunDir, n, 1.0 / IOR) : reflect(-uSunDir, n);
   // 水面が受ける日差しの量（傾きの余弦）× 反射または屈折する割合
-  float w = max(ci, 0.0) * (uMode == 1 ? 1.0 - F : F);
+  float w = max(ci, 0.0) * (uMode == 1 ? 1.0 - F : F) * cloudTrans(p);
   vec3 o;
   if (uSource == 0) {
     // 水盤：その点に日差しが窓から届いているか
@@ -430,7 +527,7 @@ vec3 sunIrradiance(vec3 p, vec3 n) {
   if (uSunE.x + uSunE.y + uSunE.z <= 0.0) return vec3(0.0);
   vec3 l = sunDirAt(vec2(rnd(), rnd()));
   float c = dot(n, l);
-  return c > 0.0 && seesOutside(p, l) ? uSunE * c : vec3(0.0);
+  return c > 0.0 && seesOutside(p, l) ? uSunE * (c * cloudTrans(p)) : vec3(0.0);
 }
 
 vec3 indirect(vec3 p, vec3 n) {
@@ -443,6 +540,7 @@ vec3 indirect(vec3 p, vec3 n) {
     float t = exitRoom(p, d, f);
     vec3 q = p + d * t;
     if (inWindow(f, q)) break; // 窓から外へ出た光（空の光は skyIrradiance で数えている）
+    acc += thr * screenLight(f, q, 5.0); // スクリーンに映した映像の光が、部屋をほんのり照らす（照り返しと同じくぼけた光）
     vec3 n2 = inwardNormal(f);
     vec3 a;
     vec3 e;
@@ -503,7 +601,7 @@ vec3 sunDirect(vec3 p, vec3 n) {
     float c = dot(n, l);
     if (c > 0.0 && seesOutside(p, l)) sum += c;
   }
-  return uSunE * (sum / 12.0);
+  return sum > 0.0 ? uSunE * (sum / 12.0 * cloudTrans(p)) : vec3(0.0);
 }
 
 // 照り返しの成分を、同じ面の近くの画素どうしでならす
@@ -537,7 +635,7 @@ vec3 surfaceRadiance(int f, vec3 q, vec3 fallback) {
     vec2 uv = c.xy / c.w * 0.5 + 0.5;
     if (all(greaterThan(uv, vec2(0.0))) && all(lessThan(uv, vec2(1.0)))) ind = texture(uAccum, uv).rgb;
   }
-  return a * ind + a / PI * (sunDirect(q + n * EPS, n) + uSunE * causticAt(f, q));
+  return a * ind + a / PI * (sunDirect(q + n * EPS, n) + uSunE * causticAt(f, q)) + screenLight(f, q, 2.0);
 }
 
 // 水盤：水面で反射する光と、屈折して底から戻る光を、反射の割合（フレネル）で混ぜる
@@ -556,7 +654,7 @@ vec3 poolRadiance(vec3 p, vec3 d, vec3 ind) {
   int f2;
   float t2 = exitRoom(o, rr, f2);
   vec3 q = o + rr * t2;
-  vec3 lr = inWindow(f2, q) ? outsideRadiance(q, rr) + uSunE * sunLobe(rr) : surfaceRadiance(f2, q, ind);
+  vec3 lr = inWindow(f2, q) ? outsideRadiance(q, rr) + uSunE * sunLobe(rr) * cloudTrans(q) : surfaceRadiance(f2, q, ind);
   return (1.0 - F) * lb + F * lr;
 }
 
@@ -583,7 +681,7 @@ void main() {
     if (uPoolOn == 1 && f == 3) { col += poolRadiance(p, d, ind); continue; }
     vec3 n = inwardNormal(f);
     vec3 a = albedo(f, p);
-    col += a * ind + a / PI * (sunDirect(p + n * EPS, n) + uSunE * causticAt(f, p));
+    col += a * ind + a / PI * (sunDirect(p + n * EPS, n) + uSunE * causticAt(f, p)) + screenLight(f, p, -1.0);
   }
   col *= 0.25 * uExposure;
   col = toSrgb(aces(col));
@@ -610,10 +708,28 @@ export function windowRect(side: WindowSide, room: RoomGeometry, win: WindowGeom
   return [midZ - w, midZ + w, y0, Math.max(y1, y0 + 0.01)];
 }
 
+/**
+ * 風が吹いてくる方位（真北基準）から、雲が流れていく向きを部屋の座標（three.js：右 = +x、スクリーン = -z）で返す。
+ * 雲は風下へ流れる（西風 = 270° なら東へ）
+ */
+export function cloudFlowDir(windFromDeg: number, facingAzimuth: number): { x: number; z: number } {
+  const r = ((windFromDeg + 180 - facingAzimuth) * Math.PI) / 180; // 流れていく方位を、スクリーンの向きから測った角度
+  return { x: Math.sin(r), z: -Math.cos(r) };
+}
+
+/** スクリーンに映す映像を描く大きさ（展示と同じ 3840×1080。映像の中の px 単位の値がそのまま合う） */
+const SCREEN_IMAGE = { width: 3840, height: 1080 };
+/** 雲の濃さのばらつきの大きさ（大きいほど、雲のかたまりと青空の差がはっきりする） */
+const CLOUD_CONTRAST = 1.7;
+
+/**
+ * @param facingAzimuth 鑑賞者がスクリーンを見る向き（真北基準）。風の方位を部屋の向きに直すのに使う
+ */
 export function createRoomScene(
   container: HTMLElement,
   windowSide: WindowSide,
   room: RoomGeometry,
+  facingAzimuth: number,
   view?: RoomView,
 ) {
   const { widthM: W, depthM: D, heightM: H } = room;
@@ -689,6 +805,20 @@ export function createRoomScene(
     uPOOLPh: { value: phases.pool },
     uSEAPh: { value: phases.sea },
     uFINEPh: { value: phases.fine },
+    uCloudOn: { value: 0 },
+    uCloudShadow: { value: 0 },
+    uCloudY: { value: 1500 },
+    uCloudScale: { value: 1 / 800 },
+    uCloudAmount: { value: 0.45 },
+    uCloudContrast: { value: CLOUD_CONTRAST },
+    uCloudOpacity: { value: 0.8 },
+    uCloudOffA: { value: new THREE.Vector3() },
+    uCloudOffB: { value: new THREE.Vector3() },
+    uCloudBlend: { value: 0 },
+    uScreenOn: { value: 0 },
+    uScreenTex: { value: null as THREE.Texture | null },
+    uScreenGain: { value: 0.6 },
+    uScreenOut: { value: new THREE.Vector2(0, 1) },
   };
   const causticUniforms = {
     uCausOn: { value: 0 },
@@ -831,6 +961,28 @@ export function createRoomScene(
   const refSun = new THREE.Vector3(0, -1, 0);
   let refKey = '';
   const t0 = performance.now();
+  let lastT = -1;
+
+  // 雲の流れ（ノイズの座標で。足し続ける量は DriftBlend で巻き戻す）
+  const cloudDrift = new DriftBlend();
+  const cloudVel = new THREE.Vector3();
+
+  // スクリーンに映す映像を描く画像。遠くから見ると縮小されるので、ミップマップを作ってちらつきを抑える
+  const screenTarget = new THREE.WebGLRenderTarget(SCREEN_IMAGE.width, SCREEN_IMAGE.height, {
+    minFilter: THREE.LinearMipmapLinearFilter, magFilter: THREE.LinearFilter, generateMipmaps: true, depthBuffer: false,
+  });
+  shared.uScreenTex.value = screenTarget.texture;
+  let screenScene: { id: string; inst: SceneInstance } | null = null;
+  function renderScreenImage(img: RoomScreenImage): void {
+    if (screenScene?.id !== img.def.id) {
+      screenScene?.inst.dispose();
+      screenScene = { id: img.def.id, inst: img.def.create(SCREEN_IMAGE) };
+    }
+    screenScene.inst.update(img.input, img.params);
+    renderer.setRenderTarget(screenTarget);
+    renderer.render(screenScene.inst.scene, screenScene.inst.camera);
+    shared.uScreenOut.value.set(img.outMin, img.outMax);
+  }
 
   function resize(): void {
     const w = Math.max(1, container.clientWidth);
@@ -862,9 +1014,39 @@ export function createRoomScene(
     const ground = horizSun.add(top.clone().add(bottom).multiplyScalar(0.5 * Math.PI)).multiplyScalar(GROUND_ALBEDO / Math.PI);
 
     winRect.fromArray(windowRect(windowSide, room, settings.window));
+    const now = (performance.now() - t0) / 1000;
+    const dt = lastT < 0 ? 0 : Math.min(0.25, now - lastT);
+    lastT = now;
+
+    // 雲：風が吹いてくる方位から、部屋の向き（右 = +x、スクリーン = -z）での流れる向きに直す。雲は風下へ流れる
+    const cloudsOn = settings.clouds;
+    const flow = cloudFlowDir(settings.windFromDeg, facingAzimuth);
+    const scale = 1 / Math.max(10, settings.cloudSizeM);
+    // ノイズを読む位置をずらすと、模様はその逆へ動いて見える。流れは「m/s × 1/大きさ」、形の変化は大きさに関係なく少しずつ
+    cloudVel.set(-flow.x * settings.windMS * scale, -flow.z * settings.windMS * scale, 0.02);
+    cloudDrift.step(cloudVel, dt);
+    shared.uCloudOn.value = cloudsOn ? 1 : 0;
+    shared.uCloudShadow.value = cloudsOn && settings.cloudShadow ? 1 : 0;
+    shared.uCloudY.value = settings.cloudHeightM;
+    shared.uCloudScale.value = scale;
+    shared.uCloudAmount.value = settings.cloudAmount;
+    shared.uCloudOpacity.value = settings.cloudOpacity;
+    shared.uCloudOffA.value.copy(cloudDrift.a);
+    shared.uCloudOffB.value.copy(cloudDrift.b);
+    shared.uCloudBlend.value = cloudDrift.blend;
+
+    // スクリーンの映像
+    const screenOn = settings.screen && !!input.screen;
+    if (screenOn) renderScreenImage(input.screen!);
+    shared.uScreenOn.value = screenOn ? 1 : 0;
+    shared.uScreenGain.value = settings.screenGain;
 
     // 重ね合わせのやり直し：視点や設定（窓の大きさを含む）が変わったら最初から
-    const key = [settings.bounces, settings.seaView, settings.seaRipples, settings.pool, settings.waveAmp, settings.poolDepthM, settings.seaLevelM, winRect.toArray()].join();
+    const key = [
+      settings.bounces, settings.seaView, settings.seaRipples, settings.pool, settings.waveAmp, settings.poolDepthM, settings.seaLevelM, winRect.toArray(),
+      cloudsOn, settings.cloudShadow, settings.cloudAmount, settings.cloudOpacity, settings.cloudSizeM, settings.cloudHeightM,
+      screenOn, input.screen?.def.id, settings.screenGain,
+    ].join();
     if (!lastCam.equals(camera.matrixWorld) || !lastProj.equals(camera.projectionMatrix) || key !== refKey) {
       samples = 0;
       lastCam.copy(camera.matrixWorld);
@@ -876,6 +1058,9 @@ export function createRoomScene(
       samples = Math.min(samples, 16);
       refSun.copy(sunDir);
     }
+    // 雲の影・スクリーンの映像は絶えず動くので、照り返しが遅れすぎないよう、直近 32 枚ぶんまでの平均にとどめる
+    // （直射日光と映像そのものは毎フレーム計算し直すので遅れない。遅れるのは、それが周りを照らす照り返しの部分だけ）
+    if ((cloudsOn && settings.cloudShadow) || screenOn) samples = Math.min(samples, 32);
 
     // 波は実際の時間で動かす（早送りしても波の速さは変わらない）
     const ph = wavePhases((performance.now() - t0) / 1000);
@@ -942,6 +1127,8 @@ export function createRoomScene(
     readT.dispose();
     writeT.dispose();
     for (const rt of causticTargets.values()) rt.dispose();
+    screenTarget.dispose();
+    screenScene?.inst.dispose();
     renderer.dispose();
     renderer.forceContextLoss(); // 作り直しを繰り返しても WebGL コンテキストが溜まらないように
     container.removeChild(renderer.domElement);

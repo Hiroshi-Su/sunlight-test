@@ -4,6 +4,8 @@ import type { Clock } from '../clock.ts';
 import { WINDOW_SIDES, WINDOW_SIDE_LABEL, type WindowSide } from '../config.ts';
 import { kelvinAt } from '../palette.ts';
 import type { RoomGeometry, RoomRenderSettings, WindowGeometry } from '../room/scene.ts';
+import { SCENES, findScene } from '../scenes/index.ts';
+import type { SceneDef } from '../scenes/types.ts';
 import type { SolarState } from '../solar.ts';
 import { el } from './dom.ts';
 import { mountTimeControls } from './time-controls.ts';
@@ -37,6 +39,7 @@ export function mountRoomUi(
   // 画面の設定。照り返しを 0 にすると、窓から直接届く光だけになる（照り返しの効果を見比べられる）
   // 水は ?sea=1（海）・?ripples=1（水面の反射の揺らぎ）・?pool=1（水盤）で最初からオンにできる
   // 窓の大きさは ?winW=（幅）・?winH=（高さ）・?sill=（床から窓の下端まで）で最初の値を指定できる（m）
+  // 雲は ?clouds=1、スクリーンの映像は ?screen=1（光の雲）か ?screen=映像の ID で最初からオンにできる
   const q = new URLSearchParams(location.search);
   const on = (k: string): boolean => q.get(k) === '1';
   const num = (k: string, fallback: number): number => {
@@ -52,7 +55,12 @@ export function mountRoomUi(
       heightM: num('winH', configWindow.heightM),
       sillHeightM: num('sill', configWindow.sillHeightM),
     },
+    clouds: on('clouds'), cloudShadow: true, cloudAmount: 0.45, cloudOpacity: 0.8,
+    cloudSizeM: 1500, cloudHeightM: 1500, windMS: 30, windFromDeg: 270,
+    screen: q.has('screen') && q.get('screen') !== '0', screenGain: 0.6,
   };
+  const screenParam = q.get('screen');
+  const screen = { id: SCENES.some((d) => d.id === screenParam) ? screenParam! : 'light-clouds' };
 
   // 窓の大きさ。room モードの表示と光の計算だけに効き、設定ファイルは変えない（窓の位置と同じ）
   // 上限は部屋に収まる大きさ。壁の窓は幅＝奥行き方向、天窓は幅＝左右・奥行き＝奥行き方向
@@ -102,6 +110,23 @@ export function mountRoomUi(
   fw.add(settings, 'poolDepthM', 0.02, 1.5, 0.01).name('水盤の深さ（m）');
   fw.add(settings, 'seaLevelM', -5, 0, 0.05).name('窓の外の水面の高さ（床から m）');
 
+  // 空・雲：窓から見える空に雲が流れ、太陽を横切ると日差しが弱まる（雲の影が部屋を通り過ぎる）
+  const fc = gui.addFolder('空・雲');
+  fc.add(settings, 'clouds').name('窓の外の空に雲');
+  fc.add(settings, 'cloudShadow').name('雲が日差しをさえぎる（雲の影）');
+  fc.add(settings, 'cloudAmount', 0, 1, 0.01).name('雲の量');
+  fc.add(settings, 'cloudOpacity', 0, 1, 0.01).name('雲の厚さ（さえぎる割合）');
+  fc.add(settings, 'cloudSizeM', 100, 5000, 10).name('雲のかたまりの大きさ（m）');
+  fc.add(settings, 'cloudHeightM', 300, 6000, 50).name('雲の高さ（m）');
+  fc.add(settings, 'windMS', 0, 200, 1).name('雲の流れる速さ（m/s）');
+  fc.add(settings, 'windFromDeg', 0, 360, 1).name('風が吹いてくる方位（度、北 0・東 90）');
+
+  // スクリーン：visuals の映像を、奥の壁のスクリーンに投影したように映す（調整値は config/visuals.json の保存値）
+  const fs = gui.addFolder('スクリーン');
+  fs.add(settings, 'screen').name('スクリーンに映像を映す');
+  fs.add(screen, 'id', Object.fromEntries(SCENES.map((d) => [d.label, d.id]))).name('映す映像');
+  fs.add(settings, 'screenGain', 0, 3, 0.01).name('プロジェクターの明るさ');
+
   mountTimeControls(gui, clock);
 
   const statusEl = el('room-status', HTMLElement);
@@ -112,6 +137,8 @@ export function mountRoomUi(
     : `幅 ${win.widthM.toFixed(2)}m × 高さ ${win.heightM.toFixed(2)}m、床から ${win.sillHeightM.toFixed(2)}m（${(win.widthM * win.heightM).toFixed(1)}㎡）`;
   return {
     settings,
+    /** スクリーンに映す映像 */
+    get screenScene(): SceneDef { return findScene(screen.id); },
     updateStatus(s: SolarState, lit: number, samples: number): void {
       const { sun, light } = s;
       const windowText = state.side === 'ceiling' ? '天井（天窓）' : WINDOW_SIDE_LABEL[state.side];
@@ -124,6 +151,7 @@ export function mountRoomUi(
         ...(state.side === configSide ? [] : [`※ 窓の位置は room モードだけの切り替え（設定は${WINDOW_SIDE_LABEL[configSide]}）`]),
         ...(sameAsConfig() ? [] : ['※ 窓の大きさは room モードだけの変更（設定ファイルは変わらない）']),
         ...(state.side === 'ceiling' && (settings.seaView || settings.seaRipples) ? ['※ 窓の外の海・水面の反射は、壁の窓のときだけ効く'] : []),
+        ...(settings.screen ? [`スクリーン  ${findScene(screen.id).label}`] : []),
         `1 画素あたりの光線 ${samples} 本${samples < 256 ? '（止めておくと増えて、ざらつきが減る）' : ''}`,
         '',
         'ドラッグ：視点回転／ホイール：ズーム／右ドラッグ：平行移動',

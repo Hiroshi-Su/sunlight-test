@@ -57,6 +57,7 @@ URL パラメータ：
 | `mode` | `?mode=visuals` | 表示モード（`verify` / `visuals` / `room` / `kiosk`）。画面上部の「モード」のスイッチでも切り替えられる |
 | `window` | `?window=ceiling` | room モードで最初に表示する窓の位置（`right` / `left` / `ceiling`）。設定ファイルは変わらない |
 | `winW` / `winH` / `sill` | `?winW=1.5&winH=1.2` | room モードで最初に表示する窓の幅・高さ（天窓では奥行き）・床から窓の下端までの高さ（m）。設定ファイルは変わらない |
+| `clouds` / `screen` | `?clouds=1&screen=1` | room モードで窓の外の空の雲、スクリーンへの映像の投影を最初からオンにする（`?screen=映像の ID` で映す映像も指定できる） |
 | `pool` / `sea` / `ripples` | `?pool=1&sea=1` | room モードの水のオプション（床の水盤／窓の外の海／窓の外の水面の反射）を最初からオンにする |
 | `scene` | `?scene=ink-bleed` | 表示する映像を一時的に切り替える（`config/visuals.json` は変わらない） |
 
@@ -143,6 +144,7 @@ URL パラメータ：
 - パネルの「部屋 → 窓の位置」で右・左・天井（天窓）を切り替えられる（`?window=ceiling` でも指定可）。room モードの表示と光の計算だけの切り替えで、設定ファイルは変えない
 - 窓の大きさ（幅・高さ・床からの高さ）もパネルのスライダーで変えられる（`?winW=1.5&winH=1.2&sill=0.9` でも指定可、m）。これも room モードだけの変更
 - パネルの「水」で、水面の光の揺らぎを 3 種類それぞれオン・オフできる：床の水盤（`?pool=1`）、窓の外の海（`?sea=1`）、窓の外の水面の反射で天井・壁に揺らぐ光（`?ripples=1`）。詳しくは [docs/room.md](docs/room.md) の 6 章
+- パネルの「空・雲」で窓の外の空に雲を流せる（`?clouds=1`）。雲が太陽を横切ると日だまりが暗くなる。「スクリーン」で奥の壁のスクリーンに visuals の映像を映せる（`?screen=1`、映像は `config/visuals.json` の保存値で描く）。詳しくは [docs/room.md](docs/room.md) の 7 章
 
 ## 設定（`config/site.json`）
 

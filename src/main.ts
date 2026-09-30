@@ -89,7 +89,7 @@ const roomEntry = siteConfig.sites[site.name]!;
 const windowParam = params.get('window');
 let roomSite: Site = withWindowSide(site, WINDOW_SIDES.find((w) => w === windowParam) ?? site.windowSide);
 const buildRoom = (view?: RoomView) =>
-  createRoomScene(el('roomView', HTMLDivElement), roomSite.windowSide, roomEntry.room, view);
+  createRoomScene(el('roomView', HTMLDivElement), roomSite.windowSide, roomEntry.room, roomSite.facingAzimuth, view);
 let room = mode === 'room' ? buildRoom() : null;
 const roomUi = mode === 'room'
   ? mountRoomUi(clock, roomEntry.room, roomEntry.window, site.windowSide, roomSite.windowSide, (side) => {
@@ -100,6 +100,14 @@ const roomUi = mode === 'room'
   })
   : null;
 if (room) addEventListener('resize', () => room?.resize());
+// 開発サーバーだけ：動作確認のスクリプトから room の視点を動かせるようにする
+if (import.meta.env.DEV) Object.assign(window, { __room: () => room });
+const roomParamCache = new Map<string, ParamValues>();
+const roomScreenParams = (def: SceneDef): ParamValues => {
+  let p = roomParamCache.get(def.id);
+  if (!p) roomParamCache.set(def.id, (p = mergeParams(def, visualsConfig.scenes[def.id])));
+  return p;
+};
 
 if (mode === 'verify' || mode === 'kiosk') {
   addEventListener('keydown', (e) => {
@@ -168,7 +176,12 @@ function frame(now: number): void {
     height: H,
   };
   if (room && roomUi) {
-    room.render({ solar: s, lightColor, sky: input.sky }, roomUi.settings);
+    // スクリーンの映像は、visuals で保存した調整値（config/visuals.json）で描く
+    const def = roomUi.screenScene;
+    const screen = roomUi.settings.screen
+      ? { def, params: roomScreenParams(def), input, outMin: visualsConfig.output.min, outMax: visualsConfig.output.max }
+      : null;
+    room.render({ solar: s, lightColor, sky: input.sky, screen }, roomUi.settings);
   } else {
     const { def, params: p, opts } = current(lit, lightColor);
     stage.setScene(def);
