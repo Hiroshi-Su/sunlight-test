@@ -25,11 +25,27 @@ export function mountRoomUi(clock: Clock, configSide: WindowSide, initialSide: W
   fr.add(state, 'side', options).name('窓の位置').onChange((v: WindowSide) => onWindowSide(v));
 
   // 画面の設定。照り返しを 0 にすると、窓から直接届く光だけになる（照り返しの効果を見比べられる）
-  const settings: RoomRenderSettings = { exposure: 2.5, bounces: 3, smooth: true };
+  // 水は ?sea=1（海）・?ripples=1（水面の反射の揺らぎ）・?pool=1（水盤）で最初からオンにできる
+  const q = new URLSearchParams(location.search);
+  const on = (k: string): boolean => q.get(k) === '1';
+  const settings: RoomRenderSettings = {
+    exposure: 2.5, bounces: 3, smooth: true,
+    seaView: on('sea'), seaRipples: on('ripples'), pool: on('pool'),
+    waveAmp: 1, poolDepthM: 0.3, seaLevelM: -1,
+  };
   const fv = gui.addFolder('光の計算');
   fv.add(settings, 'bounces', 0, 6, 1).name('照り返しの回数');
   fv.add(settings, 'smooth').name('照り返しのざらつきをならす');
   fv.add(settings, 'exposure', 0.1, 8, 0.05).name('露出（明るさ）');
+
+  // 水：3 つはそれぞれ独立に出し消しできる（窓の外の 2 つは、壁の窓のときだけ効く）
+  const fw = gui.addFolder('水');
+  fw.add(settings, 'seaView').name('窓の外の海');
+  fw.add(settings, 'seaRipples').name('窓の外の水面の反射（天井・壁の揺らぎ）');
+  fw.add(settings, 'pool').name('床の水盤');
+  fw.add(settings, 'waveAmp', 0, 3, 0.05).name('波の強さ');
+  fw.add(settings, 'poolDepthM', 0.02, 1.5, 0.01).name('水盤の深さ（m）');
+  fw.add(settings, 'seaLevelM', -5, 0, 0.05).name('窓の外の水面の高さ（床から m）');
 
   mountTimeControls(gui, clock);
 
@@ -45,6 +61,7 @@ export function mountRoomUi(clock: Clock, configSide: WindowSide, initialSide: W
         `窓から ${light.entersWindow ? '入る' : '入らない'}  lit ${lit.toFixed(2)}  ${Math.round(kelvinAt(sun.altitude))}K`,
         `視点  正面＝スクリーン（奥の壁）  窓＝${windowText}`,
         ...(state.side === configSide ? [] : [`※ 窓の位置は room モードだけの切り替え（設定は${WINDOW_SIDE_LABEL[configSide]}）`]),
+        ...(state.side === 'ceiling' && (settings.seaView || settings.seaRipples) ? ['※ 窓の外の海・水面の反射は、壁の窓のときだけ効く'] : []),
         `1 画素あたりの光線 ${samples} 本${samples < 256 ? '（止めておくと増えて、ざらつきが減る）' : ''}`,
         '',
         'ドラッグ：視点回転／ホイール：ズーム／右ドラッグ：平行移動',

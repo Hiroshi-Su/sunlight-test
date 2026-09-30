@@ -56,6 +56,7 @@ URL パラメータ：
 | `site` | `?site=production` | `config/site.json` のどの場所を使うか |
 | `mode` | `?mode=visuals` | 表示モード（`verify` / `visuals` / `room` / `kiosk`）。画面上部の「モード」のスイッチでも切り替えられる |
 | `window` | `?window=ceiling` | room モードで最初に表示する窓の位置（`right` / `left` / `ceiling`）。設定ファイルは変わらない |
+| `pool` / `sea` / `ripples` | `?pool=1&sea=1` | room モードの水のオプション（床の水盤／窓の外の海／窓の外の水面の反射）を最初からオンにする |
 | `scene` | `?scene=ink-bleed` | 表示する映像を一時的に切り替える（`config/visuals.json` は変わらない） |
 
 ## Electron アプリ（検証・visuals・room・展示の 4 モード）
@@ -139,6 +140,7 @@ URL パラメータ：
 - 「光の計算」で照り返しの回数（0 にすると照り返しなし）、ざらつきをならすか、露出を変えられる。1 フレームで追う光線の本数は `?spp=4` などで変更可（既定 2）
 - 窓の位置（`window.side`）・緯度経度が変わっても、`src/solar.ts` の光ベクトルを部屋の座標として使うのでコードの変更は不要（設定を変えるだけでよい）
 - パネルの「部屋 → 窓の位置」で右・左・天井（天窓）を切り替えられる（`?window=ceiling` でも指定可）。room モードの表示と光の計算だけの切り替えで、設定ファイルは変えない
+- パネルの「水」で、水面の光の揺らぎを 3 種類それぞれオン・オフできる：床の水盤（`?pool=1`）、窓の外の海（`?sea=1`）、窓の外の水面の反射で天井・壁に揺らぐ光（`?ripples=1`）。詳しくは [docs/room.md](docs/room.md) の 6 章
 
 ## 設定（`config/site.json`）
 
@@ -196,6 +198,7 @@ src/clock.ts              表示する時刻（現在時刻・早送り・指定
 src/scenes/               映像（シーン）。types.ts がインターフェース、index.ts が一覧
 src/room/scene.ts         room モードの光の計算と描画（パストレーシング）
 src/room/daylight.ts      大気を通った日差しの強さ・空の明るさ
+src/room/water.ts         room モードの水の波（水面の光の揺らぎ）
 src/ui/                   各モードの UI（verify.ts・visuals.ts・room.ts・time-controls.ts が共通の時刻パネル、mode-switch.ts がモードのスイッチ）
 config/visuals.json       映像の選択と調整値（visuals モードから保存）
 vite.config.ts            開発サーバーでの visuals.json 保存
