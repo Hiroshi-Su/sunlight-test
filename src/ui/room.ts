@@ -3,7 +3,7 @@ import GUI from 'lil-gui';
 import type { Clock } from '../clock.ts';
 import { WINDOW_SIDES, WINDOW_SIDE_LABEL, type WindowSide } from '../config.ts';
 import { kelvinAt } from '../palette.ts';
-import { EXHIBIT_SIZE, type RoomGeometry, type RoomOutput, type RoomRenderSettings, type RoomResolution, type WindowGeometry } from '../room/scene.ts';
+import { EXHIBIT_SIZE, MAX_SPOTS, SPOT_MODES, type RoomGeometry, type RoomOutput, type RoomRenderSettings, type RoomResolution, type SpotLight, type SpotMode, type SpotSettings, type WindowGeometry } from '../room/scene.ts';
 import { SCENES, findScene } from '../scenes/index.ts';
 import type { SceneDef } from '../scenes/types.ts';
 import type { SolarState } from '../solar.ts';
@@ -19,6 +19,22 @@ import { mountTimeControls } from './time-controls.ts';
  * - 天窓の大きさは天井いっぱい（天井の面が消える大きさ）。URL の ?winW= ?winH= を指定したときはその値
  */
 export const ROOM_DEFAULTS = { pool: true, poolReflect: false, waveAmp: 0.3, fullCeiling: true, cloudShadow: false } as const;
+
+/**
+ * スポットライト 1 台の既定（鑑賞者の頭上：手前の端から 0.6m、天井から 0.15m。真下から奥へ 35° 傾ける）。
+ * 2 台目以降は左右に並べ、4 台目は少し奥に置く
+ */
+const SPOT_LIGHT_BASE: SpotLight = {
+  strength: 1, beamDeg: 60, softness: 0.35, tiltDeg: 35, panDeg: 0,
+  fromFrontM: 0.6, belowCeilingM: 0.15, xM: 0, colorMode: 'kelvin', kelvin: 3000, color: '#ffd9a8',
+};
+const SPOT_LIGHT_PLACES: Partial<SpotLight>[] = [{}, { xM: -2.5 }, { xM: 2.5 }, { fromFrontM: 2.0, tiltDeg: 20 }];
+export const spotLightDefault = (i: number): SpotLight => ({ ...SPOT_LIGHT_BASE, ...SPOT_LIGHT_PLACES[i % SPOT_LIGHT_PLACES.length] });
+export const SPOT_DEFAULTS: SpotSettings = {
+  mode: 'auto', count: 1, onAltDeg: 5, fullAltDeg: -4,
+  lights: Array.from({ length: MAX_SPOTS }, (_, i) => spotLightDefault(i)),
+};
+const SPOT_MODE_LABEL: Record<SpotMode, string> = { auto: '自動（太陽が沈むと点く）', on: '常に点ける', off: '消す' };
 
 /**
  * @param room 部屋の寸法（窓の大きさの上限に使う）
@@ -73,6 +89,14 @@ export function mountRoomUi(
     clouds: on('clouds'), cloudShadow: on('cloudShadow', ROOM_DEFAULTS.cloudShadow), cloudAmount: 0.45, cloudOpacity: 0.8,
     cloudSizeM: 1500, cloudHeightM: 1500, windMS: 30, windFromDeg: 270,
     screen: q.has('screen') && q.get('screen') !== '0', screenGain: 0.6,
+    // ?spot=on / off / auto でスポットライトの点け方を指定できる
+    // ?spotCount=2 で台数を指定できる
+    spot: {
+      ...SPOT_DEFAULTS,
+      mode: SPOT_MODES.find((m) => m === q.get('spot')) ?? SPOT_DEFAULTS.mode,
+      count: Math.min(MAX_SPOTS, Math.max(1, Math.round(num('spotCount', SPOT_DEFAULTS.count)))),
+      lights: SPOT_DEFAULTS.lights.map((l) => ({ ...l })),
+    },
   };
   const screenParam = q.get('screen');
   const screen = { id: SCENES.some((d) => d.id === screenParam) ? screenParam! : 'light-clouds' };
@@ -196,6 +220,36 @@ export function mountRoomUi(
   fs.add(screen, 'id', Object.fromEntries(SCENES.map((d) => [d.label, d.id]))).name('映す映像');
   fs.add(settings, 'screenGain', 0, 3, 0.01).name('プロジェクターの明るさ');
 
+  // ライト（夜）：鑑賞者の頭上のスポットライト。太陽が沈んで窓から光が入らなくなると、代わりに部屋を照らす。
+  // 点け方と自動で点く高度は全部のライトで共通。明るさ・形・向き・位置・色はライトごと
+  const spot = settings.spot;
+  const fl = gui.addFolder('ライト（夜）');
+  fl.add(spot, 'mode', Object.fromEntries(SPOT_MODES.map((m) => [SPOT_MODE_LABEL[m], m]))).name('点け方');
+  fl.add(spot, 'count', 1, MAX_SPOTS, 1).name('台数').onChange(() => showLights());
+  fl.add(spot, 'onAltDeg', -18, 20, 0.5).name('自動：点き始める太陽の高度（度）');
+  fl.add(spot, 'fullAltDeg', -18, 20, 0.5).name('自動：最大になる太陽の高度（度）');
+  const lightFolders = spot.lights.map((light, i) => {
+    const f = fl.addFolder(`ライト ${i + 1}`);
+    f.add(light, 'strength', 0, 5, 0.01).name('明るさ');
+    f.add(light, 'beamDeg', 5, 160, 1).name('光の広がり（度）');
+    f.add(light, 'softness', 0, 1, 0.01).name('縁のぼけ');
+    f.add(light, 'tiltDeg', 0, 90, 1).name('傾き（真下 0°・奥へ倒す）');
+    f.add(light, 'panDeg', -90, 90, 1).name('左右の向き（度、右が正）');
+    f.add(light, 'fromFrontM', 0.05, room.depthM - 0.05, 0.05).name('位置：手前の端から（m）');
+    f.add(light, 'belowCeilingM', 0, room.heightM - 0.1, 0.05).name('位置：天井から（m）');
+    f.add(light, 'xM', -room.widthM / 2 + 0.05, room.widthM / 2 - 0.05, 0.05).name('位置：左右（m、右が正）');
+    f.add(light, 'colorMode', { '色温度で決める': 'kelvin', '色を選ぶ': 'color' }).name('色の決め方').onChange(() => showColor());
+    const cK = f.add(light, 'kelvin', 1800, 10000, 50).name('色温度（K）');
+    const cC = f.addColor(light, 'color').name('色');
+    const showColor = (): void => { cK.show(light.colorMode === 'kelvin'); cC.show(light.colorMode === 'color'); };
+    showColor();
+    f.add({ run: () => { Object.assign(light, spotLightDefault(i)); f.controllers.forEach((c) => c.updateDisplay()); showColor(); } }, 'run').name('このライトを既定に戻す');
+    if (i > 0) f.close();
+    return f;
+  });
+  const showLights = (): void => lightFolders.forEach((f, i) => f.show(i < spot.count));
+  showLights();
+
   mountTimeControls(gui, clock);
 
   const statusEl = el('room-status', HTMLElement);
@@ -210,7 +264,7 @@ export function mountRoomUi(
     get screenScene(): SceneDef { return findScene(screen.id); },
     /** 計算の解像度・出す大きさ */
     get resolution(): RoomResolution { return { ...resolution }; },
-    updateStatus(s: SolarState, lit: number, samples: number, backend: Backend, size: { width: number; height: number }): void {
+    updateStatus(s: SolarState, lit: number, samples: number, backend: Backend, size: { width: number; height: number }, spotOn: number): void {
       const { sun, light } = s;
       const windowText = state.side === 'ceiling' ? '天井（天窓）' : WINDOW_SIDE_LABEL[state.side];
       statusEl.textContent = [
@@ -223,6 +277,7 @@ export function mountRoomUi(
         ...(sameAsConfig() ? [] : ['※ 窓の大きさは room モードだけの変更（設定ファイルは変わらない）']),
         ...(state.side === 'ceiling' && (settings.seaView || settings.seaRipples) ? ['※ 窓の外の海・水面の反射は、壁の窓のときだけ効く'] : []),
         ...(settings.screen ? [`スクリーン  ${findScene(screen.id).label}`] : []),
+        `ライト  ${spot.mode === 'off' ? '消す' : spotOn <= 0 ? '消えている（太陽が出ている）' : `点いている ${Math.round(spotOn * 100)}%`}`,
         `1 画素あたりの光線 ${samples} 本${samples < 256 ? '（止めておくと増えて、ざらつきが減る）' : ''}`,
         `計算 ${size.width}×${size.height}（${resolution.output === 'view' ? '画面の枠' : `展示の ${EXHIBIT_SIZE.width}×${EXHIBIT_SIZE.height}`} の ${Math.round(resolution.scale * 100)}%、画素数 ${Math.round(resolution.scale * resolution.scale * 100)}%）`,
         `描画 ${BACKEND_LABEL[backend]}  倍率 ${devicePixelRatio}`,

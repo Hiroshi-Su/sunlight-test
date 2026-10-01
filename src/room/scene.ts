@@ -147,5 +147,7 @@ export function createRoomScene(
     dispose,
     /** 1 画素あたり、これまでに追った光線の本数 */
     get samples(): number { return core.raysPerPixel; },
+    /** スポットライトの今の点き具合（0〜1） */
+    get spotOn(): number { return core.spotOn; },
   };
 }

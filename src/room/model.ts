@@ -76,6 +76,76 @@ export interface RoomRenderSettings {
   screen: boolean;
   /** スクリーンの明るさ（プロジェクターの明るさ） */
   screenGain: number;
+  /** 鑑賞者の頭上のスポットライト（夜に部屋を照らす） */
+  spot: SpotSettings;
+}
+
+/** スポットライトの点け方：auto = 太陽が沈むにつれて点く、on = いつも点ける、off = 消す */
+export type SpotMode = 'auto' | 'on' | 'off';
+export const SPOT_MODES: readonly SpotMode[] = ['auto', 'on', 'off'];
+/** スポットライトの最大の台数（シェーダーの配列の大きさ） */
+export const MAX_SPOTS = 4;
+
+/**
+ * 鑑賞者の頭上のスポットライト（全体の設定）。点け方と自動で点く高度は全部のライトで共通、
+ * 明るさ・形・向き・位置・色はライトごと（lights の先頭から count 台を使う）
+ */
+export interface SpotSettings {
+  mode: SpotMode;
+  /** 使う台数（1〜MAX_SPOTS） */
+  count: number;
+  /** 自動のとき：点き始める太陽の高度（度）と、最大の明るさになる太陽の高度（度） */
+  onAltDeg: number;
+  fullAltDeg: number;
+  lights: SpotLight[];
+}
+
+/**
+ * スポットライト 1 台。位置は部屋の手前の端（鑑賞者の側、z = 0）から測る。
+ * 向きは、真下を 0° として、スクリーン（奥）の方へ傾ける角度（tiltDeg）と、左右の向き（panDeg、右が正）
+ */
+export interface SpotLight {
+  /** 明るさの倍率（1 で、夜に露出 2.5 のとき照らされた床がほどよく見える程度） */
+  strength: number;
+  /** 光の広がり（円すいの全角、度） */
+  beamDeg: number;
+  /** 縁のぼけ（0 = くっきり、1 = 中心から縁まで徐々に暗くなる） */
+  softness: number;
+  tiltDeg: number;
+  panDeg: number;
+  /** 手前の端からの距離（m）・天井からの距離（m）・左右の位置（m、右が正） */
+  fromFrontM: number;
+  belowCeilingM: number;
+  xM: number;
+  /** 色の決め方：kelvin = 色温度（白熱灯〜昼光の白）、color = 色を直接選ぶ */
+  colorMode: 'kelvin' | 'color';
+  /** 色温度（K） */
+  kelvin: number;
+  /** 色（#rrggbb、sRGB） */
+  color: string;
+}
+
+/** 自動のときの点き具合（0〜1）。太陽の高度が onAltDeg から fullAltDeg へ下がる間に、なめらかに明るくなる */
+export function spotWeight(spot: SpotSettings, sunAltDeg: number): number {
+  if (spot.mode === 'off') return 0;
+  if (spot.mode === 'on') return 1;
+  const span = spot.onAltDeg - spot.fullAltDeg;
+  if (span <= 0) return sunAltDeg <= spot.fullAltDeg ? 1 : 0;
+  const t = Math.min(1, Math.max(0, (spot.onAltDeg - sunAltDeg) / span));
+  return t * t * (3 - 2 * t);
+}
+
+/** スポットライトの位置と向き（three.js の座標：右 = +x、上 = +y、スクリーン = -z）。位置は部屋の中に収める */
+export function spotPose(light: SpotLight, room: RoomGeometry): { pos: THREE.Vector3; dir: THREE.Vector3 } {
+  const r = Math.PI / 180;
+  const pos = new THREE.Vector3(
+    Math.min(room.widthM / 2 - 0.05, Math.max(-room.widthM / 2 + 0.05, light.xM)),
+    Math.max(0.1, room.heightM - light.belowCeilingM),
+    -Math.min(room.depthM - 0.05, Math.max(0.05, light.fromFrontM)),
+  );
+  const t = light.tiltDeg * r, p = light.panDeg * r;
+  const dir = new THREE.Vector3(Math.sin(p) * Math.sin(t), -Math.cos(t), -Math.cos(p) * Math.sin(t)).normalize();
+  return { pos, dir };
 }
 
 export interface RoomView {

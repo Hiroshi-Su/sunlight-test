@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { GLSL_SIMPLEX3, glPass } from '../scenes/shader.ts';
 import type { SceneInstance } from '../scenes/types.ts';
 import { CAUSTIC_FACES, CAUSTIC_SIZE, FLOOR_ALBEDO, POOL_ALBEDO, SCREEN_ALBEDO, SCREEN_IMAGE, WALL_ALBEDO, type RoomCore, type RoomFrame } from './core.ts';
-import type { RoomScreenImage } from './model.ts';
+import { MAX_SPOTS, type RoomScreenImage } from './model.ts';
 import { WATER_ABSORPTION, WATER_GLSL, WATER_IOR } from './water.ts';
 
 const f3 = (n: number): string => n.toFixed(4);
@@ -52,6 +52,13 @@ uniform int uScreenOn;       // スクリーンに映像を映す
 uniform sampler2D uScreenTex;
 uniform float uScreenGain;
 uniform vec2 uScreenOut;     // 映像の出力の明るさの範囲（下限・上限）
+const int MAX_SPOTS = ${MAX_SPOTS};
+uniform float uSpotCount;            // 点いている鑑賞者の頭上のスポットライトの台数（0 = 消えている）
+uniform vec3 uSpotPos[MAX_SPOTS];    // ライトの位置
+uniform vec3 uSpotDir[MAX_SPOTS];    // ライトの向き
+uniform vec3 uSpotI[MAX_SPOTS];      // 光度（色 × 強さ × 点き具合）
+uniform vec2 uSpotCos[MAX_SPOTS];    // 円すいの縁の cos（外側・内側）
+uniform float uSpotR;                // 器具の大きさ（球の半径）
 
 const float PI = 3.14159265358979;
 const float EPS = 1e-4;
@@ -266,6 +273,56 @@ bool primaryHit(vec2 px, out int face, out vec3 p, out vec3 dir) {
   p = o + d * t;
   return true;
 }
+
+
+// 鑑賞者の頭上のスポットライト（点光源 ＋ 円すいの広がり）。最大 MAX_SPOTS 台を足し合わせる。
+// 部屋は中に物のない箱なので、部屋の中のどの点にも遮られずに届く
+vec3 spotOne(int i, vec3 p, vec3 n) {
+  vec3 l = uSpotPos[i] - p;
+  float d2 = max(dot(l, l), 1e-4);
+  l *= inversesqrt(d2);
+  float c = dot(n, l);
+  if (c <= 0.0) return vec3(0.0);
+  float cone = smoothstep(uSpotCos[i].x, uSpotCos[i].y, dot(-l, uSpotDir[i]));
+  return uSpotI[i] * (cone * c / d2);
+}
+vec3 spotIrradiance(vec3 p, vec3 n) {
+  vec3 e = vec3(0.0);
+  for (int i = 0; i < MAX_SPOTS; i++) {
+    if (float(i) >= uSpotCount) break;
+    e += spotOne(i, p, n);
+  }
+  return e;
+}
+// 水盤の底に届くスポットライト。水面で屈折して入る（向きの曲がりは省き、水に入る割合と、底までの水の吸収を掛ける）
+vec3 spotBottom(vec3 b) {
+  vec3 e = vec3(0.0);
+  for (int i = 0; i < MAX_SPOTS; i++) {
+    if (float(i) >= uSpotCount) break;
+    vec3 l = normalize(uSpotPos[i] - b);
+    e += spotOne(i, b, vec3(0.0, 1.0, 0.0)) * exp(-WATER_ABS * uPoolDepth / max(l.y, 0.2));
+  }
+  return e * 0.97;
+}
+// 光線がライトの器具（小さな球）に当たれば、いちばん手前の器具の明るさ。
+// 光を出すのは、向いている側（器具の口）だけで、後ろ側は暗い灰色の器具
+vec3 spotLamp(vec3 o, vec3 d, float tMax) {
+  vec3 col = vec3(0.0);
+  float best = tMax;
+  for (int i = 0; i < MAX_SPOTS; i++) {
+    if (float(i) >= uSpotCount) break;
+    vec3 oc = o - uSpotPos[i];
+    float b = dot(oc, d);
+    float h = b * b - (dot(oc, oc) - uSpotR * uSpotR);
+    if (h < 0.0) continue;
+    float t = -b - sqrt(h);
+    if (t < 0.0 || t > best) continue;
+    best = t;
+    vec3 nn = normalize(o + d * t - uSpotPos[i]);
+    col = max(uSpotI[i] / (PI * uSpotR * uSpotR) * smoothstep(-0.2, 0.4, dot(nn, uSpotDir[i])), vec3(0.01));
+  }
+  return col;
+}
 `;
 
 // 光の揺らぎの画像を読む（段階 1・2 で使う）。値は「直射日光の何倍の光が届いているか」
@@ -457,10 +514,10 @@ vec3 indirect(vec3 p, vec3 n) {
       // 水盤の底：屈折して届いた日差し（光の揺らぎ）を、水に吸収されながら返す
       vec3 absorb = exp(-WATER_ABS * 2.0 * uPoolDepth);
       a = vec3(${POOL_ALBEDO.toFixed(3)}) * absorb;
-      e = uSunE * causticBottom(q) + skyNee(q, n2);
+      e = uSunE * causticBottom(q) + skyNee(q, n2) + spotIrradiance(q, n2) * 0.97;
     } else {
       a = albedo(f, q);
-      e = sunIrradiance(q, n2) + uSunE * causticAt(f, q) + skyNee(q, n2);
+      e = sunIrradiance(q, n2) + uSunE * causticAt(f, q) + skyNee(q, n2) + spotIrradiance(q, n2);
     }
     acc += thr * a / PI * e;
     thr *= a; // 余弦に比例して向きを選ぶので、反射率を掛けるだけでよい
@@ -543,7 +600,7 @@ vec3 surfaceRadiance(int f, vec3 q, vec3 fallback) {
     vec2 uv = c.xy / c.w * 0.5 + 0.5;
     if (all(greaterThan(uv, vec2(0.0))) && all(lessThan(uv, vec2(1.0)))) ind = texture(uAccum, uv).rgb;
   }
-  return a * ind + a / PI * (sunDirect(q + n * EPS, n) + uSunE * causticAt(f, q)) + screenLight(f, q, 2.0);
+  return a * ind + a / PI * (sunDirect(q + n * EPS, n) + uSunE * causticAt(f, q) + spotIrradiance(q + n * EPS, n)) + screenLight(f, q, 2.0);
 }
 
 // 水盤：水面で反射する光と、屈折して底から戻る光を、反射の割合（フレネル）で混ぜる
@@ -555,7 +612,7 @@ vec3 poolRadiance(vec3 p, vec3 d, vec3 ind) {
   float tb = (-uPoolDepth - p.y) / min(rd.y, -1e-3);
   vec3 b = p + rd * tb;
   vec3 absorb = exp(-WATER_ABS * (tb + uPoolDepth));
-  vec3 lb = vec3(${POOL_ALBEDO.toFixed(3)}) / PI * (uSunE * causticBottom(b) + PI * ind) * absorb;
+  vec3 lb = vec3(${POOL_ALBEDO.toFixed(3)}) / PI * ((uSunE * causticBottom(b) + PI * ind) * absorb + spotBottom(b) * exp(-WATER_ABS * tb));
   // 反射：窓の外（空・海と、映り込んだ太陽のきらめき）か、部屋の面
   vec3 rr = reflect(d, n);
   vec3 o = vec3(p.x, EPS, p.z);
@@ -563,6 +620,7 @@ vec3 poolRadiance(vec3 p, vec3 d, vec3 ind) {
   float t2 = exitRoom(o, rr, f2);
   vec3 q = o + rr * t2;
   vec3 lr = inWindow(f2, q) ? outsideRadiance(q, rr) + uSunE * sunLobe(rr) * cloudTrans(q) : surfaceRadiance(f2, q, ind);
+  lr += spotLamp(o, rr, t2); // 水面に映るライトのきらめき
   return (1.0 - F) * lb + F * lr;
 }
 
@@ -585,11 +643,13 @@ void main() {
     vec2 o = vec2(k == 1 || k == 3 ? 0.25 : -0.25, k >= 2 ? 0.25 : -0.25);
     int f; vec3 p, d;
     if (!primaryHit(px + o, f, p, d)) { col += OUTSIDE; continue; }
+    vec3 lamp = spotLamp(uCamPos, d, distance(uCamPos, p)); // ライトの器具そのもの
+    if (lamp.x + lamp.y + lamp.z > 0.0) { col += lamp; continue; }
     if (inWindow(f, p)) { col += outsideRadiance(p, d); continue; }
     if (uPoolOn == 1 && f == 3) { col += poolRadiance(p, d, ind); continue; }
     vec3 n = inwardNormal(f);
     vec3 a = albedo(f, p);
-    col += a * ind + a / PI * (sunDirect(p + n * EPS, n) + uSunE * causticAt(f, p)) + screenLight(f, p, -1.0);
+    col += a * ind + a / PI * (sunDirect(p + n * EPS, n) + uSunE * causticAt(f, p) + spotIrradiance(p + n * EPS, n)) + screenLight(f, p, -1.0);
   }
   col *= 0.25 * uExposure;
   col = toSrgb(aces(col));

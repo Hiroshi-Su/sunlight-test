@@ -3,10 +3,10 @@
 // 実際に描くのは src/room/gl.ts（WebGL2）と src/room/gpu.ts（WebGPU）
 import * as THREE from 'three';
 import type { WindowSide } from '../config.ts';
-import type { RGB } from '../palette.ts';
+import { type RGB, kelvinToRgb } from '../palette.ts';
 import { DriftBlend } from '../scenes/shader.ts';
 import { SUN_ANGULAR_RADIUS_DEG, directSunFactor, skyBrightness } from './daylight.ts';
-import { type RoomGeometry, type RoomInput, type RoomRenderSettings, type RoomScreenImage, cloudFlowDir, toThree, windowRect } from './model.ts';
+import { MAX_SPOTS, type RoomGeometry, type RoomInput, type RoomRenderSettings, type RoomScreenImage, type SpotLight, cloudFlowDir, spotPose, spotWeight, toThree, windowRect } from './model.ts';
 import { wavePhases } from './water.ts';
 
 // palette.ts の色は sRGB 表記の 0〜1。光の計算は線形の値で行う
@@ -24,6 +24,11 @@ export const WALL_ALBEDO = 0.82; // 白い塗装の壁
 export const FLOOR_ALBEDO = 0.72;
 export const SCREEN_ALBEDO = 0.45;
 export const POOL_ALBEDO = 0.62; // 水盤の底（明るい石）
+// スポットライトの明るさの目盛り（光度、演出上の値）。明るさの倍率 1 で、真下 3m の床の放射照度が
+// 晴れた日の直射日光の約 1/3（夜に露出 2.5 のとき、照らされた床がほどよく見える程度）
+const SPOT_SCALE = 7.0;
+/** スポットライトの器具の大きさ（球の半径、m）。水面に映るライトのきらめきと、器具そのものの見え方に使う */
+export const SPOT_RADIUS = 0.06;
 export const CAUSTIC_SIZE = 512; // 光の揺らぎを記録する面ごとの画像の大きさ（画素）
 /** 光の揺らぎの画像を持つ面：0 = 右の壁、1 = 左の壁、2 = 天井、4 = 手前、5 = 奥、6 = 水盤の底 */
 export const CAUSTIC_FACES = [0, 1, 2, 4, 5, 6] as const;
@@ -52,6 +57,21 @@ export interface RoomFrame {
   caustics: CausticPass[];
   /** スクリーンに映す映像（映さないときは null） */
   screen: RoomScreenImage | null;
+}
+
+/** "#rrggbb"（sRGB）→ 0〜1。読めなければ白（three.js の Color は色を線形に直して読むので、ここでは使わない） */
+export function hexToRgb(hex: string): RGB {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+  if (!m) return [1, 1, 1];
+  const v = parseInt(m[1]!, 16);
+  return [((v >> 16) & 255) / 255, ((v >> 8) & 255) / 255, (v & 255) / 255];
+}
+
+/** スポットライトの色（線形）。明るさの目盛りをそろえるため、色を変えても明るさ（輝度）は 1 にする */
+function spotColor(light: SpotLight): THREE.Vector3 {
+  const c = linear(light.colorMode === 'color' ? hexToRgb(light.color) : kelvinToRgb(light.kelvin));
+  const lum = 0.2126 * c.x + 0.7152 * c.y + 0.0722 * c.z;
+  return lum > 1e-4 ? c.multiplyScalar(1 / lum) : new THREE.Vector3(1, 1, 1);
 }
 
 /** 1 フレームで 1 画素あたり追う光線の本数（多いほど早くきれいになるが重い）。URL の ?spp= で変えられる */
@@ -89,6 +109,9 @@ export class RoomCore {
   private readonly lastProj = new THREE.Matrix4();
   private readonly refSun = new THREE.Vector3(0, -1, 0);
   private refKey = '';
+  private refSpot = 0;
+  /** スポットライトの今の点き具合（0〜1。状態表示に使う） */
+  spotOn = 0;
   private readonly t0 = performance.now();
   private lastT = -1;
   // 雲の流れ（ノイズの座標で。足し続ける量は DriftBlend で巻き戻す）
@@ -148,6 +171,12 @@ export class RoomCore {
       uScreenOn: { value: 0 },
       uScreenGain: { value: 0.6 },
       uScreenOut: { value: new THREE.Vector2(0, 1) },
+      uSpotCount: { value: 0 },
+      uSpotPos: { value: Array.from({ length: MAX_SPOTS }, () => new THREE.Vector3()) },
+      uSpotDir: { value: Array.from({ length: MAX_SPOTS }, () => new THREE.Vector3(0, -1, 0)) },
+      uSpotI: { value: Array.from({ length: MAX_SPOTS }, () => new THREE.Vector3()) },
+      uSpotCos: { value: Array.from({ length: MAX_SPOTS }, () => new THREE.Vector2(0.8, 0.9)) },
+      uSpotR: { value: SPOT_RADIUS },
     };
   }
 
@@ -207,8 +236,29 @@ export class RoomCore {
     s.uScreenGain.value = settings.screenGain;
     if (screen) s.uScreenOut.value.set(screen.outMin, screen.outMax);
 
+    // スポットライト：点き具合は太陽の高度で決まる（自動のとき）。点いているライトを配列の先頭から詰める
+    const sp = settings.spot;
+    const spotW = spotWeight(sp, sun.altitude);
+    let n = 0;
+    if (spotW > 0) {
+      for (const light of sp.lights.slice(0, Math.min(MAX_SPOTS, Math.max(0, Math.round(sp.count))))) {
+        if (light.strength <= 0) continue;
+        const pose = spotPose(light, this.room);
+        const half = (Math.min(170, Math.max(1, light.beamDeg)) * Math.PI) / 360;
+        const inner = half * (1 - Math.min(1, Math.max(0, light.softness)));
+        s.uSpotPos.value[n]!.copy(pose.pos);
+        s.uSpotDir.value[n]!.copy(pose.dir);
+        s.uSpotI.value[n]!.copy(spotColor(light)).multiplyScalar(SPOT_SCALE * light.strength * spotW);
+        s.uSpotCos.value[n]!.set(Math.cos(half), Math.cos(Math.min(inner, half - 1e-3)));
+        n++;
+      }
+    }
+    s.uSpotCount.value = n;
+    this.spotOn = n > 0 ? spotW : 0;
+
     // 重ね合わせのやり直し：視点や設定（窓の大きさを含む）が変わったら最初から
     const key = [
+      sp.mode, sp.count, JSON.stringify(sp.lights.slice(0, sp.count)),
       settings.bounces, settings.seaView, settings.seaRipples, settings.pool, settings.poolReflect, settings.waveAmp, settings.poolDepthM, settings.seaLevelM, this.winRect.toArray(),
       cloudsOn, settings.cloudShadow, settings.cloudAmount, settings.cloudOpacity, settings.cloudSizeM, settings.cloudHeightM,
       !!screen, screen?.def.id, settings.screenGain,
@@ -223,6 +273,11 @@ export class RoomCore {
     if (sunDir.angleTo(this.refSun) > 1e-3) {
       this.samples = Math.min(this.samples, 16);
       this.refSun.copy(sunDir);
+    }
+    // 夕方にスポットライトが少しずつ明るくなる間も、同じように追従させる
+    if (Math.abs(spotW - this.refSpot) > 0.01) {
+      this.samples = Math.min(this.samples, 16);
+      this.refSpot = spotW;
     }
     // 雲の影・スクリーンの映像は絶えず動くので、照り返しが遅れすぎないよう、直近 32 枚ぶんまでの平均にとどめる
     // （直射日光と映像そのものは毎フレーム計算し直すので遅れない。遅れるのは、それが周りを照らす照り返しの部分だけ）

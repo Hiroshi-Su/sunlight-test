@@ -9,7 +9,7 @@ import { FULLSCREEN_VS, FullscreenPipeline, type Gpu, MipGenerator, configureCan
 import { WGSL_SIMPLEX3 } from '../scenes/shader.ts';
 import { CAUSTIC_FACES, CAUSTIC_SIZE, FLOOR_ALBEDO, POOL_ALBEDO, SCREEN_ALBEDO, SCREEN_IMAGE, WALL_ALBEDO, type CausticPass, type RoomCore, type RoomFrame } from './core.ts';
 import type { RoomRenderer } from './gl.ts';
-import type { RoomScreenImage } from './model.ts';
+import { MAX_SPOTS, type RoomScreenImage } from './model.ts';
 import { WATER_ABSORPTION, WATER_IOR, WATER_WGSL } from './water.ts';
 
 const f3 = (n: number): string => n.toFixed(4);
@@ -24,6 +24,7 @@ const EPS = 1e-4;
 const IOR = ${WATER_IOR.toFixed(3)};
 const WATER_ABS = vec3f(${WATER_ABSORPTION.map(f3).join(', ')});
 const OUTSIDE = vec3f(0.02); // 部屋の外（カメラが外にあり、部屋に当たらない方向）
+const MAX_SPOTS = ${MAX_SPOTS};
 
 ${WATER_WGSL}
 
@@ -224,6 +225,52 @@ fn primaryHit(px: vec2f) -> Primary {
   }
   let e = exitRoom(o, d);
   return Primary(true, e.face, o + d * e.t, d);
+}
+
+
+// 鑑賞者の頭上のスポットライト（GLSL 版の説明を参照）
+fn spotOne(i: i32, p: vec3f, n: vec3f) -> vec3f {
+  var l = u.uSpotPos[i] - p;
+  let d2 = max(dot(l, l), 1e-4);
+  l *= inverseSqrt(d2);
+  let c = dot(n, l);
+  if (c <= 0.0) { return vec3f(0.0); }
+  let cone = smoothstep(u.uSpotCos[i].x, u.uSpotCos[i].y, dot(-l, u.uSpotDir[i]));
+  return u.uSpotI[i] * (cone * c / d2);
+}
+fn spotIrradiance(p: vec3f, n: vec3f) -> vec3f {
+  var e = vec3f(0.0);
+  for (var i = 0; i < MAX_SPOTS; i++) {
+    if (f32(i) >= u.uSpotCount) { break; }
+    e += spotOne(i, p, n);
+  }
+  return e;
+}
+fn spotBottom(b: vec3f) -> vec3f {
+  var e = vec3f(0.0);
+  for (var i = 0; i < MAX_SPOTS; i++) {
+    if (f32(i) >= u.uSpotCount) { break; }
+    let l = normalize(u.uSpotPos[i] - b);
+    e += spotOne(i, b, vec3f(0.0, 1.0, 0.0)) * exp(-WATER_ABS * u.uPoolDepth / max(l.y, 0.2));
+  }
+  return e * 0.97;
+}
+fn spotLamp(o: vec3f, d: vec3f, tMax: f32) -> vec3f {
+  var col = vec3f(0.0);
+  var best = tMax;
+  for (var i = 0; i < MAX_SPOTS; i++) {
+    if (f32(i) >= u.uSpotCount) { break; }
+    let oc = o - u.uSpotPos[i];
+    let b = dot(oc, d);
+    let h = b * b - (dot(oc, oc) - u.uSpotR * u.uSpotR);
+    if (h < 0.0) { continue; }
+    let t = -b - sqrt(h);
+    if (t < 0.0 || t > best) { continue; }
+    best = t;
+    let nn = normalize(o + d * t - u.uSpotPos[i]);
+    col = max(u.uSpotI[i] / (PI * u.uSpotR * u.uSpotR) * smoothstep(-0.2, 0.4, dot(nn, u.uSpotDir[i])), vec3f(0.01));
+  }
+  return col;
 }
 `;
 
@@ -448,10 +495,10 @@ fn indirect(p0: vec3f, n0: vec3f) -> vec3f {
       // 水盤の底：屈折して届いた日差し（光の揺らぎ）を、水に吸収されながら返す
       let absorb = exp(-WATER_ABS * 2.0 * u.uPoolDepth);
       a = vec3f(${POOL_ALBEDO.toFixed(3)}) * absorb;
-      em = u.uSunE * causticBottom(q) + skyNee(q, n2);
+      em = u.uSunE * causticBottom(q) + skyNee(q, n2) + spotIrradiance(q, n2) * 0.97;
     } else {
       a = albedo(f, q);
-      em = sunIrradiance(q, n2) + u.uSunE * causticAt(f, q) + skyNee(q, n2);
+      em = sunIrradiance(q, n2) + u.uSunE * causticAt(f, q) + skyNee(q, n2) + spotIrradiance(q, n2);
     }
     acc += thr * a / PI * em;
     thr *= a; // 余弦に比例して向きを選ぶので、反射率を掛けるだけでよい
@@ -542,7 +589,7 @@ fn surfaceRadiance(f: i32, q: vec3f, fallback: vec3f) -> vec3f {
     let uv = c.xy / c.w * 0.5 + 0.5;
     if (all(uv > vec2f(0.0)) && all(uv < vec2f(1.0))) { ind = accumAt(uv * u.uRes); }
   }
-  return a * ind + a / PI * (sunDirect(q + n * EPS, n) + u.uSunE * causticAt(f, q)) + screenLight(f, q, 2.0);
+  return a * ind + a / PI * (sunDirect(q + n * EPS, n) + u.uSunE * causticAt(f, q) + spotIrradiance(q + n * EPS, n)) + screenLight(f, q, 2.0);
 }
 
 // 水盤：水面で反射する光と、屈折して底から戻る光を、反射の割合（フレネル）で混ぜる
@@ -553,7 +600,7 @@ fn poolRadiance(p: vec3f, d: vec3f, ind: vec3f) -> vec3f {
   let tb = (-u.uPoolDepth - p.y) / min(rd.y, -1e-3);
   let b = p + rd * tb;
   let absorb = exp(-WATER_ABS * (tb + u.uPoolDepth));
-  let lb = vec3f(${POOL_ALBEDO.toFixed(3)}) / PI * (u.uSunE * causticBottom(b) + PI * ind) * absorb;
+  let lb = vec3f(${POOL_ALBEDO.toFixed(3)}) / PI * ((u.uSunE * causticBottom(b) + PI * ind) * absorb + spotBottom(b) * exp(-WATER_ABS * tb));
   let rr = reflect(d, n);
   let o = vec3f(p.x, EPS, p.z);
   let e = exitRoom(o, rr);
@@ -561,6 +608,7 @@ fn poolRadiance(p: vec3f, d: vec3f, ind: vec3f) -> vec3f {
   var lr: vec3f;
   if (inWindow(e.face, q)) { lr = outsideRadiance(q, rr) + u.uSunE * sunLobe(rr) * cloudTrans(q); }
   else { lr = surfaceRadiance(e.face, q, ind); }
+  lr += spotLamp(o, rr, e.t); // 水面に映るライトのきらめき
   return (1.0 - F) * lb + F * lr;
 }
 
@@ -588,11 +636,13 @@ ${FULLSCREEN_VS}
     let o = vec2f(select(-0.25, 0.25, k == 1 || k == 3), select(-0.25, 0.25, k >= 2));
     let h = primaryHit(px + o);
     if (!h.ok) { col += OUTSIDE; continue; }
+    let lamp = spotLamp(u.uCamPos, h.dir, distance(u.uCamPos, h.p)); // ライトの器具そのもの
+    if (lamp.x + lamp.y + lamp.z > 0.0) { col += lamp; continue; }
     if (inWindow(h.face, h.p)) { col += outsideRadiance(h.p, h.dir); continue; }
     if (u.uPoolOn > 0.5 && h.face == 3) { col += poolRadiance(h.p, h.dir, ind); continue; }
     let n = inwardNormal(h.face);
     let a = albedo(h.face, h.p);
-    col += a * ind + a / PI * (sunDirect(h.p + n * EPS, n) + u.uSunE * causticAt(h.face, h.p)) + screenLight(h.face, h.p, -1.0);
+    col += a * ind + a / PI * (sunDirect(h.p + n * EPS, n) + u.uSunE * causticAt(h.face, h.p) + spotIrradiance(h.p + n * EPS, n)) + screenLight(h.face, h.p, -1.0);
   }
   col *= 0.25 * u.uExposure;
   col = toSrgb(aces(col));
