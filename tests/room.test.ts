@@ -32,6 +32,8 @@ test('窓の範囲：大きさの変更がそのまま反映され、部屋か�
   assert.ok(Math.abs(y1 - 3.2 * 0.98) < 1e-9);
   // 天窓：天井の中央に 幅（左右）× 奥行き
   assert.deepEqual(windowRect('ceiling', room, { widthM: 4, heightM: 2, sillHeightM: 0.4 }), [-2, 2, -4, -2]);
+  // 天窓は天井いっぱい（天井の面が消える大きさ）まで。それより大きくても天井の大きさで止める
+  assert.deepEqual(windowRect('ceiling', room, { widthM: 99, heightM: 99, sillHeightM: 0.4 }), [-5, 5, -6, 0]);
 });
 
 test('雲の流れる向き：風が吹いてくる方位から、部屋の座標での向きへ', () => {

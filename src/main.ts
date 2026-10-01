@@ -103,9 +103,10 @@ const visualsUi = mode === 'visuals'
 
 // room モード：窓の位置はパネルで切り替えられる（room の表示と光の計算だけ。設定ファイルは変えない）
 const roomEntry = siteConfig.sites[site.name]!;
-// ?window=ceiling などで、最初に表示する窓の位置を指定できる
+// ?window=right などで、最初に表示する窓の位置を指定できる
 const windowParam = params.get('window');
-let roomSite: Site = withWindowSide(site, WINDOW_SIDES.find((w) => w === windowParam) ?? site.windowSide);
+// 指定がなければ天窓で開く（room モードの既定。ROOM_DEFAULTS と合わせて src/ui/room.ts）
+let roomSite: Site = withWindowSide(site, WINDOW_SIDES.find((w) => w === windowParam) ?? 'ceiling');
 // 計算の解像度はパネル（とURL の ?scale= ?out= ?upscale=）で切り替える。パネルは部屋を作るより先に用意する
 let room: ReturnType<typeof createRoomScene> | null = null;
 const roomUi = mode === 'room'

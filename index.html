@@ -40,6 +40,15 @@
   #roomView.pixelated canvas { image-rendering: pixelated; }
   #roomView:fullscreen { display: flex; align-items: center; background: #000; border-radius: 0; }
   #roomView.exhibit:fullscreen canvas { height: auto; aspect-ratio: 32 / 9; }
+  /* 縮めて見る：32:9 の枠を、パネルの横ではなく行いっぱいの幅で出す */
+  #roomView.exhibit { flex: 1 1 100%; }
+  /* 原寸で見る：画面全体を覆い、3840×1080 をそのままの大きさで出す。はみ出す分はスクロール */
+  #roomView.actual { position: fixed; inset: 0; z-index: 50; height: auto; min-height: 0; border-radius: 0; background: #000; overflow: auto; padding-top: 44px; box-sizing: border-box; }
+  #roomView.actual canvas { width: var(--actual-w); height: var(--actual-h); }
+  #room-actual-bar { position: fixed; top: 0; left: 0; right: 0; z-index: 51; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 6px 10px; background: rgba(20, 20, 24, 0.92); color: #ddd; font: 13px/1.4 system-ui, sans-serif; }
+  #room-actual-bar span { margin-right: 8px; white-space: nowrap; }
+  #room-actual-bar button { font: inherit; padding: 4px 10px; border: 1px solid #555; border-radius: 4px; background: #2a2a30; color: #ddd; cursor: pointer; }
+  #room-actual-bar button.on { background: #4a6cf7; border-color: #4a6cf7; color: #fff; }
   .room-side { flex: 1 1 320px; display: flex; flex-direction: column; gap: 12px; }
   #vstatus, #room-status { margin: 0; padding: 14px; min-width: 280px; flex: 1 1 280px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; font: 13px/1.7 ui-monospace, monospace; white-space: pre; }
   .room-ui .lil-gui.root { --width: 380px; }

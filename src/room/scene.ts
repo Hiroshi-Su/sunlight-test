@@ -30,11 +30,13 @@ export const EXHIBIT_SIZE = { width: 3840, height: 1080 } as const;
 /**
  * 計算の解像度。パストレーシングは画素数がそのまま計算量になるので、小さく計算して画面に引き伸ばせば軽くなる
  * - scale：出す大きさに対する、計算する大きさの倍率（0.5 なら縦横半分、画素数は 1/4）
- * - output：'view' は画面の枠の大きさ、'exhibit' は展示と同じ 3840×1080
+ * - output：'view' は画面の枠の大きさ。'exhibit'（縮めて見る）と 'actual'（原寸で見る）は、展示と同じ 3840×1080 を基準に計算する。
+ *   2 つの違いは画面への出し方だけ（src/ui/room.ts）
  */
+export type RoomOutput = 'view' | 'exhibit' | 'actual';
 export interface RoomResolution {
   scale: number;
-  output: 'view' | 'exhibit';
+  output: RoomOutput;
 }
 
 /**
@@ -72,7 +74,7 @@ export function createRoomScene(
   let size = { width: 1, height: 1 };
   function resize(): void {
     // 出す大きさ。画面の枠のときは、高解像度ディスプレイでも 1 倍（CSS の画素）で数える
-    const out = res.output === 'exhibit'
+    const out = res.output !== 'view'
       ? EXHIBIT_SIZE
       : { width: Math.max(1, container.clientWidth), height: Math.max(1, container.clientHeight) };
     // 計算する大きさ。canvas はこの大きさで描き、CSS で枠いっぱいに引き伸ばす
@@ -87,12 +89,18 @@ export function createRoomScene(
     camera.updateProjectionMatrix();
   }
   resize();
+  // 枠の大きさが変わったら合わせる（ウィンドウの大きさだけでなく、スクロールバーが出た・見え方を切り替えた、なども含む）
+  const observer = new ResizeObserver(() => resize());
+  observer.observe(container);
 
   /** 計算の解像度を変える（重ね合わせはやり直しになる） */
   function setResolution(next: RoomResolution): void {
     res = { ...next };
+    // 原寸で見るときは、はみ出した分をホイールでスクロールできるように、ホイールでのズームを止める
+    controls.enableZoom = res.output !== 'actual';
     resize();
   }
+  setResolution(res);
 
   let last: { input: RoomInput; settings: RoomRenderSettings } | null = null;
   function render(input: RoomInput, settings: RoomRenderSettings): void {
@@ -119,6 +127,7 @@ export function createRoomScene(
   }
 
   function dispose(): void {
+    observer.disconnect();
     controls.dispose();
     renderer.dispose();
     container.removeChild(renderer.canvas);

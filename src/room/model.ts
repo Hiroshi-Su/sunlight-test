@@ -93,7 +93,8 @@ export function windowRect(side: WindowSide, room: RoomGeometry, win: WindowGeom
   const { widthM: W, depthM: D, heightM: H } = room;
   const midZ = -D / 2;
   if (side === 'ceiling') {
-    const w = Math.min(win.widthM, W * 0.95) / 2, d = Math.min(win.heightM, D * 0.95) / 2;
+    // 天窓は天井いっぱい（天井の面がなくなる大きさ）まで開けられる
+    const w = Math.min(win.widthM, W) / 2, d = Math.min(win.heightM, D) / 2;
     return [-w, w, midZ - d, midZ + d];
   }
   const w = Math.min(win.widthM, D * 0.95) / 2;

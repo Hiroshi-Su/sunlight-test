@@ -3,7 +3,7 @@ import GUI from 'lil-gui';
 import type { Clock } from '../clock.ts';
 import { WINDOW_SIDES, WINDOW_SIDE_LABEL, type WindowSide } from '../config.ts';
 import { kelvinAt } from '../palette.ts';
-import { EXHIBIT_SIZE, type RoomGeometry, type RoomRenderSettings, type RoomResolution, type WindowGeometry } from '../room/scene.ts';
+import { EXHIBIT_SIZE, type RoomGeometry, type RoomOutput, type RoomRenderSettings, type RoomResolution, type WindowGeometry } from '../room/scene.ts';
 import { SCENES, findScene } from '../scenes/index.ts';
 import type { SceneDef } from '../scenes/types.ts';
 import type { SolarState } from '../solar.ts';
@@ -11,6 +11,13 @@ import type { Backend } from '../stage.ts';
 import { BACKEND_LABEL } from './perf.ts';
 import { el } from './dom.ts';
 import { mountTimeControls } from './time-controls.ts';
+
+/**
+ * room モードを開いたときの既定値（URL で上書きできる）。時刻は現在時刻、窓の位置は天窓（src/main.ts）
+ * - 水盤はオン、波の強さは 0.3
+ * - 天窓の大きさは天井いっぱい（天井の面が消える大きさ）。URL の ?winW= ?winH= を指定したときはその値
+ */
+export const ROOM_DEFAULTS = { pool: true, waveAmp: 0.3, fullCeiling: true } as const;
 
 /**
  * @param room 部屋の寸法（窓の大きさの上限に使う）
@@ -46,18 +53,19 @@ export function mountRoomUi(
   // 窓の大きさは ?winW=（幅）・?winH=（高さ）・?sill=（床から窓の下端まで）で最初の値を指定できる（m）
   // 雲は ?clouds=1、スクリーンの映像は ?screen=1（光の雲）か ?screen=映像の ID で最初からオンにできる
   const q = new URLSearchParams(location.search);
-  const on = (k: string): boolean => q.get(k) === '1';
+  const on = (k: string, fallback = false): boolean => (q.has(k) ? q.get(k) === '1' : fallback);
   const num = (k: string, fallback: number): number => {
     const v = Number(q.get(k));
     return q.has(k) && Number.isFinite(v) && v >= 0 ? v : fallback;
   };
   const settings: RoomRenderSettings = {
     exposure: 2.5, bounces: 3, smooth: true,
-    seaView: on('sea'), seaRipples: on('ripples'), pool: on('pool'),
-    waveAmp: 1, poolDepthM: 0.3, seaLevelM: -1,
+    seaView: on('sea'), seaRipples: on('ripples'), pool: on('pool', ROOM_DEFAULTS.pool),
+    waveAmp: num('wave', ROOM_DEFAULTS.waveAmp), poolDepthM: 0.3, seaLevelM: -1,
     window: {
-      widthM: num('winW', configWindow.widthM),
-      heightM: num('winH', configWindow.heightM),
+      // 天窓で始めるときは天井いっぱい。壁の窓に切り替えると、その壁に収まる大きさに詰める（fit）
+      widthM: num('winW', initialSide === 'ceiling' && ROOM_DEFAULTS.fullCeiling ? room.widthM : configWindow.widthM),
+      heightM: num('winH', initialSide === 'ceiling' && ROOM_DEFAULTS.fullCeiling ? room.depthM : configWindow.heightM),
       sillHeightM: num('sill', configWindow.sillHeightM),
     },
     clouds: on('clouds'), cloudShadow: true, cloudAmount: 0.45, cloudOpacity: 0.8,
@@ -75,8 +83,9 @@ export function mountRoomUi(
   const cS = fr.add(win, 'sillHeightM', 0, 1, 0.05).name('窓の下端の高さ（床から m）');
   const fit = (): void => {
     const ceiling = state.side === 'ceiling';
-    const maxW = (ceiling ? room.widthM : room.depthM) * 0.95;
-    const maxH = ceiling ? room.depthM * 0.95 : room.heightM * 0.98 - 0.2;
+    // 天窓は天井いっぱいまで（天井の面が消える）、壁の窓は壁の 95% まで
+    const maxW = ceiling ? room.widthM : room.depthM * 0.95;
+    const maxH = ceiling ? room.depthM : room.heightM * 0.98 - 0.2;
     win.widthM = Math.min(win.widthM, maxW);
     win.heightM = Math.min(win.heightM, maxH);
     win.sillHeightM = Math.min(win.sillHeightM, room.heightM * 0.98 - 0.2);
@@ -84,6 +93,7 @@ export function mountRoomUi(
     cH.max(maxH).name(ceiling ? '窓の奥行き（m）' : '窓の高さ（m）').updateDisplay();
     cS.max(room.heightM * 0.98 - 0.2).updateDisplay();
     cS.show(!ceiling); // 天窓では使わない
+    cFull.show(ceiling);
   };
   // 壁の窓は、下端 + 高さが天井を超えないように、下端を動かしたら高さを、高さを動かしたら下端を詰める
   cH.onChange(() => {
@@ -100,6 +110,8 @@ export function mountRoomUi(
   });
   const reset = { run: (): void => { Object.assign(win, configWindow); fit(); } };
   fr.add(reset, 'run').name('窓の大きさを設定どおりに戻す');
+  const full = { run: (): void => { win.widthM = room.widthM; win.heightM = room.depthM; fit(); } };
+  const cFull = fr.add(full, 'run').name('天窓を天井いっぱいにする');
   fit();
   const fv = gui.addFolder('光の計算');
   fv.add(settings, 'bounces', 0, 6, 1).name('照り返しの回数');
@@ -115,31 +127,45 @@ export function mountRoomUi(
   fv.add(bench, 'text').name('結果').disable().listen();
 
   // 解像度：小さく計算して引き伸ばす。展示の投影で細かいざらつき（グレイン）がどこまで見えるかを確かめる
-  // ?scale=0.5（計算の倍率）・?out=exhibit（展示と同じ 3840×1080）・?upscale=pixel（画素のまま引き伸ばす）で最初の値を指定できる
+  // URL の ?scale=0.5（計算の倍率）・?out=exhibit / actual（出し方）・?upscale=pixel（画素のまま引き伸ばす）でも最初の値を指定できる
   const view = el('roomView', HTMLElement);
   const scaleParam = Number(q.get('scale'));
+  const outParam = q.get('out');
   const resolution: RoomResolution = {
     scale: q.has('scale') && scaleParam >= 0.1 && scaleParam <= 1 ? scaleParam : 1,
-    output: q.get('out') === 'exhibit' ? 'exhibit' : 'view',
+    output: outParam === 'exhibit' || outParam === 'actual' ? outParam : 'view',
   };
   const look = { upscale: q.get('upscale') === 'pixel' ? 'pixel' : 'smooth' };
-  const applyLook = (): void => {
-    view.classList.toggle('exhibit', resolution.output === 'exhibit');
-    view.classList.toggle('pixelated', look.upscale === 'pixel');
-  };
-  const changed = (): void => { applyLook(); onResolution({ ...resolution }); };
-  applyLook();
   const fq = gui.addFolder('解像度');
-  fq.add(resolution, 'output', { '画面の枠の大きさ': 'view', [`展示と同じ ${EXHIBIT_SIZE.width}×${EXHIBIT_SIZE.height}（32:9）`]: 'exhibit' })
-    .name('出す大きさ').onChange(changed);
+  const actualBar = mountActualBar(
+    (sc) => { resolution.scale = sc; changed(); },
+    () => { resolution.output = 'exhibit'; changed(); },
+    () => { look.upscale = look.upscale === 'pixel' ? 'smooth' : 'pixel'; changed(); },
+  );
+  const changed = (): void => {
+    view.classList.toggle('exhibit', resolution.output === 'exhibit');
+    view.classList.toggle('actual', resolution.output === 'actual');
+    view.classList.toggle('pixelated', look.upscale === 'pixel');
+    // 原寸：出す 1 画素 = 画面の 1 画素（高解像度ディスプレイでは CSS の大きさを 1/devicePixelRatio にする）
+    view.style.setProperty('--actual-w', `${EXHIBIT_SIZE.width / devicePixelRatio}px`);
+    view.style.setProperty('--actual-h', `${EXHIBIT_SIZE.height / devicePixelRatio}px`);
+    actualBar.update(resolution, look.upscale === 'pixel');
+    fq.controllers.forEach((c) => c.updateDisplay());
+    onResolution({ ...resolution });
+  };
+  const OUTPUTS: Record<string, RoomOutput> = {
+    '画面の枠の大きさ': 'view',
+    [`${EXHIBIT_SIZE.width}×${EXHIBIT_SIZE.height} を縮めて見る（シミュレーション）`]: 'exhibit',
+    [`${EXHIBIT_SIZE.width}×${EXHIBIT_SIZE.height} を原寸で見る（はみ出す分はスクロール）`]: 'actual',
+  };
+  fq.add(resolution, 'output', OUTPUTS).name('見え方').onChange(changed);
   fq.add(resolution, 'scale', 0.1, 1, 0.05).name('計算の解像度（倍）').onChange(changed);
-  const presets = { p100: '1', p75: '0.75', p50: '0.5', p33: '0.333', p25: '0.25' };
-  for (const [key, v] of Object.entries(presets)) {
-    fq.add({ [key]: () => { resolution.scale = Number(v); fq.controllers.forEach((c) => c.updateDisplay()); changed(); } }, key)
-      .name(`${Math.round(Number(v) * 100)}%`);
+  for (const sc of SCALE_PRESETS) {
+    fq.add({ [`p${sc}`]: () => { resolution.scale = sc; changed(); } }, `p${sc}`).name(`計算の解像度 ${Math.round(sc * 100)}%`);
   }
-  fq.add(look, 'upscale', { 'なめらか（線形補間）': 'smooth', '画素のまま（ドット）': 'pixel' }).name('引き伸ばし方').onChange(applyLook);
+  fq.add(look, 'upscale', { 'なめらか（線形補間）': 'smooth', '画素のまま（ドット）': 'pixel' }).name('引き伸ばし方').onChange(changed);
   fq.add({ run: () => { void view.requestFullscreen?.(); } }, 'run').name('全画面で見る（Esc で戻る）');
+  changed();
 
   // 水：3 つはそれぞれ独立に出し消しできる（窓の外の 2 つは、壁の窓のときだけ効く）
   const fw = gui.addFolder('水');
@@ -195,11 +221,57 @@ export function mountRoomUi(
         ...(state.side === 'ceiling' && (settings.seaView || settings.seaRipples) ? ['※ 窓の外の海・水面の反射は、壁の窓のときだけ効く'] : []),
         ...(settings.screen ? [`スクリーン  ${findScene(screen.id).label}`] : []),
         `1 画素あたりの光線 ${samples} 本${samples < 256 ? '（止めておくと増えて、ざらつきが減る）' : ''}`,
-        `計算 ${size.width}×${size.height}（${resolution.output === 'exhibit' ? `展示の ${EXHIBIT_SIZE.width}×${EXHIBIT_SIZE.height}` : '画面の枠'} の ${Math.round(resolution.scale * 100)}%、画素数 ${Math.round(resolution.scale * resolution.scale * 100)}%）`,
+        `計算 ${size.width}×${size.height}（${resolution.output === 'view' ? '画面の枠' : `展示の ${EXHIBIT_SIZE.width}×${EXHIBIT_SIZE.height}`} の ${Math.round(resolution.scale * 100)}%、画素数 ${Math.round(resolution.scale * resolution.scale * 100)}%）`,
         `描画 ${BACKEND_LABEL[backend]}`,
         '',
-        'ドラッグ：視点回転／ホイール：ズーム／右ドラッグ：平行移動',
+        resolution.output === 'actual'
+          ? 'ドラッグ：視点回転／ホイール：はみ出した分のスクロール／右ドラッグ：平行移動'
+          : 'ドラッグ：視点回転／ホイール：ズーム／右ドラッグ：平行移動',
       ].join('\n');
+    },
+  };
+}
+
+const SCALE_PRESETS = [1, 0.75, 0.5, 1 / 3, 0.25];
+
+/**
+ * 原寸で見ている間だけ画面の上に出す帯。パネルが隠れるので、倍率の切り替えと戻るボタンをここに置く。
+ * 数字キー 1〜5 で倍率（100%・75%・50%・33%・25%）、P で引き伸ばし方、Esc で「縮めて見る」に戻る
+ */
+function mountActualBar(onScale: (s: number) => void, onBack: () => void, onTogglePixel: () => void) {
+  const bar = document.createElement('div');
+  bar.id = 'room-actual-bar';
+  bar.hidden = true;
+  const label = document.createElement('span');
+  const buttons = SCALE_PRESETS.map((sc, i) => {
+    const b = document.createElement('button');
+    b.textContent = `${Math.round(sc * 100)}%`;
+    b.title = `計算の解像度 ${Math.round(sc * 100)}%（キー ${i + 1}）`;
+    b.onclick = () => onScale(sc);
+    return b;
+  });
+  const pixel = document.createElement('button');
+  pixel.title = '引き伸ばし方（キー P）';
+  pixel.onclick = onTogglePixel;
+  const back = document.createElement('button');
+  back.textContent = '戻る（Esc）';
+  back.onclick = onBack;
+  bar.append(label, ...buttons, pixel, back);
+  document.body.appendChild(bar);
+  addEventListener('keydown', (e) => {
+    if (bar.hidden || e.metaKey || e.ctrlKey || e.altKey || e.target instanceof HTMLInputElement) return;
+    const i = Number(e.key) - 1;
+    if (Number.isInteger(i) && i >= 0 && i < SCALE_PRESETS.length) onScale(SCALE_PRESETS[i]!);
+    else if (e.key === 'p' || e.key === 'P') onTogglePixel();
+    else if (e.key === 'Escape' && !document.fullscreenElement) onBack();
+  });
+  return {
+    update(res: RoomResolution, pixelated: boolean): void {
+      bar.hidden = res.output !== 'actual';
+      const w = Math.round(EXHIBIT_SIZE.width * res.scale), h = Math.round(EXHIBIT_SIZE.height * res.scale);
+      label.textContent = `原寸 ${EXHIBIT_SIZE.width}×${EXHIBIT_SIZE.height}（出す 1 画素 = 画面の 1 画素）  計算 ${w}×${h}`;
+      buttons.forEach((b, i) => b.classList.toggle('on', Math.abs(SCALE_PRESETS[i]! - res.scale) < 1e-3));
+      pixel.textContent = pixelated ? '画素のまま' : 'なめらか';
     },
   };
 }
