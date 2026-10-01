@@ -6,7 +6,7 @@ import { kelvinAt } from '../palette.ts';
 import { SCENES, findScene } from '../scenes/index.ts';
 import { type SceneDef, defaultParams, mergeParams } from '../scenes/types.ts';
 import type { SolarState } from '../solar.ts';
-import { el } from './dom.ts';
+import { el, ignoreSliderWheel } from './dom.ts';
 import { mountTimeControls } from './time-controls.ts';
 
 export interface VisualsHooks {
@@ -30,6 +30,7 @@ export function mountVisuals(clock: Clock, initial: VisualsConfig, hooks: Visual
   cfg.activeScene = active.id;
 
   const gui = new GUI({ container: el('panel', HTMLElement), width: 480, title: 'visuals' });
+  ignoreSliderWheel(gui.domElement);
 
   // ---- 時刻（getter/setter で Clock に直結）----
   mountTimeControls(gui, clock);

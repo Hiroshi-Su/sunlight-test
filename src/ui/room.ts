@@ -9,7 +9,7 @@ import type { SceneDef } from '../scenes/types.ts';
 import type { SolarState } from '../solar.ts';
 import type { Backend } from '../stage.ts';
 import { BACKEND_LABEL } from './perf.ts';
-import { el } from './dom.ts';
+import { el, ignoreSliderWheel } from './dom.ts';
 import { mountTimeControls } from './time-controls.ts';
 
 /**
@@ -38,6 +38,7 @@ export function mountRoomUi(
   onResolution: (res: RoomResolution) => void,
 ) {
   const gui = new GUI({ container: el('room-panel', HTMLElement), width: 380, title: 'room' });
+  ignoreSliderWheel(gui.domElement);
 
   // 窓の位置の切り替えスイッチ（パネルのいちばん上）
   const state = { side: initialSide };
