@@ -10,11 +10,19 @@ const SPEEDS: Record<string, number> = {
   '3600×（1時間/秒）': 3600,
 };
 
+/** 現在時刻に戻したら、URL の ?t=（指定時刻）も消す。残すと、再読み込みで指定時刻に戻ってしまう */
+function dropTimeParam(): void {
+  const url = new URL(location.href);
+  if (!url.searchParams.has('t')) return;
+  url.searchParams.delete('t');
+  history.replaceState(history.state, '', url);
+}
+
 export function mountTimeControls(gui: GUI, clock: Clock, folderName = '時刻'): GUI {
   const t = {
     get label() { return clock.format(); },
     get live() { return clock.live; },
-    set live(v: boolean) { clock.setLive(v); },
+    set live(v: boolean) { clock.setLive(v); if (v) dropTimeParam(); },
     get playing() { return clock.playing; },
     set playing(v: boolean) { clock.setLive(false); clock.playing = v; },
     get speed() { return clock.speed; },

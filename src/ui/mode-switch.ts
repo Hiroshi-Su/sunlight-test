@@ -24,10 +24,13 @@ export function mountModeSwitch(current: AppMode, clock: Clock, setMode?: (mode:
       if (setMode) { setMode(m); return; }
       const url = new URL(location.href);
       url.searchParams.set('mode', m);
-      // 時刻を指定して見ているときは、その時刻を引き継ぐ（現在時刻に追従しているときは付けない）
+      // 時刻を指定して見ているときは、その時刻を引き継ぐ。現在時刻に追従しているときは、前に付けた時刻を消す
+      // （消さないと、現在時刻に戻したあとも古い ?t= が残り、次のモードが指定時刻で開いてしまう）
       if (!clock.live) {
         const p = clock.local();
         url.searchParams.set('t', `${clock.ymd()}T${pad(Math.floor(p.min / 60))}:${pad(p.min % 60)}`);
+      } else {
+        url.searchParams.delete('t');
       }
       location.href = url.toString();
     });
