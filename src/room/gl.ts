@@ -403,15 +403,31 @@ vec3 cosineSample(vec3 n) {
 }
 
 // 窓から見える空（と海）から受ける光（窓の面の 1 点を選ぶ。部屋は凸なので、窓はどこからでも遮られずに見える）
-vec3 skyIrradiance(vec3 p, vec3 n) {
+// 窓から入る空の光。2 通りの選び方を混ぜる（多重重点サンプリング、バランス・ヒューリスティック）
+// - 窓の中の点を選ぶ（skyNee）：小さい窓に強い。ただし窓のすぐ近くの点では「面積 ÷ 距離²」が極端に大きくなり、
+//   これだけだと白い点（ファイアフライ）が出る（天井いっぱいの天窓の、壁の上の縁など）
+// - 照り返しの光線（余弦に比例した向き）がそのまま窓から外へ出たとき（skyBsdf）：大きい窓に強い
+// どちらも「光 × cos ÷（2 つの確率密度の和）」で数えるので、1 回の値は「光 × π」を超えず、平均の明るさは変わらない。
+// 照り返しの光線は、もともと追っているものを使う（足す光線は、最後の点の 1 本だけ。indirect）
+float windowPdf(vec3 w, float d2) {
+  // 窓の点を一様に選んだときの、方向あたりの確率密度
+  float area = (uWinRect.y - uWinRect.x) * (uWinRect.w - uWinRect.z);
+  return d2 / (max(dot(windowOutward(), w), 1e-6) * area);
+}
+// 窓の中の点を選んで数える空の光（放射照度。π で割ると、拡散面が返す光になる）
+vec3 skyNee(vec3 p, vec3 n) {
   vec3 q = windowPoint(rnd(), rnd());
   vec3 w = q - p;
   float d2 = dot(w, w);
   w *= inversesqrt(d2);
   float cp = dot(n, w), cq = dot(windowOutward(), w);
   if (cp <= 0.0 || cq <= 0.0) return vec3(0.0);
-  float area = (uWinRect.y - uWinRect.x) * (uWinRect.w - uWinRect.z);
-  return outsideRadianceAvg(w) * cp * cq * area / d2;
+  return outsideRadianceAvg(w) * cp / (windowPdf(w, d2) + cp / PI);
+}
+// 照り返しの光線 d が窓から外へ出たとき（t = 窓までの距離）に数える空の光（拡散面が返す光、skyNee / π と同じ単位）
+vec3 skyBsdf(vec3 n, vec3 d, float t) {
+  float pc = dot(n, d) / PI;
+  return outsideRadianceAvg(d) * pc / (windowPdf(d, t * t) + pc);
 }
 
 vec3 sunIrradiance(vec3 p, vec3 n) {
@@ -422,15 +438,16 @@ vec3 sunIrradiance(vec3 p, vec3 n) {
 }
 
 vec3 indirect(vec3 p, vec3 n) {
-  vec3 acc = skyIrradiance(p, n) / PI;
+  vec3 acc = skyNee(p, n) / PI;
   vec3 thr = vec3(1.0);
-  for (int b = 1; b <= 6; b++) {
-    if (b > uBounces) break;
+  // b 回目の光線で照り返しを 1 回たどる。照り返しの回数ぶんたどった後の 1 本は、空の光の 2 つ目の見本（skyBsdf）だけに使う
+  for (int b = 0; b <= 6; b++) {
     vec3 d = cosineSample(n);
     int f;
     float t = exitRoom(p, d, f);
     vec3 q = p + d * t;
-    if (inWindow(f, q)) break; // 窓から外へ出た光（空の光は skyIrradiance で数えている）
+    if (inWindow(f, q)) { acc += thr * skyBsdf(n, d, t); break; } // 窓から外へ出た：空の光の 2 つ目の見本
+    if (b >= uBounces) break;
     acc += thr * screenLight(f, q, 5.0); // スクリーンに映した映像の光が、部屋をほんのり照らす（照り返しと同じくぼけた光）
     vec3 n2 = inwardNormal(f);
     vec3 a;
@@ -440,10 +457,10 @@ vec3 indirect(vec3 p, vec3 n) {
       // 水盤の底：屈折して届いた日差し（光の揺らぎ）を、水に吸収されながら返す
       vec3 absorb = exp(-WATER_ABS * 2.0 * uPoolDepth);
       a = vec3(${POOL_ALBEDO.toFixed(3)}) * absorb;
-      e = uSunE * causticBottom(q) + skyIrradiance(q, n2);
+      e = uSunE * causticBottom(q) + skyNee(q, n2);
     } else {
       a = albedo(f, q);
-      e = sunIrradiance(q, n2) + uSunE * causticAt(f, q) + skyIrradiance(q, n2);
+      e = sunIrradiance(q, n2) + uSunE * causticAt(f, q) + skyNee(q, n2);
     }
     acc += thr * a / PI * e;
     thr *= a; // 余弦に比例して向きを選ぶので、反射率を掛けるだけでよい

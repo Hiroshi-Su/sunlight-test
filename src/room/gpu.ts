@@ -394,7 +394,12 @@ fn cosineSample(n: vec3f) -> vec3f {
 }
 
 // 窓から見える空（と海）から受ける光（窓の面の 1 点を選ぶ）
-fn skyIrradiance(p: vec3f, n: vec3f) -> vec3f {
+// 窓から入る空の光。2 通りの選び方を混ぜる（多重重点サンプリング。GLSL 版の説明を参照）
+fn windowPdf(w: vec3f, d2: f32) -> f32 {
+  let area = (u.uWinRect.y - u.uWinRect.x) * (u.uWinRect.w - u.uWinRect.z);
+  return d2 / (max(dot(windowOutward(), w), 1e-6) * area);
+}
+fn skyNee(p: vec3f, n: vec3f) -> vec3f {
   let r1 = rnd();
   let r2 = rnd();
   let q = windowPoint(r1, r2);
@@ -404,8 +409,11 @@ fn skyIrradiance(p: vec3f, n: vec3f) -> vec3f {
   let cp = dot(n, w);
   let cq = dot(windowOutward(), w);
   if (cp <= 0.0 || cq <= 0.0) { return vec3f(0.0); }
-  let area = (u.uWinRect.y - u.uWinRect.x) * (u.uWinRect.w - u.uWinRect.z);
-  return outsideRadianceAvg(w) * cp * cq * area / d2;
+  return outsideRadianceAvg(w) * cp / (windowPdf(w, d2) + cp / PI);
+}
+fn skyBsdf(n: vec3f, d: vec3f, t: f32) -> vec3f {
+  let pc = dot(n, d) / PI;
+  return outsideRadianceAvg(d) * pc / (windowPdf(d, t * t) + pc);
 }
 
 fn sunIrradiance(p: vec3f, n: vec3f) -> vec3f {
@@ -421,15 +429,16 @@ fn sunIrradiance(p: vec3f, n: vec3f) -> vec3f {
 fn indirect(p0: vec3f, n0: vec3f) -> vec3f {
   var p = p0;
   var n = n0;
-  var acc = skyIrradiance(p, n) / PI;
+  var acc = skyNee(p, n) / PI;
   var thr = vec3f(1.0);
-  for (var b = 1; b <= 6; b++) {
-    if (b > i32(u.uBounces)) { break; }
+  // b 回目の光線で照り返しを 1 回たどる。照り返しの回数ぶんたどった後の 1 本は、空の光の 2 つ目の見本だけに使う
+  for (var b = 0; b <= 6; b++) {
     let d = cosineSample(n);
     let e = exitRoom(p, d);
     let f = e.face;
     var q = p + d * e.t;
-    if (inWindow(f, q)) { break; } // 窓から外へ出た光（空の光は skyIrradiance で数えている）
+    if (inWindow(f, q)) { acc += thr * skyBsdf(n, d, e.t); break; } // 窓から外へ出た：空の光の 2 つ目の見本
+    if (b >= i32(u.uBounces)) { break; }
     acc += thr * screenLight(f, q, 5.0); // スクリーンに映した映像の光が、部屋をほんのり照らす
     let n2 = inwardNormal(f);
     var a: vec3f;
@@ -439,10 +448,10 @@ fn indirect(p0: vec3f, n0: vec3f) -> vec3f {
       // 水盤の底：屈折して届いた日差し（光の揺らぎ）を、水に吸収されながら返す
       let absorb = exp(-WATER_ABS * 2.0 * u.uPoolDepth);
       a = vec3f(${POOL_ALBEDO.toFixed(3)}) * absorb;
-      em = u.uSunE * causticBottom(q) + skyIrradiance(q, n2);
+      em = u.uSunE * causticBottom(q) + skyNee(q, n2);
     } else {
       a = albedo(f, q);
-      em = sunIrradiance(q, n2) + u.uSunE * causticAt(f, q) + skyIrradiance(q, n2);
+      em = sunIrradiance(q, n2) + u.uSunE * causticAt(f, q) + skyNee(q, n2);
     }
     acc += thr * a / PI * em;
     thr *= a; // 余弦に比例して向きを選ぶので、反射率を掛けるだけでよい

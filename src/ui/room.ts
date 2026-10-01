@@ -14,10 +14,11 @@ import { mountTimeControls } from './time-controls.ts';
 
 /**
  * room モードを開いたときの既定値（URL で上書きできる）。時刻は現在時刻、窓の位置は天窓（src/main.ts）
- * - 水盤はオン、波の強さは 0.3
+ * - 水盤はオン、波の強さは 0.3。水盤で跳ね返った光（壁・天井の揺らぎ）はオフ（窓の外の水面の反射と見分けやすいように、別に出し消しする）
+ * - 雲が日差しをさえぎる（雲の影）はオフ
  * - 天窓の大きさは天井いっぱい（天井の面が消える大きさ）。URL の ?winW= ?winH= を指定したときはその値
  */
-export const ROOM_DEFAULTS = { pool: true, waveAmp: 0.3, fullCeiling: true } as const;
+export const ROOM_DEFAULTS = { pool: true, poolReflect: false, waveAmp: 0.3, fullCeiling: true, cloudShadow: false } as const;
 
 /**
  * @param room 部屋の寸法（窓の大きさの上限に使う）
@@ -61,7 +62,7 @@ export function mountRoomUi(
   };
   const settings: RoomRenderSettings = {
     exposure: 2.5, bounces: 3, smooth: true,
-    seaView: on('sea'), seaRipples: on('ripples'), pool: on('pool', ROOM_DEFAULTS.pool),
+    seaView: on('sea'), seaRipples: on('ripples'), pool: on('pool', ROOM_DEFAULTS.pool), poolReflect: on('poolReflect', ROOM_DEFAULTS.poolReflect),
     waveAmp: num('wave', ROOM_DEFAULTS.waveAmp), poolDepthM: 0.3, seaLevelM: -1,
     window: {
       // 天窓で始めるときは天井いっぱい。壁の窓に切り替えると、その壁に収まる大きさに詰める（fit）
@@ -69,7 +70,7 @@ export function mountRoomUi(
       heightM: num('winH', initialSide === 'ceiling' && ROOM_DEFAULTS.fullCeiling ? room.depthM : configWindow.heightM),
       sillHeightM: num('sill', configWindow.sillHeightM),
     },
-    clouds: on('clouds'), cloudShadow: true, cloudAmount: 0.45, cloudOpacity: 0.8,
+    clouds: on('clouds'), cloudShadow: on('cloudShadow', ROOM_DEFAULTS.cloudShadow), cloudAmount: 0.45, cloudOpacity: 0.8,
     cloudSizeM: 1500, cloudHeightM: 1500, windMS: 30, windFromDeg: 270,
     screen: q.has('screen') && q.get('screen') !== '0', screenGain: 0.6,
   };
@@ -173,6 +174,7 @@ export function mountRoomUi(
   fw.add(settings, 'seaView').name('窓の外の海');
   fw.add(settings, 'seaRipples').name('窓の外の水面の反射（天井・壁の揺らぎ）');
   fw.add(settings, 'pool').name('床の水盤');
+  fw.add(settings, 'poolReflect').name('床の水盤で跳ね返った光（壁・天井の揺らぎ）');
   fw.add(settings, 'waveAmp', 0, 3, 0.05).name('波の強さ');
   fw.add(settings, 'poolDepthM', 0.02, 1.5, 0.01).name('水盤の深さ（m）');
   fw.add(settings, 'seaLevelM', -5, 0, 0.05).name('窓の外の水面の高さ（床から m）');

@@ -49,6 +49,8 @@ export interface RoomRenderSettings {
   seaRipples: boolean;
   /** 床に浅い水を張る（水盤） */
   pool: boolean;
+  /** 水盤の水面で跳ね返った日差しが、壁・天井に揺らぎを映す（オフでも、水盤の底の光の網目と水面の映り込みは残る） */
+  poolReflect: boolean;
   /** 波の強さの倍率 */
   waveAmp: number;
   /** 水盤の深さ（m） */

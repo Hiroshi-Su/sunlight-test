@@ -209,7 +209,7 @@ export class RoomCore {
 
     // 重ね合わせのやり直し：視点や設定（窓の大きさを含む）が変わったら最初から
     const key = [
-      settings.bounces, settings.seaView, settings.seaRipples, settings.pool, settings.waveAmp, settings.poolDepthM, settings.seaLevelM, this.winRect.toArray(),
+      settings.bounces, settings.seaView, settings.seaRipples, settings.pool, settings.poolReflect, settings.waveAmp, settings.poolDepthM, settings.seaLevelM, this.winRect.toArray(),
       cloudsOn, settings.cloudShadow, settings.cloudAmount, settings.cloudOpacity, settings.cloudSizeM, settings.cloudHeightM,
       !!screen, screen?.def.id, settings.screenGain,
     ].join();
@@ -272,7 +272,7 @@ export class RoomCore {
     const passes: CausticPass[] = [];
     if (sunOn && settings.pool) {
       const o = new THREE.Vector3(-W / 2, 0, -D), u = new THREE.Vector3(W, 0, 0), v = new THREE.Vector3(0, 0, D);
-      for (const target of [0, 1, 2, 4, 5]) passes.push({ grid: 'pool', source: 0, mode: 0, target, o, u, v, y: 0 });
+      if (settings.poolReflect) for (const target of [0, 1, 2, 4, 5]) passes.push({ grid: 'pool', source: 0, mode: 0, target, o, u, v, y: 0 });
       passes.push({ grid: 'pool', source: 0, mode: 1, target: 6, o, u, v, y: 0 });
     }
     const patch = sunOn && settings.seaRipples ? this.seaPatch(sunDir, settings.seaLevelM) : null;
