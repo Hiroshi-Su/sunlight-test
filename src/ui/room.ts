@@ -3,7 +3,7 @@ import GUI from 'lil-gui';
 import type { Clock } from '../clock.ts';
 import { WINDOW_SIDES, WINDOW_SIDE_LABEL, type WindowSide } from '../config.ts';
 import { kelvinAt } from '../palette.ts';
-import type { RoomGeometry, RoomRenderSettings, WindowGeometry } from '../room/scene.ts';
+import { EXHIBIT_SIZE, type RoomGeometry, type RoomRenderSettings, type RoomResolution, type WindowGeometry } from '../room/scene.ts';
 import { SCENES, findScene } from '../scenes/index.ts';
 import type { SceneDef } from '../scenes/types.ts';
 import type { SolarState } from '../solar.ts';
@@ -18,6 +18,7 @@ import { mountTimeControls } from './time-controls.ts';
  * @param configSide config/site.json の窓の位置（初期値）
  * @param initialSide 最初に表示する窓の位置（URL の ?window= で指定されたとき）
  * @param onWindowSide 窓の位置を切り替えたとき。room モードの表示と光の計算だけに効き、設定ファイルは変えない
+ * @param onResolution 計算の解像度・出す大きさを変えたとき
  */
 export function mountRoomUi(
   clock: Clock,
@@ -27,6 +28,7 @@ export function mountRoomUi(
   initialSide: WindowSide,
   onWindowSide: (side: WindowSide) => void,
   benchmark: () => Promise<number | null>,
+  onResolution: (res: RoomResolution) => void,
 ) {
   const gui = new GUI({ container: el('room-panel', HTMLElement), width: 380, title: 'room' });
 
@@ -112,6 +114,33 @@ export function mountRoomUi(
   } }, 'run').name('重さを測る（60 フレーム）');
   fv.add(bench, 'text').name('結果').disable().listen();
 
+  // 解像度：小さく計算して引き伸ばす。展示の投影で細かいざらつき（グレイン）がどこまで見えるかを確かめる
+  // ?scale=0.5（計算の倍率）・?out=exhibit（展示と同じ 3840×1080）・?upscale=pixel（画素のまま引き伸ばす）で最初の値を指定できる
+  const view = el('roomView', HTMLElement);
+  const scaleParam = Number(q.get('scale'));
+  const resolution: RoomResolution = {
+    scale: q.has('scale') && scaleParam >= 0.1 && scaleParam <= 1 ? scaleParam : 1,
+    output: q.get('out') === 'exhibit' ? 'exhibit' : 'view',
+  };
+  const look = { upscale: q.get('upscale') === 'pixel' ? 'pixel' : 'smooth' };
+  const applyLook = (): void => {
+    view.classList.toggle('exhibit', resolution.output === 'exhibit');
+    view.classList.toggle('pixelated', look.upscale === 'pixel');
+  };
+  const changed = (): void => { applyLook(); onResolution({ ...resolution }); };
+  applyLook();
+  const fq = gui.addFolder('解像度');
+  fq.add(resolution, 'output', { '画面の枠の大きさ': 'view', [`展示と同じ ${EXHIBIT_SIZE.width}×${EXHIBIT_SIZE.height}（32:9）`]: 'exhibit' })
+    .name('出す大きさ').onChange(changed);
+  fq.add(resolution, 'scale', 0.1, 1, 0.05).name('計算の解像度（倍）').onChange(changed);
+  const presets = { p100: '1', p75: '0.75', p50: '0.5', p33: '0.333', p25: '0.25' };
+  for (const [key, v] of Object.entries(presets)) {
+    fq.add({ [key]: () => { resolution.scale = Number(v); fq.controllers.forEach((c) => c.updateDisplay()); changed(); } }, key)
+      .name(`${Math.round(Number(v) * 100)}%`);
+  }
+  fq.add(look, 'upscale', { 'なめらか（線形補間）': 'smooth', '画素のまま（ドット）': 'pixel' }).name('引き伸ばし方').onChange(applyLook);
+  fq.add({ run: () => { void view.requestFullscreen?.(); } }, 'run').name('全画面で見る（Esc で戻る）');
+
   // 水：3 つはそれぞれ独立に出し消しできる（窓の外の 2 つは、壁の窓のときだけ効く）
   const fw = gui.addFolder('水');
   fw.add(settings, 'seaView').name('窓の外の海');
@@ -150,7 +179,9 @@ export function mountRoomUi(
     settings,
     /** スクリーンに映す映像 */
     get screenScene(): SceneDef { return findScene(screen.id); },
-    updateStatus(s: SolarState, lit: number, samples: number, backend: Backend): void {
+    /** 計算の解像度・出す大きさ */
+    get resolution(): RoomResolution { return { ...resolution }; },
+    updateStatus(s: SolarState, lit: number, samples: number, backend: Backend, size: { width: number; height: number }): void {
       const { sun, light } = s;
       const windowText = state.side === 'ceiling' ? '天井（天窓）' : WINDOW_SIDE_LABEL[state.side];
       statusEl.textContent = [
@@ -164,6 +195,7 @@ export function mountRoomUi(
         ...(state.side === 'ceiling' && (settings.seaView || settings.seaRipples) ? ['※ 窓の外の海・水面の反射は、壁の窓のときだけ効く'] : []),
         ...(settings.screen ? [`スクリーン  ${findScene(screen.id).label}`] : []),
         `1 画素あたりの光線 ${samples} 本${samples < 256 ? '（止めておくと増えて、ざらつきが減る）' : ''}`,
+        `計算 ${size.width}×${size.height}（${resolution.output === 'exhibit' ? `展示の ${EXHIBIT_SIZE.width}×${EXHIBIT_SIZE.height}` : '画面の枠'} の ${Math.round(resolution.scale * 100)}%、画素数 ${Math.round(resolution.scale * resolution.scale * 100)}%）`,
         `描画 ${BACKEND_LABEL[backend]}`,
         '',
         'ドラッグ：視点回転／ホイール：ズーム／右ドラッグ：平行移動',

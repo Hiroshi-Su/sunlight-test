@@ -24,6 +24,19 @@ import type { RoomGeometry, RoomInput, RoomRenderSettings, RoomView } from './mo
 
 export * from './model.ts';
 
+/** 展示で映す大きさ（プロジェクター 2 台ぶん、32:9） */
+export const EXHIBIT_SIZE = { width: 3840, height: 1080 } as const;
+
+/**
+ * 計算の解像度。パストレーシングは画素数がそのまま計算量になるので、小さく計算して画面に引き伸ばせば軽くなる
+ * - scale：出す大きさに対する、計算する大きさの倍率（0.5 なら縦横半分、画素数は 1/4）
+ * - output：'view' は画面の枠の大きさ、'exhibit' は展示と同じ 3840×1080
+ */
+export interface RoomResolution {
+  scale: number;
+  output: 'view' | 'exhibit';
+}
+
 /**
  * @param facingAzimuth 鑑賞者がスクリーンを見る向き（真北基準）。風の方位を部屋の向きに直すのに使う
  * @param gpu WebGPU で描くとき（null なら WebGL2）
@@ -35,6 +48,7 @@ export function createRoomScene(
   facingAzimuth: number,
   view?: RoomView,
   gpu: Gpu | null = null,
+  resolution: RoomResolution = { scale: 1, output: 'view' },
 ) {
   const { widthM: W, depthM: D, heightM: H } = room;
   const core = new RoomCore(windowSide, room, facingAzimuth);
@@ -54,16 +68,31 @@ export function createRoomScene(
   controls.maxDistance = Math.max(W, D, H) * 4;
   controls.update();
 
+  let res: RoomResolution = { ...resolution };
+  let size = { width: 1, height: 1 };
   function resize(): void {
-    // 画素数がそのまま計算量になるので、高解像度ディスプレイでも 1 倍で計算する
-    const w = Math.max(1, container.clientWidth);
-    const h = Math.max(1, container.clientHeight);
-    renderer.resize(w, h);
-    core.resize(w, h);
-    camera.aspect = w / h;
+    // 出す大きさ。画面の枠のときは、高解像度ディスプレイでも 1 倍（CSS の画素）で数える
+    const out = res.output === 'exhibit'
+      ? EXHIBIT_SIZE
+      : { width: Math.max(1, container.clientWidth), height: Math.max(1, container.clientHeight) };
+    // 計算する大きさ。canvas はこの大きさで描き、CSS で枠いっぱいに引き伸ばす
+    const w = Math.max(1, Math.round(out.width * res.scale));
+    const h = Math.max(1, Math.round(out.height * res.scale));
+    if (w !== size.width || h !== size.height) {
+      renderer.resize(w, h);
+      core.resize(w, h);
+      size = { width: w, height: h };
+    }
+    camera.aspect = out.width / out.height;
     camera.updateProjectionMatrix();
   }
   resize();
+
+  /** 計算の解像度を変える（重ね合わせはやり直しになる） */
+  function setResolution(next: RoomResolution): void {
+    res = { ...next };
+    resize();
+  }
 
   let last: { input: RoomInput; settings: RoomRenderSettings } | null = null;
   function render(input: RoomInput, settings: RoomRenderSettings): void {
@@ -102,6 +131,9 @@ export function createRoomScene(
     render,
     benchmark,
     resize,
+    setResolution,
+    /** 今の計算の大きさ（画素） */
+    get renderSize(): { width: number; height: number } { return size; },
     currentView,
     dispose,
     /** 1 画素あたり、これまでに追った光線の本数 */

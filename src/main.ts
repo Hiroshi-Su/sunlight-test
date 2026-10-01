@@ -106,17 +106,19 @@ const roomEntry = siteConfig.sites[site.name]!;
 // ?window=ceiling などで、最初に表示する窓の位置を指定できる
 const windowParam = params.get('window');
 let roomSite: Site = withWindowSide(site, WINDOW_SIDES.find((w) => w === windowParam) ?? site.windowSide);
-const buildRoom = (view?: RoomView) =>
-  createRoomScene(el('roomView', HTMLDivElement), roomSite.windowSide, roomEntry.room, roomSite.facingAzimuth, view, webgpu);
-let room = mode === 'room' ? buildRoom() : null;
+// 計算の解像度はパネル（とURL の ?scale= ?out= ?upscale=）で切り替える。パネルは部屋を作るより先に用意する
+let room: ReturnType<typeof createRoomScene> | null = null;
 const roomUi = mode === 'room'
   ? mountRoomUi(clock, roomEntry.room, roomEntry.window, site.windowSide, roomSite.windowSide, (side) => {
     roomSite = withWindowSide(site, side);
     const view = room?.currentView();
     room?.dispose();
     room = buildRoom(view);
-  }, async () => (room ? room.benchmark() : null))
+  }, async () => (room ? room.benchmark() : null), (res) => room?.setResolution(res))
   : null;
+const buildRoom = (view?: RoomView) =>
+  createRoomScene(el('roomView', HTMLDivElement), roomSite.windowSide, roomEntry.room, roomSite.facingAzimuth, view, webgpu, roomUi?.resolution);
+if (mode === 'room') room = buildRoom();
 if (room) addEventListener('resize', () => room?.resize());
 // 開発サーバーだけ：動作確認のスクリプトから room の視点を動かせるようにする
 if (import.meta.env.DEV) Object.assign(window, { __room: () => room });
@@ -241,7 +243,7 @@ function frame(now: number): void {
     const perf = formatPerf(stage.gpu(), fps, stage.backend);
     verifyUi?.update(s, perf, verifyParams);
     visualsUi?.updateStatus(s, lit, perf);
-    if (room) roomUi?.updateStatus(s, lit, room.samples, room.backend);
+    if (room) roomUi?.updateStatus(s, lit, room.samples, room.backend, room.renderSize);
   }
   requestAnimationFrame(frame);
 }
