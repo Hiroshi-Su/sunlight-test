@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import * as THREE from 'three';
-import { cloudFlowDir, toThree, windowRect } from '../src/room/scene.ts';
+import { calibratedCamera, cloudFlowDir, defaultCalibration, toThree, windowRect } from '../src/room/scene.ts';
 import { lightOnScreen } from '../src/solar.ts';
 
 test('room：screen 座標（左手系）を three.js（右手系）へ左右反転せずに移す', () => {
@@ -45,4 +45,21 @@ test('雲の流れる向き：風が吹いてくる方位から、部屋の座�
   // 検証場所（スクリーン 58.5°）で西風：東（90°）はスクリーンから右へ 31.5°
   const r = (31.5 * Math.PI) / 180;
   assert.ok(near(cloudFlowDir(270, 58.5), Math.sin(r), -Math.cos(r)));
+});
+
+test('パース合わせ：目が投影面の中心の正面なら、画角は投影面の高さと距離から決まり、上下左右は対称', () => {
+  const v = { ...defaultCalibration({ widthM: 10, depthM: 6, heightM: 3.2 }), planeWidthM: 8, planeBottomM: 0.5, eyeDistM: 4, eyeXM: 0 };
+  const h = 8 * 9 / 32;
+  v.eyeHeightM = 0.5 + h / 2;
+  const c = calibratedCamera(v, 32 / 9, 0.1);
+  const near = (a: number, b: number): boolean => Math.abs(a - b) < 1e-9;
+  assert.ok(near(c.right, -c.left) && near(c.top, -c.bottom));
+  assert.ok(near(c.top / 0.1, (h / 2) / 4)); // tan(縦の画角の半分)
+  assert.ok(near(c.position.z, 4) && near(c.position.y, v.eyeHeightM));
+});
+
+test('パース合わせ：目が投影面の中心より低いと、見える範囲が上にずれる（レンズシフト）', () => {
+  const v = { ...defaultCalibration({ widthM: 10, depthM: 6, heightM: 3.2 }), planeBottomM: 1, eyeHeightM: 1, eyeDistM: 3 };
+  const c = calibratedCamera(v, 32 / 9, 0.1);
+  assert.ok(Math.abs(c.bottom) < 1e-9 && c.top > 0); // 下の縁がちょうど目の高さ
 });

@@ -148,6 +148,71 @@ export function spotPose(light: SpotLight, room: RoomGeometry): { pos: THREE.Vec
   return { pos, dir };
 }
 
+/**
+ * 現地に合わせた視点（パース合わせ）。映像が映る面（投影面）と、見る人の目の位置を実寸で決めると、
+ * 目から投影面を覗いた見え方（軸外し投影）になる。投影面は部屋の座標の中に置く（部屋の手前の端 = 0、奥へ正）。
+ * 投影面の高さは、幅と出す画面の縦横比（3840×1080 なら 32:9）から決まる
+ */
+export interface ViewCalibration {
+  /** free = マウスで自由に動かす、fixed = この値で決めた視点 */
+  mode: 'free' | 'fixed';
+  /** 投影面の幅（m）・下端の高さ（床から m）・位置（部屋の手前の端から奥へ m）・左右のずれ（m、右が正） */
+  planeWidthM: number;
+  planeBottomM: number;
+  planeDepthM: number;
+  planeXM: number;
+  /** 投影面の向き（度）：左右に振る（右へ振ると正）・上下に倒す（上の縁を奥へ倒すと正）・画面の中で回す（時計回りが正） */
+  planeYawDeg: number;
+  planePitchDeg: number;
+  planeRollDeg: number;
+  /** 目の位置：投影面からの距離（m、手前が正）・高さ（床から m）・左右（投影面の中心から m、右が正） */
+  eyeDistM: number;
+  eyeHeightM: number;
+  eyeXM: number;
+}
+
+/** 部屋の大きさから決める、パース合わせの初期値（マウスで動かす前の視点とほぼ同じ見え方） */
+export function defaultCalibration(room: RoomGeometry): ViewCalibration {
+  const eyeHeightM = Math.min(1.5, room.heightM * 0.5);
+  const planeWidthM = room.widthM;
+  return {
+    mode: 'free',
+    planeWidthM, planeBottomM: Math.max(0, eyeHeightM - (planeWidthM * 9) / 32 / 2), planeDepthM: 0, planeXM: 0,
+    planeYawDeg: 0, planePitchDeg: 0, planeRollDeg: 0,
+    eyeDistM: room.depthM * 0.4, eyeHeightM, eyeXM: 0,
+  };
+}
+
+/**
+ * パース合わせの視点を、カメラの位置・向きと、見える範囲（近い面での左右上下の端）に直す（Kooima の一般化した透視投影）。
+ * @param aspect 出す画面の幅 ÷ 高さ
+ */
+export function calibratedCamera(v: ViewCalibration, aspect: number, near: number): {
+  position: THREE.Vector3; quaternion: THREE.Quaternion; left: number; right: number; bottom: number; top: number;
+} {
+  const r = Math.PI / 180;
+  const w = Math.max(0.01, v.planeWidthM), h = w / Math.max(1e-3, aspect);
+  // 投影面の中心と、面の右・上・手前（目の側）の向き
+  const center = new THREE.Vector3(v.planeXM, v.planeBottomM + h / 2, -v.planeDepthM);
+  const rot = new THREE.Quaternion().setFromEuler(new THREE.Euler(-v.planePitchDeg * r, -v.planeYawDeg * r, -v.planeRollDeg * r, 'YXZ'));
+  const vr = new THREE.Vector3(1, 0, 0).applyQuaternion(rot);
+  const vu = new THREE.Vector3(0, 1, 0).applyQuaternion(rot);
+  const vn = new THREE.Vector3(0, 0, 1).applyQuaternion(rot);
+  // 目の位置は、投影面の中心から測る（高さだけは床から）
+  const eye = center.clone().addScaledVector(vr, v.eyeXM).addScaledVector(vn, Math.max(0.05, v.eyeDistM));
+  eye.y += v.eyeHeightM - center.y;
+  const pa = center.clone().addScaledVector(vr, -w / 2).addScaledVector(vu, -h / 2); // 左下
+  const va = pa.clone().sub(eye);
+  const d = Math.max(1e-3, -va.dot(vn)); // 目から投影面までの距離
+  const k = near / d;
+  const left = va.dot(vr) * k, bottom = va.dot(vu) * k;
+  return {
+    position: eye,
+    quaternion: new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(vr, vu, vn)),
+    left, right: left + w * k, bottom, top: bottom + h * k,
+  };
+}
+
 export interface RoomView {
   camera: THREE.Vector3;
   target: THREE.Vector3;

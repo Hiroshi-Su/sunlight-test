@@ -224,9 +224,29 @@ function recover(reason: string, { hard = false }: { hard?: boolean } = {}): voi
 // ---- 描画側からの通知 ----
 const fromCurrent = (sender: Electron.WebContents): boolean => !!win && !win.isDestroyed() && sender === win.webContents;
 
+// room モードの設定（config/room.json）。なくても、壊れていても起動は止めない（描画側が既定の値で動く）
+function readRoomSettings(): unknown {
+  const file = join(CONFIG_DIR, 'room.json');
+  try {
+    return JSON.parse(readFileSync(file, 'utf8'));
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') log('room-settings-error', { message: (err as Error).message });
+    return null;
+  }
+}
+
 ipcMain.on(IPC.bootstrap, (e) => {
-  const boot: Bootstrap = { mode, site: siteConfig, visuals: visualsConfig };
+  const boot: Bootstrap = { mode, site: siteConfig, visuals: visualsConfig, room: readRoomSettings() };
   e.returnValue = boot;
+});
+ipcMain.handle(IPC.saveRoom, (e, file: unknown) => {
+  if (!fromCurrent(e.sender)) throw new Error('現在のウィンドウ以外からの保存要求');
+  const text = JSON.stringify(file, null, 2);
+  if (typeof file !== 'object' || file === null || Array.isArray(file) || text.length > 1_000_000) throw new Error('room の設定の形が違います');
+  const out = join(CONFIG_DIR, 'room.json');
+  writeFileSync(`${out}.tmp`, text + '\n');
+  renameSync(`${out}.tmp`, out);
+  log('room-saved');
 });
 ipcMain.handle(IPC.saveVisuals, (e, raw: unknown) => {
   if (!fromCurrent(e.sender)) throw new Error('現在のウィンドウ以外からの保存要求');

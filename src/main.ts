@@ -1,7 +1,7 @@
 import bundledSite from '../config/site.json';
 import type { Heartbeat } from './bridge.ts';
 import { Clock } from './clock.ts';
-import { APP_MODES, type AppMode, WINDOW_SIDES, type ParamValues, type VisualsConfig, parseSiteConfig, parseVisualsConfig } from './config.ts';
+import { APP_MODES, type AppMode, type ParamValues, type VisualsConfig, parseSiteConfig, parseVisualsConfig } from './config.ts';
 import { drawGuides, drawLightArrow } from './diagram.ts';
 import { kelvinAt, kelvinToRgb, skyColors } from './palette.ts';
 import { type RoomView, createRoomScene } from './room/scene.ts';
@@ -37,6 +37,22 @@ async function saveVisuals(cfg: VisualsConfig): Promise<void> {
   if (bridge) return bridge.saveVisuals(cfg);
   if (!import.meta.env.DEV) throw new Error('保存は Electron か開発サーバーでのみ使えます');
   const res = await fetch('/__save-visuals', { method: 'POST', body: JSON.stringify(cfg) });
+  if (!res.ok) throw new Error(await res.text());
+}
+
+// room モードの設定（config/room.json）。開発サーバーでは保存した最新の内容を読み、ビルド版はビルド時にあれば埋め込む。なければ null
+async function loadRoomSettingsInBrowser(): Promise<unknown> {
+  if (import.meta.env.DEV) {
+    const res = await fetch('/config/room.json', { cache: 'no-store' }).catch(() => null);
+    return res?.ok ? res.json().catch(() => null) : null;
+  }
+  return Object.values(import.meta.glob('../config/room.json', { eager: true, import: 'default' }))[0] ?? null;
+}
+
+async function saveRoomSettings(file: unknown): Promise<void> {
+  if (bridge) return bridge.saveRoom(file);
+  if (!import.meta.env.DEV) throw new Error('保存は Electron か開発サーバーでのみ使えます');
+  const res = await fetch('/__save-room', { method: 'POST', body: JSON.stringify(file) });
   if (!res.ok) throw new Error(await res.text());
 }
 
@@ -103,23 +119,33 @@ const visualsUi = mode === 'visuals'
 
 // room モード：窓の位置はパネルで切り替えられる（room の表示と光の計算だけ。設定ファイルは変えない）
 const roomEntry = siteConfig.sites[site.name]!;
-// ?window=right などで、最初に表示する窓の位置を指定できる
-const windowParam = params.get('window');
-// 指定がなければ天窓で開く（room モードの既定。ROOM_DEFAULTS と合わせて src/ui/room.ts）
-let roomSite: Site = withWindowSide(site, WINDOW_SIDES.find((w) => w === windowParam) ?? 'ceiling');
+// 最初に表示する窓の位置は、パネルが決める（URL の ?window=、保存した値、既定の天窓の順。src/ui/room.ts）
+let roomSite: Site = site;
 // 計算の解像度はパネル（とURL の ?scale= ?out= ?upscale=）で切り替える。パネルは部屋を作るより先に用意する
 let room: ReturnType<typeof createRoomScene> | null = null;
+const rebuildRoom = (): void => {
+  const view = room?.currentView();
+  room?.dispose();
+  room = buildRoom(view);
+  if (roomUi) room.setGuides(roomUi.guides);
+};
 const roomUi = mode === 'room'
-  ? mountRoomUi(clock, roomEntry.room, roomEntry.window, site.windowSide, roomSite.windowSide, (side) => {
-    roomSite = withWindowSide(site, side);
-    const view = room?.currentView();
-    room?.dispose();
-    room = buildRoom(view);
-  }, async () => (room ? room.benchmark() : null), (res) => room?.setResolution(res))
+  ? mountRoomUi(clock, roomEntry.room, roomEntry.window, site.windowSide, bridge ? bridge.room : await loadRoomSettingsInBrowser(), {
+    onWindowSide: (side) => { roomSite = withWindowSide(site, side); rebuildRoom(); },
+    onRoomSize: rebuildRoom,
+    benchmark: async () => (room ? room.benchmark() : null),
+    onResolution: (res) => room?.setResolution(res),
+    onCalibration: (c) => room?.setCalibration(c),
+    onGuides: (g) => room?.setGuides(g),
+    save: saveRoomSettings,
+  })
   : null;
+if (roomUi) roomSite = withWindowSide(site, roomUi.side);
 const buildRoom = (view?: RoomView) =>
-  createRoomScene(el('roomView', HTMLDivElement), roomSite.windowSide, roomEntry.room, roomSite.facingAzimuth, view, webgpu, roomUi?.resolution);
-if (mode === 'room') room = buildRoom();
+  createRoomScene(el('roomStage', HTMLDivElement), roomSite.windowSide, roomUi?.room ?? roomEntry.room, roomSite.facingAzimuth, {
+    view, gpu: webgpu, resolution: roomUi?.resolution, calibration: roomUi?.calibration, guide: el('roomGuide', HTMLCanvasElement),
+  });
+if (mode === 'room') { room = buildRoom(); if (roomUi) room.setGuides(roomUi.guides); }
 if (room) addEventListener('resize', () => room?.resize());
 // 開発サーバーだけ：動作確認のスクリプトから room の視点を動かせるようにする
 if (import.meta.env.DEV) Object.assign(window, { __room: () => room });

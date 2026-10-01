@@ -3,13 +3,15 @@ import GUI from 'lil-gui';
 import type { Clock } from '../clock.ts';
 import { WINDOW_SIDES, WINDOW_SIDE_LABEL, type WindowSide } from '../config.ts';
 import { kelvinAt } from '../palette.ts';
-import { EXHIBIT_SIZE, MAX_SPOTS, SPOT_MODES, type RoomGeometry, type RoomOutput, type RoomRenderSettings, type RoomResolution, type SpotLight, type SpotMode, type SpotSettings, type WindowGeometry } from '../room/scene.ts';
+import { EXHIBIT_SIZE, type GuideOptions, MAX_SPOTS, SPOT_MODES, type RoomGeometry, type RoomOutput, type RoomRenderSettings, type RoomResolution, type SpotLight, type SpotMode, type SpotSettings, type ViewCalibration, type WindowGeometry, defaultCalibration } from '../room/scene.ts';
 import { SCENES, findScene } from '../scenes/index.ts';
 import type { SceneDef } from '../scenes/types.ts';
 import type { SolarState } from '../solar.ts';
 import type { Backend } from '../stage.ts';
 import { BACKEND_LABEL } from './perf.ts';
 import { el, ignoreSliderWheel } from './dom.ts';
+import { type WarpCorners, warpCss } from './warp.ts';
+import { type RoomSettingsFile, mergeKnown, oneOf } from '../room/settings-file.ts';
 import { mountTimeControls } from './time-controls.ts';
 
 /**
@@ -36,29 +38,63 @@ export const SPOT_DEFAULTS: SpotSettings = {
 };
 const SPOT_MODE_LABEL: Record<SpotMode, string> = { auto: '自動（太陽が沈むと点く）', on: '常に点ける', off: '消す' };
 
+/** パネルの操作を、部屋の表示へ伝える */
+export interface RoomUiHooks {
+  /** 窓の位置を切り替えたとき。room モードの表示と光の計算だけに効き、設定ファイルは変えない */
+  onWindowSide(side: WindowSide): void;
+  /** 部屋の寸法を変えたとき（部屋を作り直す） */
+  onRoomSize(): void;
+  /** 今の設定で重さを測る */
+  benchmark(): Promise<number | null>;
+  /** 計算の解像度・出す大きさを変えたとき */
+  onResolution(res: RoomResolution): void;
+  /** パース合わせの視点を変えたとき */
+  onCalibration(c: ViewCalibration): void;
+  /** 合わせるための線の出し方を変えたとき */
+  onGuides(g: GuideOptions): void;
+  /** 部屋の設定を保存する（config/room.json） */
+  save(file: RoomSettingsFile): Promise<void>;
+}
+
 /**
- * @param room 部屋の寸法（窓の大きさの上限に使う）
+ * @param configRoom config/site.json の部屋の寸法（初期値。パネルで変えられる）
  * @param configWindow config/site.json の窓の大きさ（初期値）
  * @param configSide config/site.json の窓の位置（初期値）
- * @param initialSide 最初に表示する窓の位置（URL の ?window= で指定されたとき）
- * @param onWindowSide 窓の位置を切り替えたとき。room モードの表示と光の計算だけに効き、設定ファイルは変えない
- * @param onResolution 計算の解像度・出す大きさを変えたとき
+ * @param saved 保存した room の設定（config/room.json の中身。なければ null）。コードの既定に重ね、URL の指定がさらに優先する
  */
 export function mountRoomUi(
   clock: Clock,
-  room: RoomGeometry,
+  configRoom: RoomGeometry,
   configWindow: WindowGeometry,
   configSide: WindowSide,
-  initialSide: WindowSide,
-  onWindowSide: (side: WindowSide) => void,
-  benchmark: () => Promise<number | null>,
-  onResolution: (res: RoomResolution) => void,
+  saved: unknown,
+  hooks: RoomUiHooks,
 ) {
+  const { onWindowSide, benchmark, onResolution } = hooks;
+  const q = new URLSearchParams(location.search);
+  // コードの既定 → 保存した値。URL の指定は、下でそれぞれの値を決めるときに優先する
+  const base = mergeKnown(codeDefaults(configRoom, configWindow), saved);
+  // 部屋の寸法。設定ファイル（config/site.json）は変えない。パネルで変えたものは「部屋の設定を保存」で config/room.json に残せる
+  const room: RoomGeometry = { ...base.room };
   const gui = new GUI({ container: el('room-panel', HTMLElement), width: 380, title: 'room' });
   ignoreSliderWheel(gui.domElement);
 
-  // 窓の位置の切り替えスイッチ（パネルのいちばん上）
-  const state = { side: initialSide };
+  // 保存（パネルのいちばん上）。現地で合わせた値を config/room.json に書き、次に開いたときに読む
+  const saveState = { text: saved ? '保存した設定（config/room.json）を読み込んだ' : '保存した設定はない（既定の値）' };
+  gui.add({ run: async () => {
+    saveState.text = '保存中…';
+    try {
+      await hooks.save(collect());
+      saveState.text = `保存した（${new Date().toLocaleTimeString()}）`;
+    } catch (err) {
+      saveState.text = `保存できなかった：${err instanceof Error ? err.message : String(err)}`;
+    }
+  } }, 'run').name('部屋の設定を保存（config/room.json）');
+  gui.add(saveState, 'text').name('保存').disable().listen();
+
+  // 窓の位置の切り替えスイッチ。?window=right などで、最初に表示する窓の位置を指定できる（指定がなければ保存した位置、既定は天窓）
+  const urlSide = WINDOW_SIDES.find((w) => w === q.get('window'));
+  const state = { side: urlSide ?? oneOf(base.windowSide, WINDOW_SIDES, 'ceiling') };
   const options = Object.fromEntries(
     WINDOW_SIDES.map((s) => [`${WINDOW_SIDE_LABEL[s]}${s === configSide ? '（設定どおり）' : ''}`, s]),
   );
@@ -70,36 +106,33 @@ export function mountRoomUi(
   // 水は ?sea=1（海）・?ripples=1（水面の反射の揺らぎ）・?pool=1（水盤）で最初からオンにできる
   // 窓の大きさは ?winW=（幅）・?winH=（高さ）・?sill=（床から窓の下端まで）で最初の値を指定できる（m）
   // 雲は ?clouds=1、スクリーンの映像は ?screen=1（光の雲）か ?screen=映像の ID で最初からオンにできる
-  const q = new URLSearchParams(location.search);
   const on = (k: string, fallback = false): boolean => (q.has(k) ? q.get(k) === '1' : fallback);
   const num = (k: string, fallback: number): number => {
     const v = Number(q.get(k));
     return q.has(k) && Number.isFinite(v) && v >= 0 ? v : fallback;
   };
+  const r0 = base.render;
+  // URL で窓の位置だけを保存した位置から変えたときは、窓の大きさはその位置の既定（天窓なら天井いっぱい、壁なら config/site.json）
+  const winBase = urlSide && urlSide !== base.windowSide
+    ? (urlSide === 'ceiling' ? { widthM: room.widthM, heightM: room.depthM, sillHeightM: configWindow.sillHeightM } : { ...configWindow })
+    : base.window;
   const settings: RoomRenderSettings = {
-    exposure: 2.5, bounces: 3, smooth: true,
-    seaView: on('sea'), seaRipples: on('ripples'), pool: on('pool', ROOM_DEFAULTS.pool), poolReflect: on('poolReflect', ROOM_DEFAULTS.poolReflect),
-    waveAmp: num('wave', ROOM_DEFAULTS.waveAmp), poolDepthM: 0.3, seaLevelM: -1,
-    window: {
-      // 天窓で始めるときは天井いっぱい。壁の窓に切り替えると、その壁に収まる大きさに詰める（fit）
-      widthM: num('winW', initialSide === 'ceiling' && ROOM_DEFAULTS.fullCeiling ? room.widthM : configWindow.widthM),
-      heightM: num('winH', initialSide === 'ceiling' && ROOM_DEFAULTS.fullCeiling ? room.depthM : configWindow.heightM),
-      sillHeightM: num('sill', configWindow.sillHeightM),
-    },
-    clouds: on('clouds'), cloudShadow: on('cloudShadow', ROOM_DEFAULTS.cloudShadow), cloudAmount: 0.45, cloudOpacity: 0.8,
-    cloudSizeM: 1500, cloudHeightM: 1500, windMS: 30, windFromDeg: 270,
-    screen: q.has('screen') && q.get('screen') !== '0', screenGain: 0.6,
-    // ?spot=on / off / auto でスポットライトの点け方を指定できる
-    // ?spotCount=2 で台数を指定できる
+    ...r0,
+    seaView: on('sea', r0.seaView), seaRipples: on('ripples', r0.seaRipples), pool: on('pool', r0.pool), poolReflect: on('poolReflect', r0.poolReflect),
+    waveAmp: num('wave', r0.waveAmp),
+    window: { widthM: num('winW', winBase.widthM), heightM: num('winH', winBase.heightM), sillHeightM: num('sill', winBase.sillHeightM) },
+    clouds: on('clouds', r0.clouds), cloudShadow: on('cloudShadow', r0.cloudShadow),
+    screen: q.has('screen') ? q.get('screen') !== '0' : r0.screen,
+    // ?spot=on / off / auto でスポットライトの点け方、?spotCount=2 で台数を指定できる
     spot: {
-      ...SPOT_DEFAULTS,
-      mode: SPOT_MODES.find((m) => m === q.get('spot')) ?? SPOT_DEFAULTS.mode,
-      count: Math.min(MAX_SPOTS, Math.max(1, Math.round(num('spotCount', SPOT_DEFAULTS.count)))),
-      lights: SPOT_DEFAULTS.lights.map((l) => ({ ...l })),
+      ...base.spot,
+      mode: oneOf(q.get('spot') ?? base.spot.mode, SPOT_MODES, SPOT_DEFAULTS.mode),
+      count: Math.min(MAX_SPOTS, Math.max(1, Math.round(num('spotCount', base.spot.count)))),
+      lights: base.spot.lights.map((l) => ({ ...l, colorMode: oneOf(l.colorMode, ['kelvin', 'color'] as const, 'kelvin') })),
     },
   };
-  const screenParam = q.get('screen');
-  const screen = { id: SCENES.some((d) => d.id === screenParam) ? screenParam! : 'light-clouds' };
+  const screenParam = q.get('screen') ?? base.screenScene;
+  const screen = { id: SCENES.some((d) => d.id === screenParam) ? screenParam : 'light-clouds' };
 
   // 窓の大きさ。room モードの表示と光の計算だけに効き、設定ファイルは変えない（窓の位置と同じ）
   // 上限は部屋に収まる大きさ。壁の窓は幅＝奥行き方向、天窓は幅＝左右・奥行き＝奥行き方向
@@ -138,6 +171,12 @@ export function mountRoomUi(
   fr.add(reset, 'run').name('窓の大きさを設定どおりに戻す');
   const full = { run: (): void => { win.widthM = room.widthM; win.heightM = room.depthM; fit(); } };
   const cFull = fr.add(full, 'run').name('天窓を天井いっぱいにする');
+  // 部屋の寸法（現地の空間に合わせる）。動かし終えたときに部屋を作り直す
+  const roomChanged = (): void => { fit(); hooks.onRoomSize(); };
+  fr.add(room, 'widthM', 2, 40, 0.05).name('部屋の幅（m）').onFinishChange(roomChanged);
+  fr.add(room, 'depthM', 2, 40, 0.05).name('部屋の奥行き（m）').onFinishChange(roomChanged);
+  fr.add(room, 'heightM', 2, 15, 0.05).name('部屋の高さ（m）').onFinishChange(roomChanged);
+  fr.add({ run: (): void => { Object.assign(room, configRoom); fr.controllers.forEach((c) => c.updateDisplay()); roomChanged(); } }, 'run').name('部屋の寸法を設定どおりに戻す');
   fit();
   const fv = gui.addFolder('光の計算');
   fv.add(settings, 'bounces', 0, 6, 1).name('照り返しの回数');
@@ -157,11 +196,12 @@ export function mountRoomUi(
   const view = el('roomView', HTMLElement);
   const scaleParam = Number(q.get('scale'));
   const outParam = q.get('out');
+  const OUTPUT_KINDS = ['view', 'exhibit', 'actual'] as const;
   const resolution: RoomResolution = {
-    scale: q.has('scale') && scaleParam >= 0.1 && scaleParam <= 1 ? scaleParam : 1,
-    output: outParam === 'exhibit' || outParam === 'actual' ? outParam : 'view',
+    scale: q.has('scale') && scaleParam >= 0.1 && scaleParam <= 1 ? scaleParam : Math.min(1, Math.max(0.1, base.resolution.scale)),
+    output: oneOf(outParam ?? base.resolution.output, OUTPUT_KINDS, 'view'),
   };
-  const look = { upscale: q.get('upscale') === 'pixel' ? 'pixel' : 'smooth' };
+  const look = { upscale: oneOf(q.get('upscale') ?? base.resolution.upscale, ['smooth', 'pixel'] as const, 'smooth') };
   const fq = gui.addFolder('解像度');
   const actualBar = mountActualBar(
     (sc) => { resolution.scale = sc; changed(); },
@@ -192,6 +232,52 @@ export function mountRoomUi(
   fq.add(look, 'upscale', { 'なめらか（線形補間）': 'smooth', '画素のまま（ドット）': 'pixel' }).name('引き伸ばし方').onChange(changed);
   fq.add({ run: () => { void view.requestFullscreen?.(); } }, 'run').name('全画面で見る（Esc で戻る）');
   changed();
+
+  // 視点・パース合わせ：現地で投影するとき、見る人の位置から見て、映像の部屋が実際の空間とつながって見えるように合わせる。
+  // 投影面（映像が映る面）と目の位置を実寸で入れると、画角とレンズシフトが決まる。最後に四隅の位置合わせで、投影のずれを直す
+  // ?view=fixed で、最初から現地に合わせた視点で見る
+  const calib: ViewCalibration = { ...base.calibration, mode: oneOf(q.get('view') ?? base.calibration.mode, ['free', 'fixed'] as const, 'free') };
+  const calibChanged = (): void => hooks.onCalibration({ ...calib });
+  const fp = gui.addFolder('視点・パース合わせ');
+  fp.add(calib, 'mode', { 'マウスで自由に動かす': 'free', '現地に合わせた視点（固定）': 'fixed' }).name('視点').onChange(calibChanged);
+  const calibCtl = [
+    fp.add(calib, 'planeWidthM', 0.5, 40, 0.01).name('投影面：幅（m）'),
+    fp.add(calib, 'planeBottomM', -3, 10, 0.01).name('投影面：下端の高さ（床から m）'),
+    fp.add(calib, 'planeDepthM', -10, 40, 0.01).name('投影面：位置（部屋の手前の端から奥へ m）'),
+    fp.add(calib, 'planeXM', -20, 20, 0.01).name('投影面：左右のずれ（m、右が正）'),
+    fp.add(calib, 'planeYawDeg', -45, 45, 0.1).name('投影面の向き：左右（度）'),
+    fp.add(calib, 'planePitchDeg', -45, 45, 0.1).name('投影面の向き：上下（度）'),
+    fp.add(calib, 'planeRollDeg', -45, 45, 0.1).name('投影面の向き：回転（度）'),
+    fp.add(calib, 'eyeDistM', 0.3, 40, 0.01).name('目の位置：投影面からの距離（m）'),
+    fp.add(calib, 'eyeHeightM', 0, 6, 0.01).name('目の位置：高さ（床から m）'),
+    fp.add(calib, 'eyeXM', -20, 20, 0.01).name('目の位置：左右（m、右が正）'),
+  ];
+  calibCtl.forEach((c) => c.onChange(calibChanged));
+  fp.add({ run: () => { Object.assign(calib, { ...defaultCalibration(room), mode: calib.mode }); calibCtl.forEach((c) => c.updateDisplay()); calibChanged(); } }, 'run').name('投影面と目の位置を初期値に戻す');
+
+  // 合わせるための線：部屋の辺（白）・床の格子（青）・窓（緑）・スクリーン（黄）・ライト（橙）
+  const guides: GuideOptions = { ...base.guides, show: on('guides', base.guides.show) };
+  const guidesChanged = (): void => hooks.onGuides({ ...guides });
+  fp.add(guides, 'show').name('合わせるための線を出す').onChange(guidesChanged);
+  fp.add(guides, 'gridM', 0, 5, 0.25).name('床の格子の間隔（m、0 で消す）').onChange(guidesChanged);
+
+  // 四隅の位置合わせ（台形補正）：映像の四隅を、幅・高さの % でずらす。投影面の形にぴったり合わせる最後の調整
+  const stage = el('roomStage', HTMLElement);
+  const warpPct = { ...base.warp };
+  const corners = (): WarpCorners => {
+    const w = warpPct;
+    return [[w.tlx / 100, w.tly / 100], [w.trx / 100, w.try / 100], [w.brx / 100, w.bry / 100], [w.blx / 100, w.bly / 100]];
+  };
+  const applyWarp = (): void => { stage.style.transform = warpCss(stage.clientWidth, stage.clientHeight, corners()); };
+  new ResizeObserver(applyWarp).observe(stage);
+  const fw4 = fp.addFolder('四隅の位置合わせ（台形補正、%）');
+  const warpNames: [keyof typeof warpPct, string][] = [
+    ['tlx', '左上：横'], ['tly', '左上：縦'], ['trx', '右上：横'], ['try', '右上：縦'],
+    ['brx', '右下：横'], ['bry', '右下：縦'], ['blx', '左下：横'], ['bly', '左下：縦'],
+  ];
+  for (const [k, label] of warpNames) fw4.add(warpPct, k, -25, 25, 0.05).name(label).onChange(applyWarp);
+  fw4.add({ run: () => { for (const [k] of warpNames) warpPct[k] = 0; fw4.controllers.forEach((c) => c.updateDisplay()); applyWarp(); } }, 'run').name('四隅を元に戻す');
+  fw4.close();
 
   // 水：3 つはそれぞれ独立に出し消しできる（窓の外の 2 つは、壁の窓のときだけ効く）
   const fw = gui.addFolder('水');
@@ -252,6 +338,16 @@ export function mountRoomUi(
 
   mountTimeControls(gui, clock);
 
+  // 保存する中身（パネルの今の値）
+  const collect = (): RoomSettingsFile => {
+    const { window: _w, spot: _s, ...render } = settings;
+    return {
+      version: 1, windowSide: state.side, room: { ...room }, window: { ...win }, render, screenScene: screen.id,
+      spot: { ...spot, lights: spot.lights.map((l) => ({ ...l })) },
+      resolution: { ...resolution, upscale: look.upscale }, calibration: { ...calib }, guides: { ...guides }, warp: { ...warpPct },
+    };
+  };
+
   const statusEl = el('room-status', HTMLElement);
   const sameAsConfig = (): boolean =>
     win.widthM === configWindow.widthM && win.heightM === configWindow.heightM && win.sillHeightM === configWindow.sillHeightM;
@@ -262,8 +358,18 @@ export function mountRoomUi(
     settings,
     /** スクリーンに映す映像 */
     get screenScene(): SceneDef { return findScene(screen.id); },
+    /** 窓の位置（URL・保存した値・既定から決めたもの。切り替えると onWindowSide） */
+    get side(): WindowSide { return state.side; },
     /** 計算の解像度・出す大きさ */
     get resolution(): RoomResolution { return { ...resolution }; },
+    /** 部屋の寸法（パネルで変えたもの） */
+    get room(): RoomGeometry { return { ...room }; },
+    /** パース合わせの視点 */
+    get calibration(): ViewCalibration { return { ...calib }; },
+    /** 合わせるための線 */
+    get guides(): GuideOptions { return { ...guides }; },
+    /** 四隅の位置合わせ */
+    get warp(): WarpCorners { return corners(); },
     updateStatus(s: SolarState, lit: number, samples: number, backend: Backend, size: { width: number; height: number }, spotOn: number): void {
       const { sun, light } = s;
       const windowText = state.side === 'ceiling' ? '天井（天窓）' : WINDOW_SIDE_LABEL[state.side];
@@ -331,5 +437,34 @@ function mountActualBar(onScale: (s: number) => void, onBack: () => void, onTogg
       buttons.forEach((b, i) => b.classList.toggle('on', Math.abs(SCALE_PRESETS[i]! - res.scale) < 1e-3));
       pixel.textContent = pixelated ? '画素のまま' : 'なめらか';
     },
+  };
+}
+
+/**
+ * room モードのパネルの既定値（保存したファイルと同じ形）。開いたときの既定：窓は天窓で天井いっぱい、
+ * 水盤はオン（水盤で跳ね返った光はオフ）、波の強さ 0.3、雲の影はオフ（ROOM_DEFAULTS）
+ */
+function codeDefaults(room: RoomGeometry, configWindow: WindowGeometry) {
+  return {
+    version: 1 as const,
+    windowSide: 'ceiling' as string,
+    room: { ...room },
+    window: ROOM_DEFAULTS.fullCeiling
+      ? { widthM: room.widthM, heightM: room.depthM, sillHeightM: configWindow.sillHeightM }
+      : { ...configWindow },
+    render: {
+      exposure: 2.5, bounces: 3, smooth: true,
+      seaView: false, seaRipples: false, pool: ROOM_DEFAULTS.pool as boolean, poolReflect: ROOM_DEFAULTS.poolReflect as boolean,
+      waveAmp: ROOM_DEFAULTS.waveAmp as number, poolDepthM: 0.3, seaLevelM: -1,
+      clouds: false, cloudShadow: ROOM_DEFAULTS.cloudShadow as boolean, cloudAmount: 0.45, cloudOpacity: 0.8,
+      cloudSizeM: 1500, cloudHeightM: 1500, windMS: 30, windFromDeg: 270,
+      screen: false, screenGain: 0.6,
+    },
+    screenScene: 'light-clouds',
+    spot: { ...SPOT_DEFAULTS, lights: SPOT_DEFAULTS.lights.map((l) => ({ ...l })) } as SpotSettings,
+    resolution: { scale: 1, output: 'view' as string, upscale: 'smooth' as string },
+    calibration: defaultCalibration(room) as ViewCalibration,
+    guides: { show: false, gridM: 1 } as GuideOptions,
+    warp: { tlx: 0, tly: 0, trx: 0, try: 0, brx: 0, bry: 0, blx: 0, bly: 0 },
   };
 }

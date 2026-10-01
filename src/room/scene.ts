@@ -20,7 +20,7 @@ import type { Backend } from '../stage.ts';
 import { RoomCore } from './core.ts';
 import { GlRoomRenderer, type RoomRenderer } from './gl.ts';
 import { GpuRoomRenderer } from './gpu.ts';
-import type { RoomGeometry, RoomInput, RoomRenderSettings, RoomView } from './model.ts';
+import { type RoomGeometry, type RoomInput, type RoomRenderSettings, type RoomView, type ViewCalibration, calibratedCamera, spotPose } from './model.ts';
 
 export * from './model.ts';
 
@@ -39,19 +39,36 @@ export interface RoomResolution {
   output: RoomOutput;
 }
 
+export interface RoomSceneOptions {
+  /** 作り直す前の視点（マウスで動かしていたとき） */
+  view?: RoomView;
+  /** WebGPU で描くとき（null・省略なら WebGL2） */
+  gpu?: Gpu | null;
+  resolution?: RoomResolution;
+  /** パース合わせの視点（mode が fixed のとき、この値で見る） */
+  calibration?: ViewCalibration;
+  /** 合わせるための線を描く画面（部屋の画面に重ねる canvas） */
+  guide?: HTMLCanvasElement | null;
+}
+
+/** 合わせるための線に描くもの */
+export interface GuideOptions {
+  show: boolean;
+  /** 床の格子の間隔（m、0 で描かない） */
+  gridM: number;
+}
+
 /**
  * @param facingAzimuth 鑑賞者がスクリーンを見る向き（真北基準）。風の方位を部屋の向きに直すのに使う
- * @param gpu WebGPU で描くとき（null なら WebGL2）
  */
 export function createRoomScene(
   container: HTMLElement,
   windowSide: WindowSide,
   room: RoomGeometry,
   facingAzimuth: number,
-  view?: RoomView,
-  gpu: Gpu | null = null,
-  resolution: RoomResolution = { scale: 1, output: 'view' },
+  opts: RoomSceneOptions = {},
 ) {
+  const { view, gpu = null, resolution = { scale: 1, output: 'view' }, guide = null } = opts;
   const { widthM: W, depthM: D, heightM: H } = room;
   const core = new RoomCore(windowSide, room, facingAzimuth);
   const renderer: RoomRenderer = gpu ? new GpuRoomRenderer(gpu, core) : new GlRoomRenderer(core);
@@ -85,8 +102,21 @@ export function createRoomScene(
       core.resize(w, h);
       size = { width: w, height: h };
     }
-    camera.aspect = out.width / out.height;
+    aspect = out.width / out.height;
+    camera.aspect = aspect;
     camera.updateProjectionMatrix();
+    if (calib.mode === 'fixed') applyCalibration();
+  }
+  let aspect = 1;
+  let calib: ViewCalibration = opts.calibration ? { ...opts.calibration } : ({ mode: 'free' } as ViewCalibration);
+  // パース合わせの視点：投影面と目の位置からカメラの位置・向きと、見える範囲（軸外し）を決める
+  function applyCalibration(): void {
+    const c = calibratedCamera(calib, aspect, camera.near);
+    camera.position.copy(c.position);
+    camera.quaternion.copy(c.quaternion);
+    camera.updateMatrixWorld();
+    camera.projectionMatrix.makePerspective(c.left, c.right, c.top, c.bottom, camera.near, camera.far);
+    camera.projectionMatrixInverse.copy(camera.projectionMatrix).invert();
   }
   resize();
   // 枠の大きさが変わったら合わせる（ウィンドウの大きさだけでなく、スクロールバーが出た・見え方を切り替えた、なども含む）
@@ -102,12 +132,123 @@ export function createRoomScene(
   }
   setResolution(res);
 
+  // マウスで動かしていた視点（パース合わせから戻すときに使う）
+  const freeView: RoomView = { camera: camera.position.clone(), target: controls.target.clone() };
+  /** パース合わせの値を変える。fixed ならその視点、free ならマウスで動かす（free に戻すと、元の視点に戻る） */
+  function setCalibration(next: ViewCalibration): void {
+    const wasFixed = calib.mode === 'fixed';
+    calib = { ...next };
+    controls.enabled = calib.mode === 'free';
+    if (calib.mode === 'fixed') applyCalibration();
+    else if (wasFixed) {
+      camera.position.copy(freeView.camera);
+      controls.target.copy(freeView.target);
+      camera.updateProjectionMatrix();
+      controls.update();
+    }
+  }
+  setCalibration(calib);
+
   let last: { input: RoomInput; settings: RoomRenderSettings } | null = null;
+  let guideOpts: GuideOptions = { show: false, gridM: 1 };
+  let guideDrawn = false;
   function render(input: RoomInput, settings: RoomRenderSettings): void {
-    controls.update();
+    if (calib.mode === 'fixed') applyCalibration();
+    else {
+      controls.update();
+      freeView.camera.copy(camera.position);
+      freeView.target.copy(controls.target);
+    }
     camera.updateMatrixWorld();
     renderer.render(core.frame(input, settings, camera));
     last = { input, settings };
+    drawGuides(settings);
+  }
+
+  // ---- 合わせるための線：部屋の辺・床の格子・窓・スクリーン・ライトの位置を、カメラから見た位置に描く ----
+  function drawGuides(settings: RoomRenderSettings): void {
+    if (!guide) return;
+    if (!guideOpts.show) {
+      if (guideDrawn) { guide.getContext('2d')?.clearRect(0, 0, guide.width, guide.height); guideDrawn = false; }
+      return;
+    }
+    const dpr = devicePixelRatio;
+    const cw = Math.max(1, Math.round(guide.clientWidth * dpr)), ch = Math.max(1, Math.round(guide.clientHeight * dpr));
+    if (guide.width !== cw || guide.height !== ch) { guide.width = cw; guide.height = ch; }
+    const g = guide.getContext('2d');
+    if (!g) return;
+    g.clearRect(0, 0, cw, ch);
+    guideDrawn = true;
+    const inv = camera.matrixWorldInverse, proj = camera.projectionMatrix, near = camera.near;
+    const toView = (p: THREE.Vector3): THREE.Vector3 => p.clone().applyMatrix4(inv);
+    const toPx = (v: THREE.Vector3): [number, number] => {
+      const c = v.clone().applyMatrix4(proj);
+      return [(c.x * 0.5 + 0.5) * cw, (0.5 - c.y * 0.5) * ch];
+    };
+    // 目の後ろに回る部分は、近い面で切ってから描く
+    const line = (a: THREE.Vector3, b: THREE.Vector3): void => {
+      let va = toView(a), vb = toView(b);
+      const za = -va.z - near, zb = -vb.z - near;
+      if (za < 0 && zb < 0) return;
+      if (za < 0) va = va.clone().lerp(vb, za / (za - zb));
+      else if (zb < 0) vb = vb.clone().lerp(va, zb / (zb - za));
+      const [px0, py0] = toPx(va), [px1, py1] = toPx(vb);
+      g.moveTo(px0, py0);
+      g.lineTo(px1, py1);
+    };
+    const V = (x: number, y: number, z: number): THREE.Vector3 => new THREE.Vector3(x, y, z);
+    const stroke = (color: string, width: number, draw: () => void): void => {
+      g.beginPath();
+      draw();
+      g.strokeStyle = color;
+      g.lineWidth = width * dpr;
+      g.stroke();
+    };
+    const x0 = -W / 2, x1 = W / 2, z0 = 0, z1 = -D;
+    // 床の格子
+    const step = guideOpts.gridM;
+    if (step > 0) {
+      stroke('rgba(120, 200, 255, 0.45)', 1, () => {
+        for (let x = Math.ceil(x0 / step) * step; x <= x1 + 1e-6; x += step) line(V(x, 0, z0), V(x, 0, z1));
+        for (let z = 0; z >= z1 - 1e-6; z -= step) line(V(x0, 0, z), V(x1, 0, z));
+      });
+    }
+    // 部屋の辺（12 本）
+    stroke('rgba(255, 255, 255, 0.9)', 2, () => {
+      for (const y of [0, H]) {
+        line(V(x0, y, z0), V(x1, y, z0)); line(V(x0, y, z1), V(x1, y, z1));
+        line(V(x0, y, z0), V(x0, y, z1)); line(V(x1, y, z0), V(x1, y, z1));
+      }
+      for (const [x, z] of [[x0, z0], [x1, z0], [x0, z1], [x1, z1]] as const) line(V(x, 0, z), V(x, H, z));
+    });
+    // 窓
+    const wr = core.shared.uWinRect.value, face = core.shared.uWinFace.value;
+    stroke('rgba(80, 255, 200, 0.9)', 2, () => {
+      const pt = (u: number, v: number): THREE.Vector3 => face === 2 ? V(u, H, v) : V(face === 0 ? x1 : x0, v, u);
+      const c = [pt(wr.x, wr.z), pt(wr.y, wr.z), pt(wr.y, wr.w), pt(wr.x, wr.w)];
+      for (let i = 0; i < 4; i++) line(c[i]!, c[(i + 1) % 4]!);
+    });
+    // スクリーン（奥の壁）
+    const sr = core.shared.uScreenRect.value;
+    stroke('rgba(255, 220, 80, 0.9)', 2, () => {
+      const c = [V(sr.x, sr.z, z1), V(sr.y, sr.z, z1), V(sr.y, sr.w, z1), V(sr.x, sr.w, z1)];
+      for (let i = 0; i < 4; i++) line(c[i]!, c[(i + 1) % 4]!);
+    });
+    // ライトの位置（真下の床までの線と、照らす向き）
+    const sp = settings.spot;
+    stroke('rgba(255, 160, 60, 0.95)', 2, () => {
+      for (const light of sp.lights.slice(0, sp.count)) {
+        const { pos, dir } = spotPose(light, room);
+        line(pos, V(pos.x, 0, pos.z));
+        line(pos, pos.clone().addScaledVector(dir, 0.8));
+      }
+    });
+  }
+
+  /** 合わせるための線の出し方を変える */
+  function setGuides(next: GuideOptions): void {
+    guideOpts = { ...next };
+    if (last) drawGuides(last.settings);
   }
 
   /** 今の設定で続けて描き、GPU の処理が終わるまで待って 1 フレームあたりの時間（ms）を測る（その間は描画が止まる） */
@@ -122,8 +263,9 @@ export function createRoomScene(
     return (performance.now() - t0) / frames;
   }
 
+  /** マウスで動かしていた視点（パース合わせで見ているときも、その前の視点を返す） */
   function currentView(): RoomView {
-    return { camera: camera.position.clone(), target: controls.target.clone() };
+    return { camera: freeView.camera.clone(), target: freeView.target.clone() };
   }
 
   function dispose(): void {
@@ -131,6 +273,7 @@ export function createRoomScene(
     controls.dispose();
     renderer.dispose();
     container.removeChild(renderer.canvas);
+    guide?.getContext('2d')?.clearRect(0, 0, guide.width, guide.height);
   }
 
   return {
@@ -141,6 +284,8 @@ export function createRoomScene(
     benchmark,
     resize,
     setResolution,
+    setCalibration,
+    setGuides,
     /** 今の計算の大きさ（画素） */
     get renderSize(): { width: number; height: number } { return size; },
     currentView,
