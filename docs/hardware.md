@@ -4,6 +4,7 @@
 
 - 調べた日：2026-09-30。価格は税込。BTO パソコンの価格はセール・在庫で大きく変わる（2026 年はメモリの値上がりで、Mac・Windows とも値上げが続いている）ので、購入の直前に確認し直すこと
 - 性能の数値は公開されているベンチマークの値と、開発用の Mac（Apple M4、GPU 10 コア）でこの作品を実際に動かして測った値から見積もった。候補の PC そのものでは測っていない
+- **追記（2026-10-01）**：room モードが展示に投影される可能性が高くなった。1〜4 章は「room モードは展示に出さない」前提で書いたもので、その場合の見直しを **5 章**に書いた
 
 ---
 
@@ -51,7 +52,7 @@ GPU の性能を 3DMark（Mac と Windows の両方で同じ内容を計測で�
 60fps で使える時間は 1 フレーム 16.7ms。
 
 - 展示の映像（visuals）は、どの候補でも余裕がある。一番重い映像でも、M5 Pro で 60fps の時間の約 1/4、RTX で 1 割未満
-- room モードは検証用で、展示には出さない。全画面で動かしたときだけ差が出る
+- room モードは検証用で、展示には出さない（この前提は変わった。5 章）。全画面で動かしたときだけ差が出る
 - 見積もりは目安である。ベンチマークはゲームのような描画で、この作品のシェーダーとは中身が違う。Windows では WebGPU が Direct3D 12 の上で動くので、その違いも入る。購入後に visuals の「ベンチマーク（60 フレーム）」で実際の値を確かめること
 
 ---
@@ -152,11 +153,79 @@ GPU の性能を 3DMark（Mac と Windows の両方で同じ内容を計測で�
 
 ---
 
-## 5. 出典
+## 5. room モードを展示に出す場合の見直し
+
+room モード（仮想の部屋のパストレーシング）が展示に投影される可能性が高くなった。room モードは映像（visuals）より何倍も重いので、PC の選び方が変わる。
+
+### 5.1 使う予定の効果
+
+| 効果 | 使う見込み | 備考 |
+|---|---|---|
+| 窓の外の水面の反射（天井・壁の揺らぎ） | 90% | |
+| 部屋の中央の光の軌跡（three-line-trails のような演出） | 90% | system.md 7 章。計算はごく軽い |
+| 床の水盤 | 50% | |
+| 雲 | 50% | 負担の少ない方法で作る（5.3 節） |
+| スクリーンの映像 | 20% | visuals の映像を 1 つ描くぶん重くなる |
+| 窓の外の海 | 5% | |
+
+### 5.2 3840×1080 での重さ（Apple M4 で実測、WebGPU）
+
+room モードの描画の範囲を 3840×1080 にして、パネルの「重さを測る（60 フレーム）」で測った。
+
+| 効果の組み合わせ | M4（実測） |
+|---|---|
+| 効果なし（照り返し 3 回） | 30.0 ms |
+| 水面の反射 | 35.6 ms |
+| 水面の反射 ＋ 水盤 | 39.5 ms |
+| 水面の反射 ＋ 水盤 ＋ 雲（今の作り方） | 約 45 ms |
+| 雲だけ（今の作り方） | 39.5 ms（効果なしより 9.5 ms 重い） |
+| すべて（海・スクリーンも） | 43.7 ms（WebGL2 では 58.6 ms） |
+
+- 今の雲は、画素ごと・照り返しのたびに雲の影を計算しているので重い。5.3 節の方法なら 1 ms 程度に抑えられる見込み
+- 光の軌跡は、線の計算が 3 万点ほど・描くのも線だけなので、1 ms 程度の見込み（未計測）
+
+### 5.3 雲を軽くする方法
+
+雲のかたまり（数百 m〜数 km）は部屋（10m）よりずっと大きく、雲の影の縁も数十 m 以上の幅でぼける。そのため、**部屋の中では雲の影の濃さはどこでもほぼ同じ**と見てよい。
+
+- 雲の影の濃さを、部屋の中心で 1 フレームに 1 回だけ求め（CPU でも GPU でもよい）、すべての画素で同じ値を使う。物理の見方としてもほぼ正しい
+- 窓から見える空の雲は、窓の画素だけで計算する（画面のごく一部）。重ねる層も減らせる
+- これで、雲の重さは 9.5 ms → 1 ms 程度になる見込み
+
+### 5.4 見込みの構成での重さ（見積もり）
+
+5.2 節の実測に、軽くした雲と光の軌跡を足し、GPU の性能の比（1.2 節。M5 Max は M5 Pro の約 1.9 倍）で割って見積もった。60fps で使える時間は 16.7 ms。
+
+| 構成 | M4（推定） | Mac mini（M5 Pro） | Mac Studio（M5 Max・GPU 40 コア） | Windows（RTX 5080） |
+|---|---|---|---|---|
+| 水面の反射 ＋ 光の軌跡（どちらも 90%） | 約 37 ms | **約 15 ms** | 約 8 ms | 約 4 ms |
+| ＋ 水盤 ＋ 雲（軽い方法） | 約 41.5 ms | **約 17 ms（60fps に届かない）** | 約 9 ms | 約 4.5 ms |
+| ＋ スクリーンの映像 | 約 45 ms | 約 18 ms | 約 10 ms | 約 5 ms |
+
+- 見積もりは目安。GPU の性能の比はゲームのようなベンチマークの値で、この作品の計算とは中身が違う。購入の前に、同じ機種で実際に測るのが望ましい
+- Mac mini（M5 Pro）でも、計算する解像度を下げて拡大すれば収められる。0.75 倍にすると計算量は約 56% になり、すべて入れても約 10 ms。柔らかい光と影が中心の映像なので、拡大による見た目の差は小さい（線の軌跡だけは、拡大せずに元の解像度で描く）
+
+### 5.5 候補の比べ直し
+
+| 候補 | 価格 | room モードの余裕 | ほかの点 |
+|---|---|---|---|
+| Mac mini（M5 Pro・48GB） | 443,800 円 | 小さい。見込みの構成で 60fps ぎりぎり。解像度を下げれば収まる | 小さく静か。開発と同じ環境 |
+| **Mac Studio（M5 Max・GPU 40 コア・48GB）** | 527,800 円から | あり（見込みの構成で約 9 ms） | 開発と同じ Mac の環境のまま。キャビネット（W450）に入る大きさ。Mac mini より消費電力が大きい |
+| Windows のゲーミング PC（RTX 5080） | 約 40〜47 万円 | 大きい（約 4.5 ms） | 大きなキャビネット（W700）が要る。Windows での動作確認と、OS の更新・音・熱の対策が要る（3.2 節） |
+
+**おすすめ**：room モードが展示の中心になり、効果も増えていく見込みなら、**Mac Studio（M5 Max・GPU 40 コア）** が釣り合いがよい。開発と同じ Mac の環境で、静かで、W450 のキャビネットにも入り、見込みの構成で 2 倍近い余裕がある。費用を抑えるなら Mac mini（M5 Pro）で解像度を下げて動かす。性能の余裕を一番に考えるなら Windows のゲーミング PC。
+
+- Mac Studio は Mac mini より最大の消費電力が大きいので、UPS を付けるなら 1000VA 級（APC BR1000S-JP など）にする（system.md 2.2 節）
+- Mac Studio の標準構成（419,800 円）は GPU のコアが 40 より少ないので、40 コアの構成を選ぶ
+
+---
+
+## 6. 出典
 
 - Apple：[Mac mini（M5 Pro、18 コア CPU、20 コア GPU、48GB、512GB）の購入ページ](https://www.apple.com/jp/shop/buy-mac/mac-mini/m5-pro-%E3%83%81%E3%83%83%E3%83%97-18%E3%82%B3%E3%82%A2cpu-20%E3%82%B3%E3%82%A2gpu-48gb-%E3%81%AE%E3%83%A1%E3%83%A2%E3%83%AA-512gb-%E3%81%AE%E3%82%B9%E3%83%88%E3%83%AC%E3%83%BC%E3%82%B8)、[Mac mini の技術仕様](https://www.apple.com/jp/mac-mini/specs/)
 - 価格の内訳：[MonoDeck「Apple、M6／M5 Pro搭載の新型Mac miniを発表」](https://monodeck.jp/mac-mini-m6-m5-pro-launch/)（標準の M5 Pro 299,800 円、18 コア CPU・20 コア GPU ＋36,000 円）、[スタジオ さぼてん「新型Mac mini（M6・M5 Pro）発表まとめ」](https://saboten-blog.com/mac-mini-m6-m5pro-announcement-2026/)（メモリ 48GB ＋108,000 円）、[ガッキー・ガジェットブログ「新型Mac mini（M6／M5 Pro）の値段を全部調べた」](https://ggc-japan.com/mac-mini-m6-price-guide/)
 - M5 Pro の性能：[Macworld「Mac mini (M5 Pro) review」](https://www.macworld.com/article/3239233/mac-mini-m5-pro-review-killer-performance-at-a-lethal-price.html)（GPU は M4 Pro より約 20% 速い）、[iTechGuides「Apple M5 Pro & M5 Max GPU Analysis」](https://www.itechguides.com/apple-m5-pro-m5-max-gpu-analysis-is-the-m5-max-really-on-par-with-the-rtx-5070-laptop-gpu/)（M5 Pro 20 コア GPU の Steel Nomad 2,323。Notebookcheck の計測）、[Notebookcheck「Apple M5 Pro 20-Core GPU」](https://www.notebookcheck.it/Apple-M5-Pro-20-Core-GPU.1252377.0.html)（Steel Nomad 2,323、Steel Nomad Light 10,018）、[MacRumors「M5 Ultra and M6 Chip Benchmark Results」](https://www.macrumors.com/2026/09/18/m5-ultra-and-m6-chip-gpu-benchmarks/)
 - M4 の性能：[Beebom「Apple M4 Benchmarks」](https://beebom.com/apple-m4-benchmarks/)（M4 GPU の Steel Nomad Light 4,001）
+- Mac Studio（M5 Max）：[Apple のニュースリリース](https://www.apple.com/newsroom/2026/08/apple-introduces-new-mac-studio-with-m5-max-and-m5-ultra/)（GPU 最大 40 コア、2026-09-22 発売）、[ゴリミー：価格](https://gori.me/macstudio/169326)（419,800 円から、40 コアの GPU は 527,800 円から）。M5 Max（40 コア）の Steel Nomad 4,392 は [iTechGuides](https://www.itechguides.com/apple-m5-pro-m5-max-gpu-analysis-is-the-m5-max-really-on-par-with-the-rtx-5070-laptop-gpu/)（16 インチ MacBook Pro、Notebookcheck の計測）
 - RTX の性能：[UL Benchmarks「NVIDIA GeForce RTX 5080 Review」](https://benchmarks.ul.com/hardware/gpu/NVIDIA+GeForce+RTX+5080+review)（RTX 5080 の Steel Nomad 8,938、RTX 5070 Ti 6,967）
 - Windows の PC の価格：[価格.com（RTX 5080 搭載ゲーミング PC）](https://kakaku.com/pc/gaming-pc/itemlist.aspx?pdf_Spec115=306)、[価格.com（RTX 5070 Ti 搭載ゲーミング PC）](https://kakaku.com/pc/gaming-pc/itemlist.aspx?pdf_Spec115=307)、[ゲーミングPCのトリセツ「RTX 5080搭載ゲーミングPCおすすめ5選」](https://gamingpc-torisetsu.jp/rtx-5080-gaming-pc/)（2026-08-14 確認の価格）、[PC Watch「GALLERIA、TGS2026出展記念のRTX 5080搭載PC 3機種」](https://pc.watch.impress.co.jp/docs/news/2140191.html)
