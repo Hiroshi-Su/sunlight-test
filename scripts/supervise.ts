@@ -5,6 +5,7 @@ import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EXIT_CONFIG_ERROR } from '../electron/exit-codes.ts';
+import { electronArgs } from './electron-args.ts';
 
 // Node から require('electron') すると実行ファイルのパスが返る
 const electronPath = createRequire(import.meta.url)('electron') as string;
@@ -18,7 +19,6 @@ const log = (type: string, data: Record<string, unknown> = {}): void => {
   console.log(line);
 };
 
-const args = ['.', ...process.argv.slice(2)];
 const crashes: number[] = [];
 let child: ChildProcess | null = null;
 let stopping = false;
@@ -36,6 +36,8 @@ function stop(sig: NodeJS.Signals): void {
 for (const sig of ['SIGINT', 'SIGTERM'] as const) process.on(sig, () => stop(sig));
 
 function run(): void {
+  // 起動のたびに設定を読み直す（表示の倍率を変えたら、次の再起動から効く）
+  const args = electronArgs(ROOT, process.argv.slice(2));
   log('launch', { args });
   child = spawn(electronPath, args, { cwd: ROOT, stdio: 'inherit' });
   child.on('exit', (code, signal) => {

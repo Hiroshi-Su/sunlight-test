@@ -6,7 +6,8 @@ const BUDGET_MS = 1000 / 60;
 export const BACKEND_LABEL: Record<Backend, string> = { webgpu: 'WebGPU', webgl: 'WebGL2' };
 
 export function formatPerf(gpu: GpuReport, fps: number, backend: Backend): string[] {
-  const lines = [`FPS ${fps.toFixed(1)}  描画 ${BACKEND_LABEL[backend]}`];
+  // 倍率：画面の 1 画素あたりの CSS の画素（devicePixelRatio）。展示の PC では 1 のはず（config/app.json の forceDeviceScaleFactor）
+  const lines = [`FPS ${fps.toFixed(1)}  描画 ${BACKEND_LABEL[backend]}  倍率 ${devicePixelRatio}`];
   if (!gpu.supported) return [...lines, 'GPU 時間：この環境では計測できません'];
   if (!gpu.scene || !gpu.final) return [...lines, 'GPU 時間：計測中…'];
   const total = gpu.scene.avg + gpu.final.avg;

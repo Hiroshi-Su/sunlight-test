@@ -121,7 +121,7 @@ GPU の性能を 3DMark（Mac と Windows の両方で同じ内容を計測で�
 - **大きく、音と熱が出る**：ミドルタワー（高さ 40〜50cm 前後）。この作品の負荷は軽いのでファンは静かめで済むはずだが、ロビーでの音は現地で確かめる必要がある。ほこりの掃除も要る
 - **消費電力が大きい**：電源は 750〜1000W クラス。この作品の負荷なら実際は 100〜200W 程度と見込まれる（未計測）が、Mac mini（最大 155W）よりは多い
 - **OS の更新での再起動**：Windows Update が勝手に再起動すると展示が止まる。Pro にして更新の時間・延期を設定するか、展示専用の Windows（IoT Enterprise LTSC など）を検討する
-- **Windows での動作確認がまだ**：この作品は Mac で作って確かめてきた。Windows では WebGPU が Direct3D 12 の上で（WebGL2 は Direct3D 11 に変換されて）動くので、シェーダーの細かい違いが出る可能性がある。WebGPU と WebGL2 の見比べ方は docs/webgpu.md 2 章。表示の拡大率（125% など）の問題は `forceDeviceScaleFactor` で対策済み（README）
+- **Windows での動作確認がまだ**：この作品は Mac で作って確かめてきた。Windows では WebGPU が Direct3D 12 の上で（WebGL2 は Direct3D 11 に変換されて）動くので、シェーダーの細かい違いが出る可能性がある。WebGPU と WebGL2 の見比べ方は docs/webgpu.md 2 章。表示の拡大率（125% など）の問題は `forceDeviceScaleFactor` で対策済み。効いたかどうかはログの `scale`・`scale-mismatch` で確かめられる（README「表示の倍率」）
 - **停電のあとの自動起動**：BIOS の「AC 電源が戻ったら起動する」設定（Restore on AC Power Loss など）が必要。機種ごとに設定の名前が違う
 
 ---

@@ -51,7 +51,21 @@ if (benches.length) {
   for (const r of benches.slice(-10)) console.log(`  ${r.t}  ${String(r['scene'])}  ${String(r['ms'])} ms`);
 }
 
-const NORMAL = new Set(['stats', 'start', 'renderer-ready', 'daily-reload', 'quit', 'quit-by-key', 'signal', 'mode-switch', 'benchmark']);
+// 表示の倍率：最後に記録した画面の一覧と、描画側の実際の倍率
+const lastDisplays = rows.filter((r) => r.type === 'displays').at(-1);
+const lastScale = rows.filter((r) => r.type === 'scale' || r.type === 'scale-mismatch').at(-1);
+if (lastDisplays || lastScale) {
+  console.log('\n表示の倍率');
+  if (lastDisplays) {
+    console.log(`  設定 forceDeviceScaleFactor ${String(lastDisplays['forceDeviceScaleFactor'])}  起動のスイッチ ${String(lastDisplays['switch'])}（${lastDisplays.t}）`);
+    for (const d of (lastDisplays['displays'] as { label: string; primary: boolean; bounds: { x: number; y: number; width: number; height: number }; scaleFactor: number }[]) ?? []) {
+      console.log(`  画面 ${d.label || '(名前なし)'}${d.primary ? '（主）' : ''}  位置 ${d.bounds.x},${d.bounds.y}  ${d.bounds.width}×${d.bounds.height}  倍率 ${d.scaleFactor}`);
+    }
+  }
+  if (lastScale) console.log(`  描画の倍率 ${String(lastScale['dpr'])}${lastScale.type === 'scale-mismatch' ? '  ※設定と違う' : ''}（${lastScale.t}）`);
+}
+
+const NORMAL = new Set(['stats', 'start', 'renderer-ready', 'daily-reload', 'quit', 'quit-by-key', 'signal', 'mode-switch', 'benchmark', 'displays', 'scale']);
 const incidents = rows.filter((r) => !NORMAL.has(r.type));
 if (incidents.length) {
   console.log('\n異常・復帰（最新 20 件）');

@@ -99,11 +99,19 @@ URL パラメータ：
 |---|---|
 | `mode` | 起動時のモード `"verify"`（デフォルト）/ `"visuals"` / `"room"` / `"kiosk"`。起動引数 `--mode=` で上書き |
 | `window` | 展示モードのウィンドウ位置・サイズ。2 台のプロジェクターを OS 上で横並びにし、左端のディスプレイの原点に合わせる |
-| `forceDeviceScaleFactor` | OS の表示スケール（125% など）を無視して 1px = 1px にする（Windows 向け） |
+| `forceDeviceScaleFactor` | 表示の倍率。OS の表示スケール（Retina の 2 倍、Windows の 125% など）を無視して 1px = 1px にする。`null` で OS に従う。下の「表示の倍率」 |
 | `dailyReloadAt` | 毎日ページを再読み込みする現地時刻（`"04:00"`、`null` で無効） |
 | `statsIntervalSec` | 稼働状況をログに書く間隔 |
 | `heartbeatTimeoutSec` | 描画が止まったと判断して復帰処理に入るまでの秒数 |
 | `logDir` | ログの出力先 |
+
+**表示の倍率**：
+
+- `forceDeviceScaleFactor` は、起動するときのスイッチ（`--force-device-scale-factor`）として Electron に渡す。macOS では、アプリの中でスイッチを足しても効かない（画面の倍率がもう決まっている）ため。`npm run app` 系は `scripts/launch.ts`、`npm run app:forever` は `scripts/supervise.ts` を通して起動し、どちらも `scripts/electron-args.ts` で設定を読んでスイッチを付ける。`electron .` を直接呼ぶと、macOS では効かない
+- 起動したら、つながっている画面と倍率をログに書く（`displays`。画面の抜き差しや OS の表示の設定を変えたときにも書く）。描画側の実際の倍率（`devicePixelRatio`）を設定と比べて、同じなら `scale`、違えば `scale-mismatch`（警告）を書く。`npm run logs` の「表示の倍率」に、最後の画面の一覧と描画の倍率が出る（`scale-mismatch` は「異常・復帰」にも出る）
+- 状態表示（visuals・検証の 1 行目、room）にも `倍率 1` のように出る
+- 倍率を強制しているときは、どの画面も強制した倍率として報告される（Retina の画面も `倍率 1`）
+- 倍率は、映像の計算の重さ・解像度には効かない（映像はいつも 3840×1080 の画素で計算する）。効くのは、ウィンドウの位置と大きさ、画面の画素との対応
 
 長期稼働のための仕組み：
 
@@ -217,6 +225,8 @@ src/bridge.ts             Electron と描画側で共有する型
 electron/main.ts          Electron メインプロセス（ウィンドウ・監視・ログ）
 electron/preload.ts       描画側への設定の受け渡し
 scripts/build-electron.ts electron/ を dist-electron/ へ変換（esbuild）
+scripts/launch.ts         Electron を 1 回起動する（npm run app 系。表示の倍率のスイッチを付ける）
+scripts/electron-args.ts  Electron の起動引数（config/app.json の表示の倍率）
 scripts/supervise.ts      異常終了時の自動再起動
 scripts/log-summary.ts    ログの集計
 tests/gen_fixtures.py     NREL SPA（pvlib）とベクトル射影で基準値を生成

@@ -225,7 +225,7 @@ export function mountRoomUi(
         ...(settings.screen ? [`スクリーン  ${findScene(screen.id).label}`] : []),
         `1 画素あたりの光線 ${samples} 本${samples < 256 ? '（止めておくと増えて、ざらつきが減る）' : ''}`,
         `計算 ${size.width}×${size.height}（${resolution.output === 'view' ? '画面の枠' : `展示の ${EXHIBIT_SIZE.width}×${EXHIBIT_SIZE.height}`} の ${Math.round(resolution.scale * 100)}%、画素数 ${Math.round(resolution.scale * resolution.scale * 100)}%）`,
-        `描画 ${BACKEND_LABEL[backend]}`,
+        `描画 ${BACKEND_LABEL[backend]}  倍率 ${devicePixelRatio}`,
         '',
         resolution.output === 'actual'
           ? 'ドラッグ：視点回転／ホイール：はみ出した分のスクロール／右ドラッグ：平行移動'

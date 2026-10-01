@@ -1,4 +1,4 @@
-import { BrowserWindow, Menu, app, dialog, ipcMain, net, powerSaveBlocker, protocol } from 'electron';
+import { BrowserWindow, Menu, app, dialog, ipcMain, net, powerSaveBlocker, protocol, screen } from 'electron';
 import type { BrowserWindowConstructorOptions } from 'electron';
 import { appendFileSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, normalize, relative } from 'node:path';
@@ -75,7 +75,12 @@ for (const sig of ['SIGTERM', 'SIGINT'] as const) {
 }
 
 // ---- 長時間稼働向けのスイッチ（app ready 前に設定する必要がある）----
-if (appConfig.forceDeviceScaleFactor != null) {
+// 表示の倍率。macOS では、ここで足しても効かない（画面の倍率がもう決まっている）。
+// そのため scripts/launch.ts・scripts/supervise.ts が、起動するときのスイッチとして付ける。ここでは、それ以外の起動のしかた
+// （electron . を直接など）でも効く環境（Windows など）のために、付いていなければ足しておく。
+// 実際に効いたかは、描画側の倍率で確かめてログに出す（checkScale）
+const scaleFromLaunch = app.commandLine.getSwitchValue('force-device-scale-factor');
+if (appConfig.forceDeviceScaleFactor != null && !scaleFromLaunch) {
   app.commandLine.appendSwitch('force-device-scale-factor', String(appConfig.forceDeviceScaleFactor));
 }
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
@@ -247,6 +252,7 @@ ipcMain.on(IPC.heartbeat, (e, data: Heartbeat) => {
 });
 ipcMain.on(IPC.report, (e, { type, ...data }: { type: string } & ReportData) => {
   log(type, data);
+  if (type === 'renderer-ready' && fromCurrent(e.sender)) checkScale(data['dpr']);
   if ((type === 'webgl-context-lost' || type === 'gpu-device-lost') && fromCurrent(e.sender)) recover(type);
 });
 
@@ -310,6 +316,42 @@ void app.whenReady().then(() => {
     platform: `${process.platform} ${process.arch}`,
     window: appConfig.window,
   });
+  logDisplays();
+  screen.on('display-added', () => logDisplays('display-added'));
+  screen.on('display-removed', () => logDisplays('display-removed'));
+  screen.on('display-metrics-changed', () => logDisplays('display-metrics-changed'));
   createWindow();
   startTimers();
 });
+
+// ---- 表示の倍率 ----
+// つながっている画面と、それぞれの倍率（1 = 1 画素 = 1 画素、Retina や Windows の 200% なら 2）。
+// 倍率を強制しているとき（起動のスイッチ）は、どの画面も強制した倍率として報告される。
+// プロジェクターの抜き差しや、OS の表示の設定を変えたときにも書く
+function logDisplays(reason = 'start'): void {
+  const primary = screen.getPrimaryDisplay().id;
+  log('displays', {
+    reason,
+    forceDeviceScaleFactor: appConfig.forceDeviceScaleFactor,
+    switch: app.commandLine.getSwitchValue('force-device-scale-factor') || null,
+    displays: screen.getAllDisplays().map((d) => ({
+      id: d.id, primary: d.id === primary, label: d.label, bounds: d.bounds, scaleFactor: d.scaleFactor,
+    })),
+  });
+}
+
+// 描画側が報告した実際の倍率（devicePixelRatio）を、設定と比べる。違えば警告（npm run logs の「異常・復帰」に出る）
+function checkScale(dpr: unknown): void {
+  if (typeof dpr !== 'number' || !win || win.isDestroyed()) return;
+  const display = screen.getDisplayMatching(win.getBounds());
+  const want = appConfig.forceDeviceScaleFactor;
+  const info = { dpr, want, display: { id: display.id, label: display.label, scaleFactor: display.scaleFactor }, mode };
+  if (want != null && Math.abs(dpr - want) > 1e-3) {
+    log('scale-mismatch', {
+      ...info,
+      hint: 'config/app.json の forceDeviceScaleFactor が効いていない。npm run app 系か npm run app:forever で起動しているか、OS の表示の拡大率を確かめる',
+    });
+  } else {
+    log('scale', info);
+  }
+}
