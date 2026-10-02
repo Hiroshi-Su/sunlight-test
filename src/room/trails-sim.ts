@@ -52,8 +52,8 @@ export class Noise3 {
   }
 }
 
-/** ノイズの値（多くは ±0.25 ほど）を流れの速さに直す倍率。パネルの「速さ」が、おおよそ実際の速さ（m/s）になる */
-const FLOW = 4;
+/** 流れ（カールノイズ）の値を流れの速さに直す倍率。パネルの「速さ」が、おおよそ実際の速さ（m/s）になる */
+const FLOW = 0.75;
 
 /** 動きの設定 */
 export interface TrailMotion {
@@ -150,9 +150,17 @@ export class TrailSim {
       const x = P[o]!, y = P[o + 1]!, z = P[o + 2]!;
       // 流れ：3 つの別の場所でノイズを読んで、向きにする（時間でゆっくり変わる）
       const ox = this.offset[i * 3]! * m.spread, oy = this.offset[i * 3 + 1]! * m.spread, oz = this.offset[i * 3 + 2]! * m.spread;
-      const fx = n.noise(x * f + 11.3 + ox, y * f + t + oy, z * f - 4.1 + oz);
-      const fy = n.noise(x * f - 7.7 + ox, y * f + 2.9 + oy, z * f + t + oz);
-      const fz = n.noise(x * f + t + ox, y * f - 13.1 + oy, z * f + 5.3 + oz);
+      // 流れ：カールノイズ（3 つのノイズを「ベクトルの場」とみなし、その回転を流れにする）。
+      // 吸い込まれる場所・湧き出す場所がない流れなので、全部の線が同じ流れに乗っても 1 つの束にならず、
+      // 近くの線どうしは同じ向きに流れる。時間でゆっくり変わる
+      const ux = x * f + ox, uy = y * f + oy, uz = z * f + oz;
+      const A = (a: number, b: number, c: number): number => n.noise(a + 11.3, b + t, c - 4.1);
+      const B = (a: number, b: number, c: number): number => n.noise(a - 7.7, b + 2.9, c + t);
+      const C = (a: number, b: number, c: number): number => n.noise(a + t, b - 13.1, c + 5.3);
+      const e = 0.05, k2 = 1 / (2 * e);
+      const fx = ((C(ux, uy + e, uz) - C(ux, uy - e, uz)) - (B(ux, uy, uz + e) - B(ux, uy, uz - e))) * k2;
+      const fy = ((A(ux, uy, uz + e) - A(ux, uy, uz - e)) - (C(ux + e, uy, uz) - C(ux - e, uy, uz))) * k2;
+      const fz = ((B(ux + e, uy, uz) - B(ux - e, uy, uz)) - (A(ux, uy + e, uz) - A(ux, uy - e, uz))) * k2;
       // 中心へ引き戻す力（範囲の外ほど強い）
       const dx = x - c.x, dy = y - c.y, dz = z - c.z;
       const dist = Math.hypot(dx, dy, dz);

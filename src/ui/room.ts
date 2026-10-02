@@ -38,7 +38,7 @@ export const SPOT_DEFAULTS: SpotSettings = {
 };
 /** 光の軌跡の既定（部屋の中央・目の高さのあたりに、半径 1.2m で 1,024 本）。既定では出さない（?trails=1 か、パネルで出す） */
 export const TRAIL_DEFAULTS: TrailSettings = {
-  on: false, count: 1024, points: 48, widthPx: 3, speed: 1.2, turbulence: 0.6, spread: 1.5,
+  on: false, count: 1024, points: 48, widthPx: 3, speed: 1.2, turbulence: 0.6, spread: 0.2,
   radiusM: 1.2, centerHeightM: 1.6, centerFromFrontM: 0, brightness: 1,
   colorMode: 'scene', color: '#66ccff', hueSpread: 1,
 };
