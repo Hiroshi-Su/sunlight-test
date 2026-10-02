@@ -25,7 +25,7 @@ function interp<T>(keys: readonly (readonly [number, T])[], alt: number, mix: (a
 interface Sky { top: RGB; bottom: RGB }
 
 // 純黒・純白は避ける
-const SKY: readonly (readonly [number, Sky])[] = [
+const SKY_DEFAULT: readonly (readonly [number, Sky])[] = [
   [-8, { top: hex('#34386e'), bottom: hex('#5c4a7e') }],
   [0, { top: hex('#4f5896'), bottom: hex('#c98a78') }],
   [5, { top: hex('#7384bb'), bottom: hex('#e6ad80') }],
@@ -33,7 +33,47 @@ const SKY: readonly (readonly [number, Sky])[] = [
   [35, { top: hex('#93bbe0'), bottom: hex('#dfe6ea') }],
 ];
 
-const KELVIN: readonly (readonly [number, number])[] = [[-8, 2000], [0, 2500], [5, 3500], [20, 5000], [30, 5800]];
+const KELVIN_DEFAULT: readonly (readonly [number, number])[] = [[-8, 2000], [0, 2500], [5, 3500], [20, 5000], [30, 5800]];
+
+// 今使っている表（room モードのパネルで変えられる。setPalette）
+let SKY: readonly (readonly [number, Sky])[] = SKY_DEFAULT;
+let KELVIN: readonly (readonly [number, number])[] = KELVIN_DEFAULT;
+
+/** 表の形（太陽の高度は既定のまま、値だけを変える）。色は #rrggbb */
+export interface PaletteTable {
+  /** 太陽の高度（度）ごとの日差しの色温度（K）。高度は PALETTE_KELVIN_ALTS の順 */
+  kelvin: number[];
+  /** 太陽の高度（度）ごとの空の上の色・地平線の近くの色。高度は PALETTE_SKY_ALTS の順 */
+  sky: { top: string; bottom: string }[];
+}
+export const PALETTE_KELVIN_ALTS: readonly number[] = KELVIN_DEFAULT.map(([a]) => a);
+export const PALETTE_SKY_ALTS: readonly number[] = SKY_DEFAULT.map(([a]) => a);
+
+const toHex = (c: RGB): string => `#${c.map((v) => Math.round(Math.min(1, Math.max(0, v)) * 255).toString(16).padStart(2, '0')).join('')}`;
+const isHex = (h: string): boolean => /^#[0-9a-f]{6}$/i.test(h);
+
+/** 既定の表（コードに書いた目安の値） */
+export function defaultPalette(): PaletteTable {
+  return {
+    kelvin: KELVIN_DEFAULT.map(([, k]) => k),
+    sky: SKY_DEFAULT.map(([, s]) => ({ top: toHex(s.top), bottom: toHex(s.bottom) })),
+  };
+}
+
+/** 表を差し替える（数が合わない・おかしい値は既定のまま） */
+export function setPalette(p: PaletteTable): void {
+  KELVIN = KELVIN_DEFAULT.map(([a, k], i) => {
+    const v = p.kelvin[i];
+    return [a, typeof v === 'number' && Number.isFinite(v) ? Math.min(40000, Math.max(1000, v)) : k] as const;
+  });
+  SKY = SKY_DEFAULT.map(([a, s], i) => {
+    const v = p.sky[i];
+    return [a, {
+      top: v && isHex(v.top) ? hex(v.top) : s.top,
+      bottom: v && isHex(v.bottom) ? hex(v.bottom) : s.bottom,
+    }] as const;
+  });
+}
 
 export function skyColors(alt: number): Sky {
   return interp(SKY, alt, (a, b, t) => ({ top: lerpRgb(a.top, b.top, t), bottom: lerpRgb(a.bottom, b.bottom, t) }));

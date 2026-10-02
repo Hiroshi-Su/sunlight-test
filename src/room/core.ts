@@ -115,6 +115,7 @@ export class RoomCore {
   private refKey = '';
   private refSpot = 0;
   private refMoon = 0;
+  private refColor: number[] = [];
   /** 月明かりの今の点き具合（0〜1。状態表示に使う） */
   moonOn = 0;
   /** スポットライトの今の点き具合（0〜1。状態表示に使う） */
@@ -296,6 +297,12 @@ export class RoomCore {
     if (sunDir.angleTo(this.refSun) > 1e-3) {
       this.samples = Math.min(this.samples, 16);
       this.refSun.copy(sunDir);
+    }
+    // 日差し・空の色が変わったとき（パネルの「日差しと空の色」、または時刻とともに）も、同じように追従させる
+    const colorKey = [...input.lightColor, ...input.sky.top, ...input.sky.bottom];
+    if (colorKey.some((v, i) => Math.abs(v - (this.refColor[i] ?? -1)) > 0.004)) {
+      this.samples = Math.min(this.samples, 16);
+      this.refColor = colorKey;
     }
     // 夕方にスポットライト・月明かりが少しずつ明るくなる間も、同じように追従させる
     if (Math.abs(spotW - this.refSpot) > 0.01 || Math.abs(moonW - this.refMoon) > 0.01) {

@@ -2,7 +2,7 @@
 import GUI from 'lil-gui';
 import type { Clock } from '../clock.ts';
 import { WINDOW_SIDES, WINDOW_SIDE_LABEL, type WindowSide } from '../config.ts';
-import { kelvinAt } from '../palette.ts';
+import { PALETTE_KELVIN_ALTS, PALETTE_SKY_ALTS, type PaletteTable, defaultPalette, kelvinAt, setPalette } from '../palette.ts';
 import { EXHIBIT_SIZE, type GuideOptions, MAX_SPOTS, type MoonSettings, SPOT_MODES, TRAIL_COLOR_MODES, type TrailSettings, type RoomGeometry, type RoomOutput, type RoomRenderSettings, type RoomResolution, type SpotLight, type SpotMode, type SpotSettings, type ViewCalibration, type WindowGeometry, defaultCalibration } from '../room/scene.ts';
 import { SCENES, findScene } from '../scenes/index.ts';
 import type { SceneDef } from '../scenes/types.ts';
@@ -28,7 +28,7 @@ export const ROOM_DEFAULTS = { pool: true, poolReflect: false, waveAmp: 0.3, ful
  */
 const SPOT_LIGHT_BASE: SpotLight = {
   strength: 1, beamDeg: 60, softness: 0.35, tiltDeg: 35, panDeg: 0,
-  fromFrontM: 0.6, belowCeilingM: 0.15, xM: 0, colorMode: 'kelvin', kelvin: 3000, color: '#ffd9a8',
+  fromFrontM: 0.6, belowCeilingM: 0.15, xM: 0, colorMode: 'kelvin', kelvin: 9000, color: '#ffd9a8',
 };
 const SPOT_LIGHT_PLACES: Partial<SpotLight>[] = [{}, { xM: -2.5 }, { xM: 2.5 }, { fromFrontM: 2.0, tiltDeg: 20 }];
 export const spotLightDefault = (i: number): SpotLight => ({ ...SPOT_LIGHT_BASE, ...SPOT_LIGHT_PLACES[i % SPOT_LIGHT_PLACES.length] });
@@ -375,6 +375,30 @@ export function mountRoomUi(
   const showLights = (): void => lightFolders.forEach((f, i) => f.show(i < spot.count));
   showLights();
 
+  // 日差しと空の色：太陽の高度ごとの日差しの色温度と、空の色の表（src/palette.ts の目安の値）を変える。
+  // 現地の光に合わせて追い込むため。間の高度は、前後の値をなめらかにつなぐ。room モードの表示と光の計算に効く
+  const pal: PaletteTable = { kelvin: [...base.palette.kelvin], sky: base.palette.sky.map((c) => ({ ...c })) };
+  setPalette(pal);
+  const palChanged = (): void => setPalette(pal);
+  const fpal = gui.addFolder('日差しと空の色（太陽の高度ごと）');
+  const altLabel = (alts: readonly number[], i: number): string =>
+    i === 0 ? `太陽 ${alts[i]}° 以下` : i === alts.length - 1 ? `太陽 ${alts[i]}° 以上` : `太陽 ${alts[i]}°`;
+  const fk = fpal.addFolder('日差しの色温度（K）');
+  PALETTE_KELVIN_ALTS.forEach((_, i) => fk.add(pal.kelvin as unknown as Record<string, number>, String(i), 1000, 12000, 50).name(altLabel(PALETTE_KELVIN_ALTS, i)).onChange(palChanged));
+  const fsk = fpal.addFolder('空の色（上・地平線の近く）');
+  PALETTE_SKY_ALTS.forEach((_, i) => {
+    fsk.addColor(pal.sky[i]!, 'top').name(`${altLabel(PALETTE_SKY_ALTS, i)}：上`).onChange(palChanged);
+    fsk.addColor(pal.sky[i]!, 'bottom').name(`${altLabel(PALETTE_SKY_ALTS, i)}：地平線の近く`).onChange(palChanged);
+  });
+  fpal.add({ run: () => {
+    const d = defaultPalette();
+    d.kelvin.forEach((k, i) => { pal.kelvin[i] = k; });
+    d.sky.forEach((c, i) => Object.assign(pal.sky[i]!, c));
+    [...fk.controllers, ...fsk.controllers].forEach((c) => c.updateDisplay());
+    palChanged();
+  } }, 'run').name('日差しと空の色を既定に戻す');
+  fpal.close();
+
   // 月明かり（夜）：太陽が沈むと、太陽の代わりに月が窓から光を差し込み、夜空も明るくなる
   const mn = settings.moon;
   const fm = gui.addFolder('月明かり（夜）');
@@ -396,7 +420,7 @@ export function mountRoomUi(
     return {
       version: 1, windowSide: state.side, room: { ...room }, window: { ...win }, render, screenScene: screen.id,
       spot: { ...spot, lights: spot.lights.map((l) => ({ ...l })) },
-      resolution: { ...resolution, upscale: look.upscale, fps: pace.fps }, calibration: { ...calib }, guides: { ...guides }, warp: { ...warpPct },
+      resolution: { ...resolution, upscale: look.upscale, fps: pace.fps }, palette: { kelvin: [...pal.kelvin], sky: pal.sky.map((c) => ({ ...c })) }, calibration: { ...calib }, guides: { ...guides }, warp: { ...warpPct },
     };
   };
 
@@ -520,6 +544,7 @@ function codeDefaults(room: RoomGeometry, configWindow: WindowGeometry) {
       moon: { ...MOON_DEFAULTS },
     },
     screenScene: 'light-clouds',
+    palette: defaultPalette() as PaletteTable,
     spot: { ...SPOT_DEFAULTS, lights: SPOT_DEFAULTS.lights.map((l) => ({ ...l })) } as SpotSettings,
     // 計算の解像度は 75%（展示 PC の Mac mini（M5 Pro）で 3840×1080・60fps に収まる見込みの倍率。docs/hardware.md 5.6 節）
     resolution: { scale: 0.75, output: 'view' as string, upscale: 'smooth' as string, fps: 0 },
