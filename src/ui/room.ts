@@ -492,7 +492,8 @@ function codeDefaults(room: RoomGeometry, configWindow: WindowGeometry) {
     },
     screenScene: 'light-clouds',
     spot: { ...SPOT_DEFAULTS, lights: SPOT_DEFAULTS.lights.map((l) => ({ ...l })) } as SpotSettings,
-    resolution: { scale: 1, output: 'view' as string, upscale: 'smooth' as string },
+    // 計算の解像度は 75%（展示 PC の Mac mini（M5 Pro）で 3840×1080・60fps に収まる見込みの倍率。docs/hardware.md 5.6 節）
+    resolution: { scale: 0.75, output: 'view' as string, upscale: 'smooth' as string },
     calibration: defaultCalibration(room) as ViewCalibration,
     guides: { show: false, gridM: 1 } as GuideOptions,
     warp: { tlx: 0, tly: 0, trx: 0, try: 0, brx: 0, bry: 0, blx: 0, bly: 0 },
