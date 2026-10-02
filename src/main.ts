@@ -190,6 +190,10 @@ function current(lit: number, lightColor: readonly [number, number, number]): { 
 const animTime = params.has('animTime') ? Number(params.get('animTime')) : null;
 
 // ---- 描画ループ ----
+// フレームの速さの上限。?fps=30 で 30fps に固定する（room モードはパネルの「フレームの速さ」でも切り替えられる）。
+// 0 なら画面の更新ごとに描く（多くは 60fps）。固定するときは、画面の更新のうち間に合わないものを飛ばす
+const urlFpsLimit = params.get('fps') === '30' ? 30 : 0;
+const fpsLimit = (): number => roomUi?.frameRate ?? urlFpsLimit;
 let last = performance.now();
 let uiAt = 0;
 let frames = 0;
@@ -203,6 +207,12 @@ const jsHeapMB = (): number | null => {
 };
 
 function frame(now: number): void {
+  const limit = fpsLimit();
+  // 上限があるときは、前に描いてから 1/上限 秒たつまで描かない（画面の更新の揺れぶん、少し早めに許す）
+  if (limit > 0 && now - last < 1000 / limit - 4) {
+    requestAnimationFrame(frame);
+    return;
+  }
   const dt = (now - last) / 1000;
   last = now;
   if (dt > 0) fps += (1 / dt - fps) * 0.05;
@@ -273,7 +283,7 @@ function frame(now: number): void {
     const perf = formatPerf(stage.gpu(), fps, stage.backend);
     verifyUi?.update(s, perf, verifyParams);
     visualsUi?.updateStatus(s, lit, perf);
-    if (room) roomUi?.updateStatus(s, lit, room.samples, room.backend, room.renderSize, room.spotOn, fps);
+    if (room) roomUi?.updateStatus(s, lit, room.samples, room.backend, room.renderSize, room.spotOn, fps, fpsLimit());
   }
   requestAnimationFrame(frame);
 }

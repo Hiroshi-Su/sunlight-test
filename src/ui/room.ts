@@ -210,6 +210,8 @@ export function mountRoomUi(
     output: oneOf(outParam ?? base.resolution.output, OUTPUT_KINDS, 'view'),
   };
   const look = { upscale: oneOf(q.get('upscale') ?? base.resolution.upscale, ['smooth', 'pixel'] as const, 'smooth') };
+  // フレームの速さ：0 = 画面の更新ごと（多くは 60fps）、30 = 30fps に固定。?fps=30 でも指定できる
+  const pace = { fps: (q.get('fps') ?? String(base.resolution.fps)) === '30' ? 30 : 0 };
   const fq = gui.addFolder('解像度');
   const actualBar = mountActualBar(
     (sc) => { resolution.scale = sc; changed(); },
@@ -238,6 +240,7 @@ export function mountRoomUi(
     fq.add({ [`p${sc}`]: () => { resolution.scale = sc; changed(); } }, `p${sc}`).name(`計算の解像度 ${Math.round(sc * 100)}%`);
   }
   fq.add(look, 'upscale', { 'なめらか（線形補間）': 'smooth', '画素のまま（ドット）': 'pixel' }).name('引き伸ばし方').onChange(changed);
+  fq.add(pace, 'fps', { '画面の更新ごと（多くは 60fps）': 0, '30fps に固定': 30 }).name('フレームの速さ');
   fq.add({ run: () => { void view.requestFullscreen?.(); } }, 'run').name('全画面で見る（Esc で戻る）');
   changed();
 
@@ -373,7 +376,7 @@ export function mountRoomUi(
     return {
       version: 1, windowSide: state.side, room: { ...room }, window: { ...win }, render, screenScene: screen.id,
       spot: { ...spot, lights: spot.lights.map((l) => ({ ...l })) },
-      resolution: { ...resolution, upscale: look.upscale }, calibration: { ...calib }, guides: { ...guides }, warp: { ...warpPct },
+      resolution: { ...resolution, upscale: look.upscale, fps: pace.fps }, calibration: { ...calib }, guides: { ...guides }, warp: { ...warpPct },
     };
   };
 
@@ -391,6 +394,8 @@ export function mountRoomUi(
     get side(): WindowSide { return state.side; },
     /** 計算の解像度・出す大きさ */
     get resolution(): RoomResolution { return { ...resolution }; },
+    /** フレームの速さの上限（0 = 画面の更新ごと、30 = 30fps に固定） */
+    get frameRate(): number { return pace.fps; },
     /** 部屋の寸法（パネルで変えたもの） */
     get room(): RoomGeometry { return { ...room }; },
     /** パース合わせの視点 */
@@ -400,11 +405,11 @@ export function mountRoomUi(
     /** 四隅の位置合わせ */
     get warp(): WarpCorners { return corners(); },
     /** @param fps 画面の更新の速さ（毎フレームの間隔をならしたもの。画面の上限、多くは 60 で頭打ちになる） */
-    updateStatus(s: SolarState, lit: number, samples: number, backend: Backend, size: { width: number; height: number }, spotOn: number, fps: number): void {
+    updateStatus(s: SolarState, lit: number, samples: number, backend: Backend, size: { width: number; height: number }, spotOn: number, fps: number, fpsLimit: number): void {
       const { sun, light } = s;
       const windowText = state.side === 'ceiling' ? '天井（天窓）' : WINDOW_SIDE_LABEL[state.side];
       statusEl.textContent = [
-        `FPS ${fps.toFixed(1)}（1 フレーム ${(1000 / Math.max(1, fps)).toFixed(1)} ms）${fps < 55 ? '  ※ 60fps に届いていない' : ''}`,
+        `FPS ${fps.toFixed(1)}（1 フレーム ${(1000 / Math.max(1, fps)).toFixed(1)} ms）${fpsLimit > 0 ? `  上限 ${fpsLimit}fps${fps < fpsLimit - 3 ? '  ※ 上限に届いていない' : ''}` : fps < 55 ? '  ※ 60fps に届いていない' : ''}`,
         clock.format(),
         `太陽  方位 ${sun.azimuth.toFixed(1)}°  高度 ${sun.altitude.toFixed(1)}°`,
         `窓から ${light.entersWindow ? '入る' : '入らない'}  lit ${lit.toFixed(2)}  ${Math.round(kelvinAt(sun.altitude))}K`,
@@ -495,7 +500,7 @@ function codeDefaults(room: RoomGeometry, configWindow: WindowGeometry) {
     screenScene: 'light-clouds',
     spot: { ...SPOT_DEFAULTS, lights: SPOT_DEFAULTS.lights.map((l) => ({ ...l })) } as SpotSettings,
     // 計算の解像度は 75%（展示 PC の Mac mini（M5 Pro）で 3840×1080・60fps に収まる見込みの倍率。docs/hardware.md 5.6 節）
-    resolution: { scale: 0.75, output: 'view' as string, upscale: 'smooth' as string },
+    resolution: { scale: 0.75, output: 'view' as string, upscale: 'smooth' as string, fps: 0 },
     calibration: defaultCalibration(room) as ViewCalibration,
     guides: { show: false, gridM: 1 } as GuideOptions,
     warp: { tlx: 0, tly: 0, trx: 0, try: 0, brx: 0, bry: 0, blx: 0, bly: 0 },
