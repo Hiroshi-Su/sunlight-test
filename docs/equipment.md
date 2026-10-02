@@ -1,6 +1,6 @@
 # 機材構成
 
-展示に使う機材（PC・保守用の画面と入力機器・キャビネット・周辺機器）の選定。PC は第一希望の Mac mini（M5 Pro）と、それが難しい場合の Windows のゲーミング PC の 2 通りで、それぞれに合う組み合わせをまとめた（Mac Studio は候補から外した。hardware.md 5.5 節）。PC そのものの比較は [hardware.md](hardware.md)、PC の中の設定と動かし方（システム構成）は [system.md](system.md)。
+展示に使う機材（PC・保守用の画面と入力機器・キャビネット・周辺機器）の選定。PC は第一希望の Mac mini（M5 Pro）と、それが難しい場合の Windows のゲーミング PC の 2 通りで、それぞれに合う組み合わせをまとめた（Mac Studio は候補から外した。hardware.md 5.5 節）。ラックに共栄商事（オーロラ）の EIA-K12B を使う場合の組み合わせは 4 章（2026-10-02 に追加。2・3 章のサンワサプライのキャビネットの案も、比べるために残している）。PC そのものの比較は [hardware.md](hardware.md)、PC の中の設定と動かし方（システム構成）は [system.md](system.md)。
 
 - 調べた日：2026-09-30。価格は税込（税別の場合は明記）。販売店によって大きく違うので、購入の直前に確認すること
 - プロジェクター本体と取り付け金具は、この資料に含めていない
@@ -140,39 +140,119 @@ HDMI ケーブル（プロジェクターまで）、電源タップ、ネット
 
 ---
 
-## 4. 2 つの組み合わせの比較
+## 4. ラックに EIA-K12B を使う場合（Mac mini）
 
-| 観点 | Mac mini | Windows のゲーミング PC |
+ラックを共栄商事（オーロラ）の **木製 EIA ラック EIA-K12B**（12U、19 インチ）にし、保守用の画面を**天板の上にアームで付けて**、キーボードも天板の上で使う案（2026-10-02 に追加。調べた日：2026-10-02）。
+
+### 4.1 おすすめの組み合わせ
+
+| 機材 | 選定 | 価格の目安 | 理由 |
+|---|---|---|---|
+| ラック | **オーロラ EIA-K12B**（木製 EIA ラック 12U、メタリックダークグレー） | 約 76,000〜99,000 円（店による） | いただいた案。鍵付きの強化ガラス扉、キャスター付き |
+| Mac mini の置き方 | **ラック純正の追加棚 EIA-B** に載せて、面ファスナーや固定用の金具で留める | オープン価格 | ラックは 19 インチなので、10 インチ用の Mac mini のラックマウント（1.5U、樹脂製）は付けられない（4.3 節） |
+| 保守用の画面 | **ASUS VY249HGR**（23.8 型、1920×1080） | 約 11,000〜15,000 円 | VESA 100 でアームに付けられ、重さ（スタンドなし 2.9kg）がアームの範囲に収まる（4.4 節） |
+| 画面のつなぎ方 | Thunderbolt（USB-C）→ HDMI の変換 ＋ HDMI ケーブル | 数千円 | VY249HGR の入力は HDMI 1.4 と VGA だけ。Mac mini の HDMI はプロジェクター 1 に使う |
+| ディスプレイのアーム | **オーロラ MA-2★**（クランプアーム）。在庫がなければ **SAD-1** | オープン価格 | ラックのオプションとして載っている。天板（厚み 25mm）を挟んで留める |
+| 入力機器 | ロジクール MK250（2 章と同じ） | 3,850 円 | 天板の上で使い、使わないときはラックの中にしまう |
+| 熱の対策 | 据え付け前に温度を確かめ、必要なら排気のファンを足す | — | ラックにファンがなく、背面に 12U 用のファンユニット（EIA-F3）を付けられない（4.6 節） |
+
+### 4.2 EIA-K12B の寸法（図面より）
+
+| 項目 | 値 |
+|---|---|
+| 外形 | 幅 564 × 奥行き 546 × 高さ 672mm（キャスター込み） |
+| 機器の取り付け | 19 インチ（EIA 金具の穴の間隔 483mm、内寸 485mm）、12U（540mm） |
+| 奥行き | EIA 金具から背面まで 460mm、ガラス扉から背面まで 500mm |
+| 天板 | 厚み 25mm、床からの高さ 672mm |
+| 換気・配線の穴 | 背面に 2 つ（W180 × H90、上と下）、底板に 1 つ（150 × 60 の長穴） |
+| 扉 | 強化ガラス、鍵付き（鍵の位置は上・下を選べる）、270° 開く |
+| 積める重さ・本体の重さ | 60kg まで・21.0kg |
+| キャスター | φ60 ツイン × 4（ストッパー付き 2）。床に固定する金具 AK-7（別売） |
+
+### 4.3 Mac mini の置き方
+
+- Mac mini（M5 Pro）の大きさは、M4（2024）と同じ 12.7 × 12.7 × 5.0cm。ただし**いただいた Mac mini のラックマウント（10 インチ、1.5U、PETG 樹脂）は 10 インチのネットワークラック用**で、19 インチの EIA-K12B には付けられない
+- **ラック純正の追加棚 EIA-B**（有効サイズ W482 × D400mm、25kg まで、高さは 44.45mm ごとに 6 段階）に載せる。Mac mini・電源タップ・UPS を一緒に置ける。Mac mini は面ファスナーや固定用の金具で留めて、ずれないようにする
+- 10 インチを 19 インチにする変換金具を使う方法もあるが、部品が増え、樹脂の金具を 24 時間の稼働で使うことになるので勧めない
+- 電源ボタン・端子は、ガラス扉を開けて触る。キーボード（MK250）は Bluetooth なので、扉を閉めたままでも使える
+
+### 4.4 保守用の画面：EVC-1506 と VY249HGR の比較
+
+| | EVICIV EVC-1506（15.6 型） | **ASUS VY249HGR（23.8 型）** |
 |---|---|---|
-| PC | 443,800 円 | 約 40〜47 万円 |
-| キャビネット | CP-SBOX4510（W450・33kg） | CP-SVNAMULT7BK（W700・54kg） |
-| キャビネットの価格（標準価格） | 184,800 円 | 261,800 円 |
-| 保守用の画面 | EVC-1506 を USB-C 1 本で | EVC-1506 を HDMI ＋ 電源で |
-| 入力機器 | MK250（Bluetooth） | MK250（PC に Bluetooth が要る） |
-| UPS | 500VA 以上・正弦波 | 750〜1000VA・正弦波 |
-| 置き場所の広さ | 幅 45cm | 幅 70cm |
+| アームへの取り付け | VESA 75（M4 ネジ）で付けられる | VESA 100 で付けられる |
+| 重さ | 約 0.9kg。**ガススプリングのアームには軽すぎて、いちばん弱くしても跳ね上がるおそれがある** | 2.9kg（スタンドなし）。アームの範囲（〜8〜10kg）に収まる |
+| つなぎ方 | USB-C 1 本（電源もそこから） | HDMI。Mac mini からは Thunderbolt → HDMI の変換。電源のコンセントが要る（20W 未満） |
+| 見やすさ | 小さい（解像度は同じ 1920×1080） | 大きく見やすい |
+| 価格の目安 | 約 8,000〜12,000 円 | 約 11,000〜15,000 円 |
+
+- **VY249HGR を選ぶ**。EVC-1506 は、アームではなく、ばねのない固定の VESA 金具なら使える
+- Mac mini の外部の画面は、プロジェクター 2 台（HDMI ＋ Thunderbolt → HDMI）と保守用の画面（Thunderbolt → HDMI）で 3 台になり、M5 Pro の上限ちょうど
+
+### 4.5 ディスプレイのアームと、天板の上での操作
+
+| 項目 | MA-2★ | SAD-1 |
+|---|---|---|
+| 状態 | 在庫限り | 販売中 |
+| 対応 | 〜32 型、VESA 75 / 100、8〜10kg まで（説明書 8kg、Web 10kg） | 〜32 型、VESA 75 / 100、〜10kg |
+| 動き | 2 関節（前後・高さ・傾き −20°〜90°・首振り・回転） | 1 関節（高さ・傾き 0°〜±20°・首振り・回転） |
+| 挟める天板の厚み | 20〜45mm | 20〜65mm |
+| 本体の重さ | 3.2kg | 2.9kg |
+
+- どちらもガススプリング式で、跳ね上がる・下がるときは保持力を調整する
+- 説明書では、天板の奥に板がある机の場合、天板をいったん外して金具を差し込む手順になっている。EIA-K12B での付け方は共栄商事に確かめる
+- **天板の高さは床から 672mm**。ふつうの机（約 700mm）とほぼ同じなので、椅子に座って使うとちょうどよい。立ったままだと、かなりかがむ。保守のときは低めの椅子かスツールを用意する
+- 天板の上は鍵の外。キーボードは使わないときラックの中の棚にしまう。画面は、展示中は消しておくか、アームでたたんでおく
+- 画面のケーブル（HDMI と電源）は、背面の上の穴から外へ出し、アームのケーブル受けに沿わせて天板の上まで上げる
+
+### 4.6 気をつけること：ラックの中の熱
+
+- ガラスの扉と木の本体で閉じたラックで、換気は背面の穴 2 つだけ、ファンはない。ラックのページには「12U の背面には EIA-F3（ファン）を付けられない」とある
+- Mac mini（M5 Pro）は最大で約 145W 使う。room モードのように GPU を休みなく使い続けると、熱がこもるおそれがある
+- **据え付け前に、ラックに入れて扉を閉めた状態で本番の映像を数時間動かし、温度とファンの音を確かめる**。熱いようなら、背面の上の穴から外へ出す静かなファン（USB のファンや、19 インチ 1U のファンユニット）を足す
+- Windows のゲーミング PC の場合は、このラックは小さすぎ、熱も大きすぎる。その場合は大きいラック（同じシリーズの 20U、EIA-K20B など）とファンが要る
+
+---
+
+## 5. 組み合わせの比較
+
+| 観点 | Mac mini（2 章） | Mac mini（EIA-K12B、4 章） | Windows のゲーミング PC（3 章） |
+|---|---|---|---|
+| PC | 443,800 円 | 443,800 円 | 約 40〜47 万円 |
+| キャビネット・ラック | CP-SBOX4510（W450・33kg） | EIA-K12B（W564・21kg、キャスター付き） | CP-SVNAMULT7BK（W700・54kg） |
+| キャビネット・ラックの価格 | 184,800 円（標準価格） | 約 76,000〜99,000 円 | 261,800 円（標準価格） |
+| Mac mini・PC の置き方 | キャビネットの棚 | 追加棚 EIA-B | キャビネットの棚 |
+| 保守用の画面 | EVC-1506 を USB-C 1 本で（棚の上） | VY249HGR を天板の上のアーム（MA-2★ / SAD-1）で、Thunderbolt → HDMI | EVC-1506 を HDMI ＋ 電源で |
+| 入力機器 | MK250（Bluetooth） | MK250（天板の上で使う） | MK250（PC に Bluetooth が要る） |
+| UPS | 500VA 以上・正弦波 | 500VA 以上・正弦波（追加棚に置く） | 750〜1000VA・正弦波 |
+| 熱 | キャビネットの通風による | ファンがないので、据え付け前に温度を確かめる | メッシュの扉・ファン 3 台まで |
+| 置き場所の広さ | 幅 45cm | 幅 56cm | 幅 70cm |
 
 機材の合計でも、Mac mini の方がキャビネットが小さく安いぶん、全体では安く・小さくまとまる。
 
 ---
 
-## 5. 決まっていないこと（システム構成の前に確かめる）
+## 6. 決まっていないこと（システム構成の前に確かめる）
 
 1. キャビネットからプロジェクターまでの距離（HDMI ケーブルの長さと種類）
 2. プロジェクターの機種（入力端子、HDBaseT に対応しているか）
 3. 会場でネットワークを使えるか（有線 LAN・Wi-Fi・なし）
 4. キャビネットを置く場所（人が触れる所か、バックヤードか）
 5. 保守の担当と頻度
+6. EIA-K12B の場合：アーム（MA-2★ / SAD-1）の天板への付け方（共栄商事に確認）、ラックに入れたときの温度（据え付け前に確かめる）
 
 ---
 
-## 6. 出典
+## 7. 出典
 
 - [Apple：Mac mini の技術仕様](https://www.apple.com/jp/mac-mini/specs/)（外部の画面は 3 台まで、HDMI 1・Thunderbolt 5 × 3、最大 155W）
 - [ロジクール発表資料：K250・MK250](https://press.logicool.co.jp/ja-jp/k250-mk250/)（寸法・電池・価格）、[Mac Fan Portal：MK250 レビュー](https://macfan.book.mynavi.jp/article/61679/)（Mac での使い心地）
 - [エレコム：TK-QT11 シリーズ](https://www.elecom.co.jp/products/TK-QT11FMMBK.html)・[モノえらび：TK-QT11MMMABK](https://monoerabi.jp/items/elecom-tk-qt11mmmabk-quiet-mini-keyboard/)（幅約 296mm）、[ロジクール Pebble Keys 2 K380s](https://www.logicool.co.jp/en-us/shop/p/pebble-keys-2)・[発表資料](https://press.logicool.co.jp/ja-jp/m350s-k380s/)、[価格.com：エレコム TK-FDM110MBK](https://kakaku.com/item/K0001135839/spec/)
 - [価格.com：ロジクール K400 Plus](https://kakaku.com/item/K0000787160/)（最安 5,100 円、対応 OS は Windows・Android・Chrome OS）、[価格.com クチコミ「Mac 用に購入して後悔」](https://bbs.kakaku.com/bbs/K0000787160/SortID=21255049/)（Mac での F キー・記号の配置）
-- [ASUS VY249HGR の仕様](https://www.asus.com/us/displays-desktops/monitors/eye-care/vy249hgr/techspec/)（23.8 型、HDMI 1.4・VGA、20W 未満）
+- [ASUS VY249HGR の仕様](https://www.asus.com/us/displays-desktops/monitors/eye-care/vy249hgr/techspec/)（23.8 型、HDMI 1.4・VGA、VESA 100、スタンドなし 2.9kg、20W 未満）、[価格（Yahoo!ショッピング）](https://store.shopping.yahoo.co.jp/bakuyasuearth/4711387723470.html)
+- 共栄商事（オーロラ）：[EIA-K12B](https://www.kyoei-shoji.co.jp/category_eia_05a/1_index_detail.php)（図面・組立説明書）、[MA-2★](https://www.kyoei-shoji.co.jp/category_newwork_06a/1_index_detail.php)（組立説明書：ガススプリング、積載 8kg）、[SAD-1](https://www.kyoei-shoji.co.jp/category_newwork_06a/2_index_detail.php)、[追加棚 EIA-B](https://www.kyoei-shoji.co.jp/category_eiaoption_05f/1_index_detail.php)。価格：[モノタロウ](https://www.monotaro.com/p/0990/4259/)・[アスクル](https://www.askul.co.jp/p/AR39622/)
+- [10 インチ 1.5U Mac mini ラックマウント（Amazon.com）](https://www.amazon.com/10-inch-Network-Compatible-Keystone-Included/dp/B0FH42SBX1)（10 インチのネットワークラック用、PETG）
+- [ガルマックス：Mac mini（M6/M5 Pro）](https://garumax.com/mac-mini-m5-pro-mac-mini-m6-spec)（大きさは M4 と同じ）、[Appleちゃんねる：Mac mini（2026）の消費電力](https://applech2.com/archives/20260922-apple-m6-and-m5pro-mac-mini-2026-power-consumption.html)（M5 Pro は最大 145W）
 - EVICIV EVC-1506：[モニ研のレビュー](https://my-favorite.me/eviciv-evc1506/)（厚さ 11mm、USB-C 1 本で映る、HDMI のときは別給電）、[モバイルモニターガイドのレビュー](https://www.mobilemonitor.jp/review-eviciv-evc1506/)（VESA 75mm、付属の電源）、[コビガジェライフのレビュー](https://www.kobi-gadgetlife.jp/evic-%E2%85%B3-mobilemonitor-15-review/)
 - サンワサプライ：[CP-SBOX4510](https://www.sanwa.co.jp/product/syohin?code=CP-SBOX4510)（内寸・標準価格）、[扉付き機器収納ボックスの一覧](https://www.sanwa.co.jp/group_search/group_list?code=CP-SBOX6010)（W400〜W600 の内寸）、[CP-SVNAMULT7BK](https://www.sanwa.co.jp/product/syohin?code=CP-SVNAMULT7BK)（内寸・メッシュ扉・ファン・標準価格）、[サンワダイレクト CP-SBOX4510](https://direct.sanwa.co.jp/ItemPage/CP-SBOX4510)・[CP-SVNAMULT7BK](https://direct.sanwa.co.jp/ItemPage/CP-SVNAMULT7BK)
 - [サーバーラックストア：CP-SBOX4510](https://svrack.com/products/detail.php?product_id=2551)（165,200 円）
