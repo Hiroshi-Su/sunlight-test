@@ -177,6 +177,7 @@ export class RoomCore {
       uSpotI: { value: Array.from({ length: MAX_SPOTS }, () => new THREE.Vector3()) },
       uSpotCos: { value: Array.from({ length: MAX_SPOTS }, () => new THREE.Vector2(0.8, 0.9)) },
       uSpotR: { value: SPOT_RADIUS },
+      uSpotLampOn: { value: 0 },
     };
   }
 
@@ -254,6 +255,7 @@ export class RoomCore {
       }
     }
     s.uSpotCount.value = n;
+    s.uSpotLampOn.value = sp.showLamp ? 1 : 0;
     this.spotOn = n > 0 ? spotW : 0;
 
     // 重ね合わせのやり直し：視点や設定（窓の大きさを含む）が変わったら最初から

@@ -129,6 +129,8 @@ export interface SpotSettings {
   /** 自動のとき：点き始める太陽の高度（度）と、最大の明るさになる太陽の高度（度） */
   onAltDeg: number;
   fullAltDeg: number;
+  /** ライトの器具（小さな球）と、水面に映るそのきらめきを描くか。オフでも、照らす光は変わらない */
+  showLamp: boolean;
   lights: SpotLight[];
 }
 

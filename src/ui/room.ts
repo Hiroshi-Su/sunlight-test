@@ -33,7 +33,7 @@ const SPOT_LIGHT_BASE: SpotLight = {
 const SPOT_LIGHT_PLACES: Partial<SpotLight>[] = [{}, { xM: -2.5 }, { xM: 2.5 }, { fromFrontM: 2.0, tiltDeg: 20 }];
 export const spotLightDefault = (i: number): SpotLight => ({ ...SPOT_LIGHT_BASE, ...SPOT_LIGHT_PLACES[i % SPOT_LIGHT_PLACES.length] });
 export const SPOT_DEFAULTS: SpotSettings = {
-  mode: 'auto', count: 1, onAltDeg: 5, fullAltDeg: -4,
+  mode: 'auto', count: 1, onAltDeg: 5, fullAltDeg: -4, showLamp: false,
   lights: Array.from({ length: MAX_SPOTS }, (_, i) => spotLightDefault(i)),
 };
 /** 光の軌跡の既定（部屋の中央・目の高さのあたりに、半径 1.2m で 1,024 本）。既定では出さない（?trails=1 か、パネルで出す） */
@@ -346,6 +346,7 @@ export function mountRoomUi(
   fl.add(spot, 'count', 1, MAX_SPOTS, 1).name('台数').onChange(() => showLights());
   fl.add(spot, 'onAltDeg', -18, 20, 0.5).name('自動：点き始める太陽の高度（度）');
   fl.add(spot, 'fullAltDeg', -18, 20, 0.5).name('自動：最大になる太陽の高度（度）');
+  fl.add(spot, 'showLamp').name('ライトの器具を描く（照らす光は変わらない）');
   const lightFolders = spot.lights.map((light, i) => {
     const f = fl.addFolder(`ライト ${i + 1}`);
     f.add(light, 'strength', 0, 5, 0.01).name('明るさ');

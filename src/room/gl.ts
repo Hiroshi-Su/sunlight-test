@@ -59,6 +59,7 @@ uniform vec3 uSpotDir[MAX_SPOTS];    // ライトの向き
 uniform vec3 uSpotI[MAX_SPOTS];      // 光度（色 × 強さ × 点き具合）
 uniform vec2 uSpotCos[MAX_SPOTS];    // 円すいの縁の cos（外側・内側）
 uniform float uSpotR;                // 器具の大きさ（球の半径）
+uniform float uSpotLampOn;           // 器具を描くか（0 = 描かない。照らす光は変わらない）
 
 const float PI = 3.14159265358979;
 const float EPS = 1e-4;
@@ -308,6 +309,7 @@ vec3 spotBottom(vec3 b) {
 // 光を出すのは、向いている側（器具の口）だけで、後ろ側は暗い灰色の器具
 vec3 spotLamp(vec3 o, vec3 d, float tMax) {
   vec3 col = vec3(0.0);
+  if (uSpotLampOn < 0.5) return col;
   float best = tMax;
   for (int i = 0; i < MAX_SPOTS; i++) {
     if (float(i) >= uSpotCount) break;

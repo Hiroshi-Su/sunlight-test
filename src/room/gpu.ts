@@ -257,6 +257,7 @@ fn spotBottom(b: vec3f) -> vec3f {
 }
 fn spotLamp(o: vec3f, d: vec3f, tMax: f32) -> vec3f {
   var col = vec3f(0.0);
+  if (u.uSpotLampOn < 0.5) { return col; }
   var best = tMax;
   for (var i = 0; i < MAX_SPOTS; i++) {
     if (f32(i) >= u.uSpotCount) { break; }
