@@ -273,7 +273,7 @@ function frame(now: number): void {
     const perf = formatPerf(stage.gpu(), fps, stage.backend);
     verifyUi?.update(s, perf, verifyParams);
     visualsUi?.updateStatus(s, lit, perf);
-    if (room) roomUi?.updateStatus(s, lit, room.samples, room.backend, room.renderSize, room.spotOn);
+    if (room) roomUi?.updateStatus(s, lit, room.samples, room.backend, room.renderSize, room.spotOn, fps);
   }
   requestAnimationFrame(frame);
 }

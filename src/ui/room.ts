@@ -36,9 +36,9 @@ export const SPOT_DEFAULTS: SpotSettings = {
   mode: 'auto', count: 1, onAltDeg: 5, fullAltDeg: -4,
   lights: Array.from({ length: MAX_SPOTS }, (_, i) => spotLightDefault(i)),
 };
-/** 光の軌跡の既定（部屋の中央・目の高さのあたりに、半径 1.2m で 1,024 本） */
+/** 光の軌跡の既定（部屋の中央・目の高さのあたりに、半径 1.2m で 1,024 本）。既定では出さない（?trails=1 か、パネルで出す） */
 export const TRAIL_DEFAULTS: TrailSettings = {
-  on: true, count: 1024, points: 48, widthPx: 3, speed: 1.2, turbulence: 0.6, spread: 1.5,
+  on: false, count: 1024, points: 48, widthPx: 3, speed: 1.2, turbulence: 0.6, spread: 1.5,
   radiusM: 1.2, centerHeightM: 1.6, centerFromFrontM: 0, brightness: 1,
   colorMode: 'scene', color: '#66ccff', hueSpread: 1,
 };
@@ -129,7 +129,7 @@ export function mountRoomUi(
     window: { widthM: num('winW', winBase.widthM), heightM: num('winH', winBase.heightM), sillHeightM: num('sill', winBase.sillHeightM) },
     clouds: on('clouds', r0.clouds), cloudShadow: on('cloudShadow', r0.cloudShadow),
     screen: q.has('screen') ? q.get('screen') !== '0' : r0.screen,
-    // ?trails=0 で光の軌跡を消して開く
+    // ?trails=1 で光の軌跡を出して開く（既定は出さない）
     trails: { ...r0.trails, on: on('trails', r0.trails.on), colorMode: oneOf(r0.trails.colorMode, TRAIL_COLOR_MODES, 'scene') },
     // ?spot=on / off / auto でスポットライトの点け方、?spotCount=2 で台数を指定できる
     spot: {
@@ -399,10 +399,12 @@ export function mountRoomUi(
     get guides(): GuideOptions { return { ...guides }; },
     /** 四隅の位置合わせ */
     get warp(): WarpCorners { return corners(); },
-    updateStatus(s: SolarState, lit: number, samples: number, backend: Backend, size: { width: number; height: number }, spotOn: number): void {
+    /** @param fps 画面の更新の速さ（毎フレームの間隔をならしたもの。画面の上限、多くは 60 で頭打ちになる） */
+    updateStatus(s: SolarState, lit: number, samples: number, backend: Backend, size: { width: number; height: number }, spotOn: number, fps: number): void {
       const { sun, light } = s;
       const windowText = state.side === 'ceiling' ? '天井（天窓）' : WINDOW_SIDE_LABEL[state.side];
       statusEl.textContent = [
+        `FPS ${fps.toFixed(1)}（1 フレーム ${(1000 / Math.max(1, fps)).toFixed(1)} ms）${fps < 55 ? '  ※ 60fps に届いていない' : ''}`,
         clock.format(),
         `太陽  方位 ${sun.azimuth.toFixed(1)}°  高度 ${sun.altitude.toFixed(1)}°`,
         `窓から ${light.entersWindow ? '入る' : '入らない'}  lit ${lit.toFixed(2)}  ${Math.round(kelvinAt(sun.altitude))}K`,
