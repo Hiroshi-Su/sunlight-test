@@ -33,7 +33,7 @@ const SPOT_LIGHT_BASE: SpotLight = {
 const SPOT_LIGHT_PLACES: Partial<SpotLight>[] = [{}, { xM: -2.5 }, { xM: 2.5 }, { fromFrontM: 2.0, tiltDeg: 20 }];
 export const spotLightDefault = (i: number): SpotLight => ({ ...SPOT_LIGHT_BASE, ...SPOT_LIGHT_PLACES[i % SPOT_LIGHT_PLACES.length] });
 export const SPOT_DEFAULTS: SpotSettings = {
-  mode: 'auto', count: 1, onAltDeg: 5, fullAltDeg: -4, showLamp: false,
+  mode: 'auto', count: 3, onAltDeg: 5, fullAltDeg: -4, showLamp: false,
   lights: Array.from({ length: MAX_SPOTS }, (_, i) => spotLightDefault(i)),
 };
 /** 光の軌跡の既定（部屋の中央・目の高さのあたりに、半径 1.2m で 1,024 本）。既定では出さない（?trails=1 か、パネルで出す） */
