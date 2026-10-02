@@ -80,6 +80,48 @@ export interface RoomRenderSettings {
   spot: SpotSettings;
   /** 部屋の中央の光の軌跡（src/room/trails.ts） */
   trails: TrailSettings;
+  /** 月明かり（夜に、太陽の代わりに窓から差し込む月の光と、夜空の明るさ） */
+  moon: MoonSettings;
+}
+
+/**
+ * 月明かり。太陽が沈むと、太陽の代わりに「月」が窓から光を差し込み（影の縁・照り返し・水盤の揺らぎ・雲の影は太陽と同じ計算）、
+ * 夜空も明るくなる。月の位置は実際の月ではなく、ここで決める（実際の月は出ていない夜や細い夜があり、いつも月夜にはならないため）
+ */
+export interface MoonSettings {
+  on: boolean;
+  /** 月の光の明るさの倍率（1 で、照らされた床がほどよく見える程度） */
+  strength: number;
+  /** 夜空の明るさの倍率（窓から見える夜空と、そこから入る空の光） */
+  skyStrength: number;
+  /** 月の光と夜空の色（#rrggbb、sRGB）。明るさは別に決めるので、色だけが効く */
+  color: string;
+  /** 月の方位（度、真北 0・東 90）と高度（度） */
+  azimuthDeg: number;
+  altitudeDeg: number;
+  /** 点き始める太陽の高度（度）と、最大になる太陽の高度（度） */
+  onAltDeg: number;
+  fullAltDeg: number;
+}
+
+/** 月明かりの点き具合（0〜1）。太陽の高度が onAltDeg から fullAltDeg へ下がる間に、なめらかに明るくなる */
+export function moonWeight(moon: MoonSettings, sunAltDeg: number): number {
+  if (!moon.on) return 0;
+  const span = moon.onAltDeg - moon.fullAltDeg;
+  if (span <= 0) return sunAltDeg <= moon.fullAltDeg ? 1 : 0;
+  const t = Math.min(1, Math.max(0, (moon.onAltDeg - sunAltDeg) / span));
+  return t * t * (3 - 2 * t);
+}
+
+/**
+ * 月のある方向（three.js の座標：右 = +x、上 = +y、スクリーン = -z）。
+ * @param facingAzimuth 鑑賞者がスクリーンを見る向き（真北基準）
+ */
+export function moonDirection(moon: MoonSettings, facingAzimuth: number): THREE.Vector3 {
+  const r = Math.PI / 180;
+  const alt = Math.min(89.9, Math.max(-89.9, moon.altitudeDeg)) * r;
+  const d = (moon.azimuthDeg - facingAzimuth) * r; // スクリーンの向きから測った方位
+  return new THREE.Vector3(Math.cos(alt) * Math.sin(d), Math.sin(alt), -Math.cos(alt) * Math.cos(d)).normalize();
 }
 
 /** 光の軌跡の色の決め方：scene = 日差し・ライトの色に合わせる、hue = 線ごとに色相をずらす（元の演出に近い）、color = 色を選ぶ */

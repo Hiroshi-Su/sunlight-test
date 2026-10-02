@@ -302,5 +302,7 @@ export function createRoomScene(
     get samples(): number { return core.raysPerPixel; },
     /** スポットライトの今の点き具合（0〜1） */
     get spotOn(): number { return core.spotOn; },
+    /** 月明かりの今の点き具合（0〜1） */
+    get moonOn(): number { return core.moonOn; },
   };
 }

@@ -6,7 +6,7 @@ import type { WindowSide } from '../config.ts';
 import { type RGB, kelvinToRgb } from '../palette.ts';
 import { DriftBlend } from '../scenes/shader.ts';
 import { SUN_ANGULAR_RADIUS_DEG, directSunFactor, skyBrightness } from './daylight.ts';
-import { MAX_SPOTS, type RoomGeometry, type RoomInput, type RoomRenderSettings, type RoomScreenImage, type SpotLight, cloudFlowDir, spotPose, spotWeight, toThree, windowRect } from './model.ts';
+import { MAX_SPOTS, type RoomGeometry, type RoomInput, type RoomRenderSettings, type RoomScreenImage, type SpotLight, cloudFlowDir, moonDirection, moonWeight, spotPose, spotWeight, toThree, windowRect } from './model.ts';
 import { wavePhases } from './water.ts';
 
 // palette.ts の色は sRGB 表記の 0〜1。光の計算は線形の値で行う
@@ -27,6 +27,10 @@ export const POOL_ALBEDO = 0.62; // 水盤の底（明るい石）
 // スポットライトの明るさの目盛り（光度、演出上の値）。明るさの倍率 1 で、真下 3m の床の放射照度が
 // 晴れた日の直射日光の約 1/3（夜に露出 2.5 のとき、照らされた床がほどよく見える程度）
 const SPOT_SCALE = 7.0;
+// 月明かりの明るさの目盛り（演出上の値。実際の月の光は日差しの約 40 万分の 1 で、そのままでは見えない）。
+// 倍率 1 で、月の光（光に垂直な面での放射照度）は晴れた日の直射日光の約 1/10、夜空の明るさは昼の空の約 1/8
+const MOON_SCALE = 0.25;
+const MOON_SKY_SCALE = SKY_SCALE * 0.12;
 /** スポットライトの器具の大きさ（球の半径、m）。水面に映るライトのきらめきと、器具そのものの見え方に使う */
 export const SPOT_RADIUS = 0.06;
 export const CAUSTIC_SIZE = 512; // 光の揺らぎを記録する面ごとの画像の大きさ（画素）
@@ -110,6 +114,9 @@ export class RoomCore {
   private readonly refSun = new THREE.Vector3(0, -1, 0);
   private refKey = '';
   private refSpot = 0;
+  private refMoon = 0;
+  /** 月明かりの今の点き具合（0〜1。状態表示に使う） */
+  moonOn = 0;
   /** スポットライトの今の点き具合（0〜1。状態表示に使う） */
   spotOn = 0;
   private readonly t0 = performance.now();
@@ -198,13 +205,26 @@ export class RoomCore {
     const { light, sun } = input.solar;
     const windowSide = this.windowSide;
 
-    // 太陽のある方向（光が進む向きの逆）と、大気を通った直射日光の強さ
-    const sunDir = toThree(light).negate().normalize();
-    const sunOn = sun.altitude > 0;
-    const sunE = linear(input.lightColor).multiplyScalar(sunOn ? SUN_SCALE * directSunFactor(sun.altitude) : 0);
+    // 太陽のある方向（光が進む向きの逆）と、大気を通った直射日光の強さ。
+    // 太陽が沈んだあと月明かりがオンなら、太陽の代わりに月の向きと強さを入れる（あとの計算は太陽と同じ）
+    const moon = settings.moon;
+    const moonW = moonWeight(moon, sun.altitude);
+    const sunUp = sun.altitude > 0;
+    const useMoon = !sunUp && moonW > 0 && moon.altitudeDeg > 0;
+    const moonCol = linear(hexToRgb(moon.color));
+    const moonLum = 0.2126 * moonCol.x + 0.7152 * moonCol.y + 0.0722 * moonCol.z;
+    if (moonLum > 1e-4) moonCol.multiplyScalar(1 / moonLum);
+    const sunDir = useMoon ? moonDirection(moon, this.facingAzimuth) : toThree(light).negate().normalize();
+    const sunOn = sunUp || useMoon;
+    const sunE = sunUp
+      ? linear(input.lightColor).multiplyScalar(SUN_SCALE * directSunFactor(sun.altitude))
+      : moonCol.clone().multiplyScalar(useMoon ? MOON_SCALE * moon.strength * moonW : 0);
     const skyL = SKY_SCALE * skyBrightness(sun.altitude);
-    const top = linear(input.sky.top).multiplyScalar(skyL);
-    const bottom = linear(input.sky.bottom).multiplyScalar(skyL);
+    // 夜空：月明かりの点き具合に応じて、月の色の空の光を足す（上ほど明るく、地平線の近くは少し暗い）
+    const nightSky = moonCol.clone().multiplyScalar(MOON_SKY_SCALE * moon.skyStrength * moonW);
+    const top = linear(input.sky.top).multiplyScalar(skyL).add(nightSky);
+    const bottom = linear(input.sky.bottom).multiplyScalar(skyL).addScaledVector(nightSky, 0.7);
+    this.moonOn = useMoon ? moonW : 0;
     // 窓の外の地面：日差しと空の光を受けて、反射率ぶんだけ明るい
     const horizSun = sunE.clone().multiplyScalar(Math.max(0, Math.sin((sun.altitude * Math.PI) / 180)));
     const ground = horizSun.add(top.clone().add(bottom).multiplyScalar(0.5 * Math.PI)).multiplyScalar(GROUND_ALBEDO / Math.PI);
@@ -261,6 +281,7 @@ export class RoomCore {
     // 重ね合わせのやり直し：視点や設定（窓の大きさを含む）が変わったら最初から
     const key = [
       sp.mode, sp.count, JSON.stringify(sp.lights.slice(0, sp.count)),
+      moon.on, moon.strength, moon.skyStrength, moon.color, moon.azimuthDeg, moon.altitudeDeg,
       settings.bounces, settings.seaView, settings.seaRipples, settings.pool, settings.poolReflect, settings.waveAmp, settings.poolDepthM, settings.seaLevelM, this.winRect.toArray(),
       cloudsOn, settings.cloudShadow, settings.cloudAmount, settings.cloudOpacity, settings.cloudSizeM, settings.cloudHeightM,
       !!screen, screen?.def.id, settings.screenGain,
@@ -276,10 +297,11 @@ export class RoomCore {
       this.samples = Math.min(this.samples, 16);
       this.refSun.copy(sunDir);
     }
-    // 夕方にスポットライトが少しずつ明るくなる間も、同じように追従させる
-    if (Math.abs(spotW - this.refSpot) > 0.01) {
+    // 夕方にスポットライト・月明かりが少しずつ明るくなる間も、同じように追従させる
+    if (Math.abs(spotW - this.refSpot) > 0.01 || Math.abs(moonW - this.refMoon) > 0.01) {
       this.samples = Math.min(this.samples, 16);
       this.refSpot = spotW;
+      this.refMoon = moonW;
     }
     // 雲の影・スクリーンの映像は絶えず動くので、照り返しが遅れすぎないよう、直近 32 枚ぶんまでの平均にとどめる
     // （直射日光と映像そのものは毎フレーム計算し直すので遅れない。遅れるのは、それが周りを照らす照り返しの部分だけ）

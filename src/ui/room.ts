@@ -3,7 +3,7 @@ import GUI from 'lil-gui';
 import type { Clock } from '../clock.ts';
 import { WINDOW_SIDES, WINDOW_SIDE_LABEL, type WindowSide } from '../config.ts';
 import { kelvinAt } from '../palette.ts';
-import { EXHIBIT_SIZE, type GuideOptions, MAX_SPOTS, SPOT_MODES, TRAIL_COLOR_MODES, type TrailSettings, type RoomGeometry, type RoomOutput, type RoomRenderSettings, type RoomResolution, type SpotLight, type SpotMode, type SpotSettings, type ViewCalibration, type WindowGeometry, defaultCalibration } from '../room/scene.ts';
+import { EXHIBIT_SIZE, type GuideOptions, MAX_SPOTS, type MoonSettings, SPOT_MODES, TRAIL_COLOR_MODES, type TrailSettings, type RoomGeometry, type RoomOutput, type RoomRenderSettings, type RoomResolution, type SpotLight, type SpotMode, type SpotSettings, type ViewCalibration, type WindowGeometry, defaultCalibration } from '../room/scene.ts';
 import { SCENES, findScene } from '../scenes/index.ts';
 import type { SceneDef } from '../scenes/types.ts';
 import type { SolarState } from '../solar.ts';
@@ -41,6 +41,10 @@ export const TRAIL_DEFAULTS: TrailSettings = {
   on: false, count: 1024, points: 48, widthPx: 3, speed: 1.2, turbulence: 0.6, spread: 1.5,
   radiusM: 1.2, centerHeightM: 1.6, centerFromFrontM: 0, brightness: 1,
   colorMode: 'scene', color: '#66ccff', hueSpread: 1,
+};
+/** 月明かりの既定（南の空、高度 50° の月。太陽が 0° を切ると点き始め、−8° で最大） */
+export const MOON_DEFAULTS: MoonSettings = {
+  on: true, strength: 0.5, skyStrength: 0.7, color: '#a9bfff', azimuthDeg: 180, altitudeDeg: 50, onAltDeg: 0, fullAltDeg: -8,
 };
 const SPOT_MODE_LABEL: Record<SpotMode, string> = { auto: '自動（太陽が沈むと点く）', on: '常に点ける', off: '消す' };
 
@@ -129,6 +133,8 @@ export function mountRoomUi(
     window: { widthM: num('winW', winBase.widthM), heightM: num('winH', winBase.heightM), sillHeightM: num('sill', winBase.sillHeightM) },
     clouds: on('clouds', r0.clouds), cloudShadow: on('cloudShadow', r0.cloudShadow),
     screen: q.has('screen') ? q.get('screen') !== '0' : r0.screen,
+    // ?moon=0 で月明かりを消して開く
+    moon: { ...r0.moon, on: on('moon', r0.moon.on) },
     // ?trails=1 で光の軌跡を出して開く（既定は出さない）
     trails: { ...r0.trails, on: on('trails', r0.trails.on), colorMode: oneOf(r0.trails.colorMode, TRAIL_COLOR_MODES, 'scene') },
     // ?spot=on / off / auto でスポットライトの点け方、?spotCount=2 で台数を指定できる
@@ -369,6 +375,19 @@ export function mountRoomUi(
   const showLights = (): void => lightFolders.forEach((f, i) => f.show(i < spot.count));
   showLights();
 
+  // 月明かり（夜）：太陽が沈むと、太陽の代わりに月が窓から光を差し込み、夜空も明るくなる
+  const mn = settings.moon;
+  const fm = gui.addFolder('月明かり（夜）');
+  fm.add(mn, 'on').name('月明かりを点ける（太陽が沈むと点く）');
+  fm.add(mn, 'strength', 0, 5, 0.01).name('月の光の明るさ');
+  fm.add(mn, 'skyStrength', 0, 5, 0.01).name('夜空の明るさ');
+  fm.addColor(mn, 'color').name('色');
+  fm.add(mn, 'azimuthDeg', 0, 360, 1).name('月の方位（度、北 0・東 90）');
+  fm.add(mn, 'altitudeDeg', 1, 89, 1).name('月の高度（度）');
+  fm.add(mn, 'onAltDeg', -18, 10, 0.5).name('点き始める太陽の高度（度）');
+  fm.add(mn, 'fullAltDeg', -18, 10, 0.5).name('最大になる太陽の高度（度）');
+  fm.add({ run: () => { Object.assign(mn, { ...MOON_DEFAULTS, on: mn.on }); fm.controllers.forEach((c) => c.updateDisplay()); } }, 'run').name('月明かりの設定を既定に戻す');
+
   mountTimeControls(gui, clock);
 
   // 保存する中身（パネルの今の値）
@@ -406,7 +425,7 @@ export function mountRoomUi(
     /** 四隅の位置合わせ */
     get warp(): WarpCorners { return corners(); },
     /** @param fps 画面の更新の速さ（毎フレームの間隔をならしたもの。画面の上限、多くは 60 で頭打ちになる） */
-    updateStatus(s: SolarState, lit: number, samples: number, backend: Backend, size: { width: number; height: number }, spotOn: number, fps: number, fpsLimit: number): void {
+    updateStatus(s: SolarState, lit: number, samples: number, backend: Backend, size: { width: number; height: number }, spotOn: number, fps: number, fpsLimit: number, moonOn: number): void {
       const { sun, light } = s;
       const windowText = state.side === 'ceiling' ? '天井（天窓）' : WINDOW_SIDE_LABEL[state.side];
       statusEl.textContent = [
@@ -421,6 +440,7 @@ export function mountRoomUi(
         ...(state.side === 'ceiling' && (settings.seaView || settings.seaRipples) ? ['※ 窓の外の海・水面の反射は、壁の窓のときだけ効く'] : []),
         ...(settings.screen ? [`スクリーン  ${findScene(screen.id).label}`] : []),
         `ライト  ${spot.mode === 'off' ? '消す' : spotOn <= 0 ? '消えている（太陽が出ている）' : `点いている ${Math.round(spotOn * 100)}%`}`,
+        `月明かり  ${!mn.on ? '消す' : moonOn <= 0 ? '消えている（太陽が出ている）' : `点いている ${Math.round(moonOn * 100)}%`}`,
         `1 画素あたりの光線 ${samples} 本${samples < 256 ? '（止めておくと増えて、ざらつきが減る）' : ''}`,
         `計算 ${size.width}×${size.height}（${resolution.output === 'view' ? '画面の枠' : `展示の ${EXHIBIT_SIZE.width}×${EXHIBIT_SIZE.height}`} の ${Math.round(resolution.scale * 100)}%、画素数 ${Math.round(resolution.scale * resolution.scale * 100)}%）`,
         `描画 ${BACKEND_LABEL[backend]}  倍率 ${devicePixelRatio}`,
@@ -497,6 +517,7 @@ function codeDefaults(room: RoomGeometry, configWindow: WindowGeometry) {
       cloudSizeM: 1500, cloudHeightM: 1500, windMS: 30, windFromDeg: 270,
       screen: false, screenGain: 0.6,
       trails: { ...TRAIL_DEFAULTS },
+      moon: { ...MOON_DEFAULTS },
     },
     screenScene: 'light-clouds',
     spot: { ...SPOT_DEFAULTS, lights: SPOT_DEFAULTS.lights.map((l) => ({ ...l })) } as SpotSettings,
