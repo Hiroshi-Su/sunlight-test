@@ -21,6 +21,7 @@ import { RoomCore } from './core.ts';
 import { GlRoomRenderer, type RoomRenderer } from './gl.ts';
 import { GpuRoomRenderer } from './gpu.ts';
 import { type RoomGeometry, type RoomInput, type RoomRenderSettings, type RoomView, type ViewCalibration, calibratedCamera, spotPose } from './model.ts';
+import { type TrailLayer, trailSceneColor } from './trails.ts';
 
 export * from './model.ts';
 
@@ -49,6 +50,8 @@ export interface RoomSceneOptions {
   calibration?: ViewCalibration;
   /** 合わせるための線を描く画面（部屋の画面に重ねる canvas） */
   guide?: HTMLCanvasElement | null;
+  /** 部屋の中央の光の軌跡（部屋を作り直しても動きが続くよう、外で 1 つだけ作って渡す） */
+  trails?: TrailLayer | null;
 }
 
 /** 合わせるための線に描くもの */
@@ -68,7 +71,7 @@ export function createRoomScene(
   facingAzimuth: number,
   opts: RoomSceneOptions = {},
 ) {
-  const { view, gpu = null, resolution = { scale: 1, output: 'view' }, guide = null } = opts;
+  const { view, gpu = null, resolution = { scale: 1, output: 'view' }, guide = null, trails = null } = opts;
   const { widthM: W, depthM: D, heightM: H } = room;
   const core = new RoomCore(windowSide, room, facingAzimuth);
   const renderer: RoomRenderer = gpu ? new GpuRoomRenderer(gpu, core) : new GlRoomRenderer(core);
@@ -103,6 +106,9 @@ export function createRoomScene(
       size = { width: w, height: h };
     }
     aspect = out.width / out.height;
+    // 光の軌跡は、計算の解像度によらず出す大きさで描く（画面の枠のときは、高解像度ディスプレイの画素で）
+    const k = res.output === 'view' ? devicePixelRatio : 1;
+    trails?.setSize(out.width * k, out.height * k);
     camera.aspect = aspect;
     camera.updateProjectionMatrix();
     if (calib.mode === 'fixed') applyCalibration();
@@ -162,6 +168,8 @@ export function createRoomScene(
     camera.updateMatrixWorld();
     renderer.render(core.frame(input, settings, camera));
     last = { input, settings };
+    trails?.render(camera, settings.trails, room,
+      trailSceneColor(input.lightColor, input.solar.sun.altitude, settings.spot, core.spotOn));
     drawGuides(settings);
   }
 

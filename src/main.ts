@@ -17,6 +17,7 @@ import { mountVerify } from './ui/verify.ts';
 import { formatBench, formatPerf, gpuTotalMs } from './ui/perf.ts';
 import { mountModeSwitch } from './ui/mode-switch.ts';
 import { mountRoomUi } from './ui/room.ts';
+import { TrailLayer } from './room/trails.ts';
 import { mountVisuals } from './ui/visuals.ts';
 
 const W = 3840, H = 1080;
@@ -141,14 +142,16 @@ const roomUi = mode === 'room'
   })
   : null;
 if (roomUi) roomSite = withWindowSide(site, roomUi.side);
+// 部屋の中央の光の軌跡（部屋を作り直しても線の動きが続くよう、1 つだけ作る）
+const trailLayer = mode === 'room' ? new TrailLayer(el('roomTrails', HTMLCanvasElement)) : null;
 const buildRoom = (view?: RoomView) =>
   createRoomScene(el('roomStage', HTMLDivElement), roomSite.windowSide, roomUi?.room ?? roomEntry.room, roomSite.facingAzimuth, {
-    view, gpu: webgpu, resolution: roomUi?.resolution, calibration: roomUi?.calibration, guide: el('roomGuide', HTMLCanvasElement),
+    view, gpu: webgpu, resolution: roomUi?.resolution, calibration: roomUi?.calibration, guide: el('roomGuide', HTMLCanvasElement), trails: trailLayer,
   });
 if (mode === 'room') { room = buildRoom(); if (roomUi) room.setGuides(roomUi.guides); }
 if (room) addEventListener('resize', () => room?.resize());
 // 開発サーバーだけ：動作確認のスクリプトから room の視点を動かせるようにする
-if (import.meta.env.DEV) Object.assign(window, { __room: () => room });
+if (import.meta.env.DEV) Object.assign(window, { __room: () => room, __trails: () => trailLayer });
 const roomParamCache = new Map<string, ParamValues>();
 const roomScreenParams = (def: SceneDef): ParamValues => {
   let p = roomParamCache.get(def.id);

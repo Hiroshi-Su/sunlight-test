@@ -68,7 +68,7 @@ export function hexToRgb(hex: string): RGB {
 }
 
 /** スポットライトの色（線形）。明るさの目盛りをそろえるため、色を変えても明るさ（輝度）は 1 にする */
-function spotColor(light: SpotLight): THREE.Vector3 {
+export function spotColor(light: SpotLight): THREE.Vector3 {
   const c = linear(light.colorMode === 'color' ? hexToRgb(light.color) : kelvinToRgb(light.kelvin));
   const lum = 0.2126 * c.x + 0.7152 * c.y + 0.0722 * c.z;
   return lum > 1e-4 ? c.multiplyScalar(1 / lum) : new THREE.Vector3(1, 1, 1);

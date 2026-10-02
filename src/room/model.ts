@@ -78,6 +78,38 @@ export interface RoomRenderSettings {
   screenGain: number;
   /** 鑑賞者の頭上のスポットライト（夜に部屋を照らす） */
   spot: SpotSettings;
+  /** 部屋の中央の光の軌跡（src/room/trails.ts） */
+  trails: TrailSettings;
+}
+
+/** 光の軌跡の色の決め方：scene = 日差し・ライトの色に合わせる、hue = 線ごとに色相をずらす（元の演出に近い）、color = 色を選ぶ */
+export type TrailColorMode = 'scene' | 'hue' | 'color';
+export const TRAIL_COLOR_MODES: readonly TrailColorMode[] = ['scene', 'hue', 'color'];
+
+/** 部屋の中央の光の軌跡 */
+export interface TrailSettings {
+  on: boolean;
+  /** 線の本数・1 本あたりの点の数（多いほど軌跡が長い。点の間隔は 1/60 秒ぶん進む距離） */
+  count: number;
+  points: number;
+  /** 線の太さ（3840×1080 で出したときの画素。出す大きさに合わせて変わる） */
+  widthPx: number;
+  /** 速さ（m/s の目安）・流れの細かさ（1/m） */
+  speed: number;
+  turbulence: number;
+  /** 線ごとのばらつき（0 で全部の線が同じ流れに乗る。大きいほど線がばらける） */
+  spread: number;
+  /** 漂う範囲（中心からの半径、m）・中心の高さ（床から m）・中心の位置（部屋の手前の端から奥へ m、0 なら部屋の中央） */
+  radiusM: number;
+  centerHeightM: number;
+  centerFromFrontM: number;
+  /** 明るさ */
+  brightness: number;
+  colorMode: TrailColorMode;
+  /** 色を選ぶとき・色相をずらすときの基準の色（#rrggbb） */
+  color: string;
+  /** 色相をずらす幅（0〜1。1 で全部の色相） */
+  hueSpread: number;
 }
 
 /** スポットライトの点け方：auto = 太陽が沈むにつれて点く、on = いつも点ける、off = 消す */

@@ -38,9 +38,11 @@
   /* 部屋の画面（描いた画像と、合わせるための線）。四隅の位置合わせでは、この箱ごと変形する */
   #roomStage { position: relative; width: 100%; height: 100%; transform-origin: 0 0; }
   #roomStage canvas { display: block; width: 100%; height: 100%; }
-  #roomGuide { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
+  #roomGuide { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
+  /* 光の軌跡：部屋の絵に明るさを足して重ねる */
+  #roomTrails { position: absolute; inset: 0; z-index: 1; pointer-events: none; mix-blend-mode: plus-lighter; }
   #roomView.exhibit { height: auto; min-height: 0; aspect-ratio: 32 / 9; align-self: flex-start; }
-  #roomView.pixelated #roomStage canvas:not(#roomGuide) { image-rendering: pixelated; }
+  #roomView.pixelated #roomStage canvas:not(#roomGuide):not(#roomTrails) { image-rendering: pixelated; }
   #roomView:fullscreen { display: flex; align-items: center; background: #000; border-radius: 0; }
   #roomView.exhibit:fullscreen #roomStage { height: auto; aspect-ratio: 32 / 9; }
   /* 縮めて見る：32:9 の枠を、パネルの横ではなく行いっぱいの幅で出す */
@@ -131,7 +133,7 @@
   </div>
 
   <div class="room-ui">
-    <div id="roomView"><div id="roomStage"><canvas id="roomGuide"></canvas></div></div>
+    <div id="roomView"><div id="roomStage"><canvas id="roomTrails"></canvas><canvas id="roomGuide"></canvas></div></div>
     <div class="room-side">
       <div id="room-panel"></div>
       <pre id="room-status"></pre>

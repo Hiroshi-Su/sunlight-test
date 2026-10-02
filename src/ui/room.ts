@@ -3,7 +3,7 @@ import GUI from 'lil-gui';
 import type { Clock } from '../clock.ts';
 import { WINDOW_SIDES, WINDOW_SIDE_LABEL, type WindowSide } from '../config.ts';
 import { kelvinAt } from '../palette.ts';
-import { EXHIBIT_SIZE, type GuideOptions, MAX_SPOTS, SPOT_MODES, type RoomGeometry, type RoomOutput, type RoomRenderSettings, type RoomResolution, type SpotLight, type SpotMode, type SpotSettings, type ViewCalibration, type WindowGeometry, defaultCalibration } from '../room/scene.ts';
+import { EXHIBIT_SIZE, type GuideOptions, MAX_SPOTS, SPOT_MODES, TRAIL_COLOR_MODES, type TrailSettings, type RoomGeometry, type RoomOutput, type RoomRenderSettings, type RoomResolution, type SpotLight, type SpotMode, type SpotSettings, type ViewCalibration, type WindowGeometry, defaultCalibration } from '../room/scene.ts';
 import { SCENES, findScene } from '../scenes/index.ts';
 import type { SceneDef } from '../scenes/types.ts';
 import type { SolarState } from '../solar.ts';
@@ -35,6 +35,12 @@ export const spotLightDefault = (i: number): SpotLight => ({ ...SPOT_LIGHT_BASE,
 export const SPOT_DEFAULTS: SpotSettings = {
   mode: 'auto', count: 1, onAltDeg: 5, fullAltDeg: -4,
   lights: Array.from({ length: MAX_SPOTS }, (_, i) => spotLightDefault(i)),
+};
+/** 光の軌跡の既定（部屋の中央・目の高さのあたりに、半径 1.2m で 1,024 本） */
+export const TRAIL_DEFAULTS: TrailSettings = {
+  on: true, count: 1024, points: 48, widthPx: 3, speed: 1.2, turbulence: 0.6, spread: 1.5,
+  radiusM: 1.2, centerHeightM: 1.6, centerFromFrontM: 0, brightness: 1,
+  colorMode: 'scene', color: '#66ccff', hueSpread: 1,
 };
 const SPOT_MODE_LABEL: Record<SpotMode, string> = { auto: '自動（太陽が沈むと点く）', on: '常に点ける', off: '消す' };
 
@@ -123,6 +129,8 @@ export function mountRoomUi(
     window: { widthM: num('winW', winBase.widthM), heightM: num('winH', winBase.heightM), sillHeightM: num('sill', winBase.sillHeightM) },
     clouds: on('clouds', r0.clouds), cloudShadow: on('cloudShadow', r0.cloudShadow),
     screen: q.has('screen') ? q.get('screen') !== '0' : r0.screen,
+    // ?trails=0 で光の軌跡を消して開く
+    trails: { ...r0.trails, on: on('trails', r0.trails.on), colorMode: oneOf(r0.trails.colorMode, TRAIL_COLOR_MODES, 'scene') },
     // ?spot=on / off / auto でスポットライトの点け方、?spotCount=2 で台数を指定できる
     spot: {
       ...base.spot,
@@ -306,6 +314,27 @@ export function mountRoomUi(
   fs.add(screen, 'id', Object.fromEntries(SCENES.map((d) => [d.label, d.id]))).name('映す映像');
   fs.add(settings, 'screenGain', 0, 3, 0.01).name('プロジェクターの明るさ');
 
+  // 光の軌跡：部屋の中央の空間を、たくさんの光の線が漂う（three-line-trails と同じ考え方の演出を書き直したもの）
+  const tr = settings.trails;
+  const ft = gui.addFolder('光の軌跡');
+  ft.add(tr, 'on').name('部屋の中央に光の軌跡を出す');
+  ft.add(tr, 'count', 16, 4096, 1).name('線の本数');
+  ft.add(tr, 'points', 4, 128, 1).name('軌跡の長さ（点の数）');
+  ft.add(tr, 'widthPx', 0.5, 20, 0.1).name('太さ（3840 幅での画素）');
+  ft.add(tr, 'brightness', 0, 3, 0.01).name('明るさ');
+  ft.add(tr, 'speed', 0.05, 5, 0.01).name('速さ（m/s）');
+  ft.add(tr, 'turbulence', 0.05, 4, 0.01).name('流れの細かさ');
+  ft.add(tr, 'spread', 0, 4, 0.01).name('線ごとのばらつき');
+  ft.add(tr, 'radiusM', 0.2, 5, 0.05).name('漂う範囲（半径 m）');
+  ft.add(tr, 'centerHeightM', 0.2, 10, 0.05).name('中心の高さ（床から m）');
+  ft.add(tr, 'centerFromFrontM', 0, 40, 0.05).name('中心の位置（手前の端から奥へ m、0 = 部屋の中央）');
+  ft.add(tr, 'colorMode', { '日差し・ライトの色に合わせる': 'scene', '線ごとに色相をずらす（元の演出に近い）': 'hue', '色を選ぶ': 'color' }).name('色の決め方').onChange(() => showTrailColor());
+  const cTc = ft.addColor(tr, 'color').name('色（基準の色）');
+  const cTh = ft.add(tr, 'hueSpread', 0, 1, 0.01).name('色相をずらす幅');
+  const showTrailColor = (): void => { cTc.show(tr.colorMode !== 'scene'); cTh.show(tr.colorMode === 'hue'); };
+  showTrailColor();
+  ft.add({ run: () => { Object.assign(tr, { ...TRAIL_DEFAULTS, on: tr.on }); ft.controllers.forEach((c) => c.updateDisplay()); showTrailColor(); } }, 'run').name('光の軌跡の設定を既定に戻す');
+
   // ライト（夜）：鑑賞者の頭上のスポットライト。太陽が沈んで窓から光が入らなくなると、代わりに部屋を照らす。
   // 点け方と自動で点く高度は全部のライトで共通。明るさ・形・向き・位置・色はライトごと
   const spot = settings.spot;
@@ -459,6 +488,7 @@ function codeDefaults(room: RoomGeometry, configWindow: WindowGeometry) {
       clouds: false, cloudShadow: ROOM_DEFAULTS.cloudShadow as boolean, cloudAmount: 0.45, cloudOpacity: 0.8,
       cloudSizeM: 1500, cloudHeightM: 1500, windMS: 30, windFromDeg: 270,
       screen: false, screenGain: 0.6,
+      trails: { ...TRAIL_DEFAULTS },
     },
     screenScene: 'light-clouds',
     spot: { ...SPOT_DEFAULTS, lights: SPOT_DEFAULTS.lights.map((l) => ({ ...l })) } as SpotSettings,
