@@ -149,11 +149,11 @@ HDMI ケーブル（プロジェクターまで）、電源タップ、ネット
 | 機材 | 選定 | 価格の目安 | 理由 |
 |---|---|---|---|
 | ラック | **オーロラ EIA-K12B**（木製 EIA ラック 12U、メタリックダークグレー） | 約 76,000〜99,000 円（店による） | いただいた案。鍵付きの強化ガラス扉、キャスター付き |
-| Mac mini の置き方 | **ラック純正の追加棚 EIA-B** に載せて、面ファスナーや固定用の金具で留める | オープン価格 | ラックは 19 インチなので、10 インチ用の Mac mini のラックマウント（1.5U、樹脂製）は付けられない（4.3 節） |
-| 保守用の画面 | **ASUS VY249HGR**（23.8 型、1920×1080） | 約 11,000〜15,000 円 | VESA 100 でアームに付けられ、重さ（スタンドなし 2.9kg）がアームの範囲に収まる（4.4 節） |
+| Mac mini の置き方 | **ラック純正の追加棚 EIA-B** に載せて、面ファスナーや固定用の金具で留める | オープン価格 | いちばん手軽で確実。ラックマウントの形にしたいときの候補は 4.3 節 |
+| 保守用の画面 | **第一希望：ASUS VY249HGR**（23.8 型、1920×1080）。予算が足りなければ EVICIV EVC-1506（4.4 節） | 約 11,000〜15,000 円（EVC-1506 は約 8,000〜12,000 円） | VESA 100 でアームに付けられ、重さ（スタンドなし 2.9kg）がアームの範囲に収まる（4.4 節） |
 | 画面のつなぎ方 | Thunderbolt（USB-C）→ HDMI の変換 ＋ HDMI ケーブル | 数千円 | VY249HGR の入力は HDMI 1.4 と VGA だけ。Mac mini の HDMI はプロジェクター 1 に使う |
-| ディスプレイのアーム | **オーロラ MA-2★**（クランプアーム）。在庫がなければ **SAD-1** | オープン価格 | ラックのオプションとして載っている。天板（厚み 25mm）を挟んで留める |
-| 入力機器 | ロジクール MK250（2 章と同じ） | 3,850 円 | 天板の上で使い、使わないときはラックの中にしまう |
+| ディスプレイのアーム | **オーロラ MA-2★**（クランプアーム）。在庫がなければ **SAD-1**（VY249HGR のとき） | オープン価格 | ラックのオプションとして載っている。天板（厚み 25mm）を挟んで留める。EVC-1506 のときは使わない（4.4 節） |
+| 入力機器 | **ロジクール MK250GR**（MK250 のグラファイト。2 章と同じ製品） | 約 3,850 円 | 天板の上で使い、使わないときはラックの中にしまう。色はラック（メタリックダークグレー）になじむ |
 | 熱の対策 | 据え付け前に温度を確かめ、必要なら排気のファンを足す | — | ラックにファンがなく、背面に 12U 用のファンユニット（EIA-F3）を付けられない（4.6 節） |
 
 ### 4.2 EIA-K12B の寸法（図面より）
@@ -174,7 +174,17 @@ HDMI ケーブル（プロジェクターまで）、電源タップ、ネット
 - Mac mini（M5 Pro）の大きさは、M4（2024）と同じ 12.7 × 12.7 × 5.0cm。ただし**いただいた Mac mini のラックマウント（10 インチ、1.5U、PETG 樹脂）は 10 インチのネットワークラック用**で、19 インチの EIA-K12B には付けられない
 - **ラック純正の追加棚 EIA-B**（有効サイズ W482 × D400mm、25kg まで、高さは 44.45mm ごとに 6 段階）に載せる。Mac mini・電源タップ・UPS を一緒に置ける。Mac mini は面ファスナーや固定用の金具で留めて、ずれないようにする
 - 10 インチを 19 インチにする変換金具を使う方法もあるが、部品が増え、樹脂の金具を 24 時間の稼働で使うことになるので勧めない
-- 電源ボタン・端子は、ガラス扉を開けて触る。キーボード（MK250）は Bluetooth なので、扉を閉めたままでも使える
+- 電源ボタン・端子は、ガラス扉を開けて触る。M4 以降の Mac mini は電源ボタンが**底面**にあるので、棚や金具に載せると押しにくい。システム構成の「停電後に自動的に起動」と毎朝の起動の予定（system.md 2.3 節）で、ふだんは押さずに済むようにする
+- キーボード（MK250）は Bluetooth なので、扉を閉めたままでも使える
+
+**Mac mini の置き方の候補**
+
+| 候補 | ラックに付けられるか | 評価 |
+|---|---|---|
+| **追加棚 EIA-B に載せて留める** | ◯ ラック純正 | **おすすめ**。部品が少なく確実 |
+| M4 以降（2024+）用の 19 インチ 2U の金具（Sonnet RackMac mini（2024+）：鋼鉄製・1〜3 台、thingsNrack（M4 用・3 台・離れた所からの電源ボタン付き）、MK1 Manufacturing など） | ◯ 19 インチ・2U | ラックマウントの形にしたいとき。M5 Pro の Mac mini は M4 と同じ大きさなので合う。どれも海外の製品で、値段と奥行きは買う前に確かめる |
+| M1・M2 用の 19 インチ 1U ヒンジ付きの棚（Maozhren、鋼鉄製、奥行き約 185mm、結束バンド付き） | ◯ 19 インチ | 鋼鉄の棚として使える。ただし M5 Pro の Mac mini は高さ 50mm で 1U（44.45mm）に収まらないので、上に 1U 空けて 2U ぶん使う。置く面が M2 用（19.7cm 四方）で大きく、Mac mini（12.7cm 四方）が動きやすいので、しっかり留める |
+| 10 インチ 1.5U の Mac mini 用の金具（PETG 樹脂） | × そのままでは付けられない（10 インチのネットワークラック用） | 10 インチ → 19 インチの変換金具（2U）を間に入れれば付けられる。変換金具は海外の製品や樹脂製が多く、樹脂の部品 2 つで 24 時間支えることになるので勧めない |
 
 ### 4.4 保守用の画面：EVC-1506 と VY249HGR の比較
 
@@ -186,7 +196,23 @@ HDMI ケーブル（プロジェクターまで）、電源タップ、ネット
 | 見やすさ | 小さい（解像度は同じ 1920×1080） | 大きく見やすい |
 | 価格の目安 | 約 8,000〜12,000 円 | 約 11,000〜15,000 円 |
 
-- **VY249HGR を選ぶ**。EVC-1506 は、アームではなく、ばねのない固定の VESA 金具なら使える
+- **第一希望は VY249HGR ＋ アーム（MA-2★ / SAD-1）**
+
+**予算が足りない場合：EVC-1506**
+
+| 置き方 | よい点 | 気をつけること |
+|---|---|---|
+| アームなし（付属のカバーをスタンドにして自立させる） | 追加の費用がない。いちばん簡単 | 天板の上は鍵の外なので、倒されたり持ち去られたりしないよう、滑り止めのマットや固定のワイヤーを使う |
+| 軽いモニター用のアーム | 高さや角度を変えられる | ガススプリングのアーム（MA-2★・SAD-1 など）は使わない |
+
+EVC-1506 に合うアームの条件：
+
+- **ばねを使わず、関節のかたさで止めるタイプ**（モバイルモニター用・タブレット用として売られているもの）
+- **VESA 75** に対応（EVC-1506 の背面は VESA 75、M4 ネジ）
+- **載せられる重さが 2kg 前後まで**の軽い用（EVC-1506 は約 0.9kg）。例：VESA 75 対応・17.3 インチまで・耐荷重 1.8kg・アルミ製・クランプ式のモバイルモニター用のアーム
+- **クランプで天板（厚み 25mm）を挟める**
+
+合わないもの：サンワサプライ 100-LAC008BK（ガススプリング式で 1kg から。EVC-1506 は 0.9kg で足りない）、サンワサプライ CR-24（ばねで上下するタイプで、販売終了）
 - Mac mini の外部の画面は、プロジェクター 2 台（HDMI ＋ Thunderbolt → HDMI）と保守用の画面（Thunderbolt → HDMI）で 3 台になり、M5 Pro の上限ちょうど
 
 ### 4.5 ディスプレイのアームと、天板の上での操作
@@ -222,8 +248,8 @@ HDMI ケーブル（プロジェクターまで）、電源タップ、ネット
 | キャビネット・ラック | CP-SBOX4510（W450・33kg） | EIA-K12B（W564・21kg、キャスター付き） | CP-SVNAMULT7BK（W700・54kg） |
 | キャビネット・ラックの価格 | 184,800 円（標準価格） | 約 76,000〜99,000 円 | 261,800 円（標準価格） |
 | Mac mini・PC の置き方 | キャビネットの棚 | 追加棚 EIA-B | キャビネットの棚 |
-| 保守用の画面 | EVC-1506 を USB-C 1 本で（棚の上） | VY249HGR を天板の上のアーム（MA-2★ / SAD-1）で、Thunderbolt → HDMI | EVC-1506 を HDMI ＋ 電源で |
-| 入力機器 | MK250（Bluetooth） | MK250（天板の上で使う） | MK250（PC に Bluetooth が要る） |
+| 保守用の画面 | EVC-1506 を USB-C 1 本で（棚の上） | VY249HGR を天板の上のアーム（MA-2★ / SAD-1）で、Thunderbolt → HDMI（予算が足りなければ EVC-1506 を自立させるか、軽いモニター用のアーム） | EVC-1506 を HDMI ＋ 電源で |
+| 入力機器 | MK250（Bluetooth） | MK250GR（天板の上で使う） | MK250（PC に Bluetooth が要る） |
 | UPS | 500VA 以上・正弦波 | 500VA 以上・正弦波（追加棚に置く） | 750〜1000VA・正弦波 |
 | 熱 | キャビネットの通風による | ファンがないので、据え付け前に温度を確かめる | メッシュの扉・ファン 3 台まで |
 | 置き場所の広さ | 幅 45cm | 幅 56cm | 幅 70cm |
@@ -251,7 +277,10 @@ HDMI ケーブル（プロジェクターまで）、電源タップ、ネット
 - [価格.com：ロジクール K400 Plus](https://kakaku.com/item/K0000787160/)（最安 5,100 円、対応 OS は Windows・Android・Chrome OS）、[価格.com クチコミ「Mac 用に購入して後悔」](https://bbs.kakaku.com/bbs/K0000787160/SortID=21255049/)（Mac での F キー・記号の配置）
 - [ASUS VY249HGR の仕様](https://www.asus.com/us/displays-desktops/monitors/eye-care/vy249hgr/techspec/)（23.8 型、HDMI 1.4・VGA、VESA 100、スタンドなし 2.9kg、20W 未満）、[価格（Yahoo!ショッピング）](https://store.shopping.yahoo.co.jp/bakuyasuearth/4711387723470.html)
 - 共栄商事（オーロラ）：[EIA-K12B](https://www.kyoei-shoji.co.jp/category_eia_05a/1_index_detail.php)（図面・組立説明書）、[MA-2★](https://www.kyoei-shoji.co.jp/category_newwork_06a/1_index_detail.php)（組立説明書：ガススプリング、積載 8kg）、[SAD-1](https://www.kyoei-shoji.co.jp/category_newwork_06a/2_index_detail.php)、[追加棚 EIA-B](https://www.kyoei-shoji.co.jp/category_eiaoption_05f/1_index_detail.php)。価格：[モノタロウ](https://www.monotaro.com/p/0990/4259/)・[アスクル](https://www.askul.co.jp/p/AR39622/)
-- [10 インチ 1.5U Mac mini ラックマウント（Amazon.com）](https://www.amazon.com/10-inch-Network-Compatible-Keystone-Included/dp/B0FH42SBX1)（10 インチのネットワークラック用、PETG）
+- [10 インチ 1.5U Mac mini ラックマウント（Amazon.com）](https://www.amazon.com/10-inch-Network-Compatible-Keystone-Included/dp/B0FH42SBX1)（10 インチのネットワークラック用、PETG）。10 → 19 インチの変換金具：[UniRack（eBay）](https://www.ebay.com/itm/188045815748)、[Cubi-Rack（Etsy）](https://www.etsy.com/listing/4337624489/10-to-19-rack-adapter-ears-updated)、[AD-TEK（Network-Cabs）](https://network-cabs.co.uk/product/ad-tek-network-cabs-1u-10-inch-to-19-inch-adapter-fix-bracket-ears-666)
+- 19 インチの Mac mini の金具：[M1・M2 用 1U ヒンジ付きの棚（Amazon.com）](https://us.amazon.com/Mount-Hinged-Server-Models-Cabinet/dp/B0H1BQVVZR)、[Sonnet RackMac mini（2024+）](https://www.sonnettech.com/product/rackmac-mini-2024/overview.html)、[thingsNrack（M4 用、Amazon.com）](https://www.amazon.com/thingsNrack-Mount-Remote-Button-keystones/dp/B0DZNZL87P)、[MK1 Manufacturing](https://www.mk1manufacturing.com/Mac-Mini-Rack-Mounts-c11/)
+- 軽いモニター用のアーム：[モバイルモニター用スタンド VESA 75・耐荷重 1.8kg（Yahoo!ショッピング）](https://store.shopping.yahoo.co.jp/yj-planning/holder-s118.html)、[モバイルモニターでアームを試したレビュー（Items）](https://review.pastime.ne.jp/personal-computer/computer-gear/mobilemonitor-monitor-arm/)、[サンワサプライ 100-LAC008BK](https://direct.sanwa.co.jp/ItemPage/100-LAC008BK)・[CR-24](https://www.sanwa.co.jp/product/syohin?code=CR-24)
+- [ロジクール MK250GR（Amazon）](https://www.amazon.co.jp/dp/B0FDQMPJWZ)
 - [ガルマックス：Mac mini（M6/M5 Pro）](https://garumax.com/mac-mini-m5-pro-mac-mini-m6-spec)（大きさは M4 と同じ）、[Appleちゃんねる：Mac mini（2026）の消費電力](https://applech2.com/archives/20260922-apple-m6-and-m5pro-mac-mini-2026-power-consumption.html)（M5 Pro は最大 145W）
 - EVICIV EVC-1506：[モニ研のレビュー](https://my-favorite.me/eviciv-evc1506/)（厚さ 11mm、USB-C 1 本で映る、HDMI のときは別給電）、[モバイルモニターガイドのレビュー](https://www.mobilemonitor.jp/review-eviciv-evc1506/)（VESA 75mm、付属の電源）、[コビガジェライフのレビュー](https://www.kobi-gadgetlife.jp/evic-%E2%85%B3-mobilemonitor-15-review/)
 - サンワサプライ：[CP-SBOX4510](https://www.sanwa.co.jp/product/syohin?code=CP-SBOX4510)（内寸・標準価格）、[扉付き機器収納ボックスの一覧](https://www.sanwa.co.jp/group_search/group_list?code=CP-SBOX6010)（W400〜W600 の内寸）、[CP-SVNAMULT7BK](https://www.sanwa.co.jp/product/syohin?code=CP-SVNAMULT7BK)（内寸・メッシュ扉・ファン・標準価格）、[サンワダイレクト CP-SBOX4510](https://direct.sanwa.co.jp/ItemPage/CP-SBOX4510)・[CP-SVNAMULT7BK](https://direct.sanwa.co.jp/ItemPage/CP-SVNAMULT7BK)
