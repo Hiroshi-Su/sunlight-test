@@ -1,7 +1,7 @@
 import bundledSite from '../config/site.json';
 import type { Heartbeat } from './bridge.ts';
 import { Clock } from './clock.ts';
-import { APP_MODES, type AppMode, type ParamValues, type VisualsConfig, parseSiteConfig, parseVisualsConfig } from './config.ts';
+import { APP_MODES, type AppMode, type ParamValues, type VisualsConfig, applyEnvToSiteConfig, parseSiteConfig, parseVisualsConfig } from './config.ts';
 import { drawGuides, drawLightArrow } from './diagram.ts';
 import { kelvinAt, kelvinToRgb, skyColors } from './palette.ts';
 import { type RoomView, createRoomScene } from './room/scene.ts';
@@ -57,7 +57,8 @@ async function saveRoomSettings(file: unknown): Promise<void> {
   if (!res.ok) throw new Error(await res.text());
 }
 
-const siteConfig = bridge?.config ?? parseSiteConfig(bundledSite);
+// .env の緯度経度などを重ねる（アプリでは main 側で重ねたものが届く。ブラウザでは Vite が .env の SORACITY_ で始まる値を渡す）
+const siteConfig = bridge?.config ?? applyEnvToSiteConfig(parseSiteConfig(bundledSite), import.meta.env);
 const loadedVisuals = bridge?.visuals ?? await loadVisualsInBrowser();
 // ?scene=ID で表示する映像を一時的に切り替える（保存はしない）
 const visualsConfig: VisualsConfig = params.get('scene') ? { ...loadedVisuals, activeScene: params.get('scene')! } : loadedVisuals;

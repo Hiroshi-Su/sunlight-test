@@ -6,13 +6,15 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { type Bootstrap, type Heartbeat, IPC, type ReportData } from '../src/bridge.ts';
 import {
   APP_MODES, type AppConfig, type AppMode, ConfigError, type SiteConfig, type VisualsConfig,
-  parseAppConfig, parseSiteConfig, parseVisualsConfig,
+  applyEnvToSiteConfig, parseAppConfig, parseSiteConfig, parseVisualsConfig,
 } from '../src/config.ts';
 import { EXIT_CONFIG_ERROR } from './exit-codes.ts';
 
 // ビルド後は dist-electron/main.js から実行される
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const DIST = join(ROOT, 'dist');
+// .env（Git に上げない、PC ごとの値。.env.example を参照）を読む。なければ何もしない。すでに環境変数にある値は上書きしない
+try { process.loadEnvFile(join(ROOT, '.env')); } catch { /* .env がない */ }
 const CONFIG_DIR = process.env['SORACITY_CONFIG_DIR'] ?? join(ROOT, 'config');
 
 // ---- 設定の読み込みと検証 ----
@@ -27,7 +29,7 @@ function loadConfigs(): { appConfig: AppConfig; siteConfig: SiteConfig; visualsC
   };
   return {
     appConfig: parseAppConfig(read('app.json'), join(CONFIG_DIR, 'app.json')),
-    siteConfig: parseSiteConfig(read('site.json'), join(CONFIG_DIR, 'site.json')),
+    siteConfig: applyEnvToSiteConfig(parseSiteConfig(read('site.json'), join(CONFIG_DIR, 'site.json')), process.env, join(ROOT, '.env')),
     visualsConfig: parseVisualsConfig(read('visuals.json'), join(CONFIG_DIR, 'visuals.json')),
   };
 }

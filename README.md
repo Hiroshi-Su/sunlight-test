@@ -15,6 +15,19 @@ npm install
 npm run dev          # http://localhost:5173/
 ```
 
+PC ごとの設定（`.env`。Git には上げない）：
+
+```sh
+cp .env.example .env   # 値を書く。書かない項目は使わない
+```
+
+| 名前 | 内容 |
+|---|---|
+| `SORACITY_LATITUDE` / `SORACITY_LONGITUDE` | 太陽の計算に使う緯度・経度（両方書く）。`config/site.json` の場所の値を上書きする。場所の緯度経度を公開のリポジトリに書かずに使うためのもの |
+| `SORACITY_SITE` | 上書きする場所（`config/site.json` の `sites` の名前）。書くと表示する場所もこれにする。書かなければ `activeSite` |
+
+開発サーバー（ブラウザ）は起動したときに、アプリは起動したときに `.env` を読む（書き換えたら起動し直す）。書き方が誤っている（片方だけ・数でない・範囲外・ない場所の名前）ときは、設定の誤りとして止まる。
+
 Python 側のテストも動かす場合（基準値の生成に pvlib を使う）：
 
 ```sh

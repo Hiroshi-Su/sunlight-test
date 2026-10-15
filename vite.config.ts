@@ -67,6 +67,8 @@ function saveRoomPlugin(): Plugin {
 export default defineConfig({
   plugins: [saveVisualsPlugin(), saveRoomPlugin()],
   build: { target: 'es2022', chunkSizeWarningLimit: 1000 },
+  // .env の値のうち、画面側に渡すもの（SORACITY_ で始まる名前。src/config.ts の ENV_KEYS）
+  envPrefix: ['VITE_', 'SORACITY_'],
   // 保存のたびにページが再読み込みされないよう、visuals.json・room.json の変更は監視しない
   server: { watch: { ignored: ['**/config/visuals.json', '**/config/room.json', '**/logs/**'] } },
 });

@@ -171,6 +171,52 @@ export function parseSiteConfig(raw: unknown, file = 'config/site.json'): SiteCo
   return { activeSite, sites };
 }
 
+/**
+ * .env で上書きできる値の名前（.env.example を参照）。.env は Git に上げないので、場所の緯度経度を公開せずに使える
+ * - SORACITY_LATITUDE / SORACITY_LONGITUDE：太陽の計算に使う緯度経度（両方書く）
+ * - SORACITY_SITE：上書きする場所（config/site.json の sites の名前）。書けば activeSite もこの場所にする。書かなければ activeSite
+ */
+export const ENV_KEYS = { latitude: 'SORACITY_LATITUDE', longitude: 'SORACITY_LONGITUDE', site: 'SORACITY_SITE' } as const;
+
+/** .env の値（空の値は書いていないのと同じ） */
+const envValue = (env: Record<string, unknown>, key: string): string | null => {
+  const v = env[key];
+  return typeof v === 'string' && v.trim() !== '' ? v.trim() : null;
+};
+
+/** .env に書いた緯度経度（両方あり、数として読めるときだけ）。site モードなど、config/site.json を使わない所でも読む */
+export function envLatLon(env: Record<string, unknown>): { latitude: number; longitude: number } | null {
+  const lat = envValue(env, ENV_KEYS.latitude), lon = envValue(env, ENV_KEYS.longitude);
+  if (lat === null || lon === null) return null;
+  const latitude = Number(lat), longitude = Number(lon);
+  return Number.isFinite(latitude) && Number.isFinite(longitude) && Math.abs(latitude) <= 90 && Math.abs(longitude) <= 180
+    ? { latitude, longitude } : null;
+}
+
+/**
+ * config/site.json の値に .env の値を重ねる。ブラウザ（Vite の import.meta.env）とアプリ（Electron の process.env）の両方から使う。
+ * 書き方の誤り（片方だけ・数でない・範囲外・ない場所の名前）は ConfigError にする（黙って config の値で動くと、気づかずに違う場所で計算してしまう）
+ */
+export function applyEnvToSiteConfig(cfg: SiteConfig, env: Record<string, unknown>, file = '.env'): SiteConfig {
+  const problems: string[] = [];
+  const siteName = envValue(env, ENV_KEYS.site);
+  if (siteName !== null && !(siteName in cfg.sites)) {
+    problems.push(`${ENV_KEYS.site}="${siteName}" が config/site.json の sites にありません（あるもの: ${Object.keys(cfg.sites).join(', ')}）`);
+  }
+  const lat = envValue(env, ENV_KEYS.latitude), lon = envValue(env, ENV_KEYS.longitude);
+  if ((lat === null) !== (lon === null)) problems.push(`${ENV_KEYS.latitude} と ${ENV_KEYS.longitude} は両方書いてください`);
+  const ll = envLatLon(env);
+  if (lat !== null && lon !== null && !ll) problems.push(`${ENV_KEYS.latitude} は -90〜90、${ENV_KEYS.longitude} は -180〜180 の数にしてください（現在: ${lat}, ${lon}）`);
+  if (problems.length) throw new ConfigError(file, problems);
+  const target = siteName ?? cfg.activeSite;
+  if (!ll && siteName === null) return cfg;
+  const entry = cfg.sites[target]!;
+  return {
+    activeSite: target,
+    sites: { ...cfg.sites, [target]: ll ? { ...entry, latitude: ll.latitude, longitude: ll.longitude } : entry },
+  };
+}
+
 export function parseAppConfig(raw: unknown, file = 'config/app.json'): AppConfig {
   const c = new Checker();
   const o = c.obj(raw, '(root)');

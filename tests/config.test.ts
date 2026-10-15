@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { ConfigError, parseAppConfig, parseSiteConfig, parseVisualsConfig } from '../src/config.ts';
+import { ConfigError, applyEnvToSiteConfig, envLatLon, parseAppConfig, parseSiteConfig, parseVisualsConfig } from '../src/config.ts';
 import { SCENES } from '../src/scenes/index.ts';
 import { mergeParams } from '../src/scenes/types.ts';
 
@@ -100,4 +100,28 @@ test('sunLinks の toggle キーは、そのシーンの真偽値パラメータ
       assert.equal(spec.type, 'boolean', `${def.id}: sunLinks の toggle "${link.toggle}" は真偽値のパラメータではありません`);
     }
   }
+});
+
+test('.env：緯度経度を書くと、表示する場所の値を上書きする', () => {
+  const cfg = parseSiteConfig(readJson('site.json'));
+  const out = applyEnvToSiteConfig(cfg, { SORACITY_LATITUDE: '35.5', SORACITY_LONGITUDE: '139.5' });
+  assert.equal(out.sites[out.activeSite]!.latitude, 35.5);
+  assert.equal(out.sites[out.activeSite]!.longitude, 139.5);
+  // 元の設定は変えない
+  assert.notEqual(cfg.sites[cfg.activeSite]!.latitude, 35.5);
+});
+
+test('.env：何も書かない・空の値なら config/site.json のまま', () => {
+  const cfg = parseSiteConfig(readJson('site.json'));
+  assert.equal(applyEnvToSiteConfig(cfg, {}), cfg);
+  assert.equal(applyEnvToSiteConfig(cfg, { SORACITY_LATITUDE: '', SORACITY_LONGITUDE: ' ', SORACITY_SITE: '' }), cfg);
+  assert.equal(envLatLon({ SORACITY_LATITUDE: '', SORACITY_LONGITUDE: '' }), null);
+});
+
+test('.env：片方だけ・数でない・範囲外・ない場所の名前は誤りにする', () => {
+  const cfg = parseSiteConfig(readJson('site.json'));
+  assert.ok(problemsOf(() => applyEnvToSiteConfig(cfg, { SORACITY_LATITUDE: '35' })).some((p) => p.includes('両方')));
+  assert.ok(problemsOf(() => applyEnvToSiteConfig(cfg, { SORACITY_LATITUDE: 'abc', SORACITY_LONGITUDE: '139' })).length > 0);
+  assert.ok(problemsOf(() => applyEnvToSiteConfig(cfg, { SORACITY_LATITUDE: '95', SORACITY_LONGITUDE: '139' })).length > 0);
+  assert.ok(problemsOf(() => applyEnvToSiteConfig(cfg, { SORACITY_SITE: 'nowhere' })).some((p) => p.includes('nowhere')));
 });
