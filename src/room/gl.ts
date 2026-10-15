@@ -29,6 +29,8 @@ uniform vec3 uRoomMin;
 uniform vec3 uRoomMax;
 uniform int uWinFace;        // 窓のある面：0 = 右の壁（+x）、1 = 左の壁（-x）、2 = 天井（+y）
 uniform vec4 uWinRect;       // 窓の範囲（面上の座標 u0, u1, v0, v1）。壁は (z, y)、天井は (x, z)
+uniform float uWin2On;       // 2 つ目の窓（天窓）があるか。天窓＋左の窓のとき 1（1 つ目は左の壁）
+uniform vec4 uWin2Rect;      // 2 つ目の窓（天窓）の範囲 (x0, x1, z0, z1)
 uniform vec3 uSunDir;        // 太陽のある方向
 uniform float uSunSinR;      // 太陽の見かけの半径の sin
 uniform vec3 uSunE;          // 直射日光の強さ（光に垂直な面での放射照度）
@@ -121,10 +123,19 @@ vec3 inwardNormal(int face) {
   return vec3(0.0, 0.0, 1.0);
 }
 
-bool inWindow(int face, vec3 p) {
+bool inWindow1(int face, vec3 p) {
   if (face != uWinFace) return false;
   vec2 uv = face == 2 ? p.xz : p.zy;
   return uv.x > uWinRect.x && uv.x < uWinRect.y && uv.y > uWinRect.z && uv.y < uWinRect.w;
+}
+
+// 2 つ目の窓（天窓＋左の窓のときの天窓）
+bool inWindow2(int face, vec3 p) {
+  return uWin2On > 0.5 && face == 2 && p.x > uWin2Rect.x && p.x < uWin2Rect.y && p.z > uWin2Rect.z && p.z < uWin2Rect.w;
+}
+
+bool inWindow(int face, vec3 p) {
+  return inWindow1(face, p) || inWindow2(face, p);
 }
 
 vec3 windowPoint(float r1, float r2) {
@@ -468,25 +479,32 @@ vec3 cosineSample(vec3 n) {
 // - 照り返しの光線（余弦に比例した向き）がそのまま窓から外へ出たとき（skyBsdf）：大きい窓に強い
 // どちらも「光 × cos ÷（2 つの確率密度の和）」で数えるので、1 回の値は「光 × π」を超えず、平均の明るさは変わらない。
 // 照り返しの光線は、もともと追っているものを使う（足す光線は、最後の点の 1 本だけ。indirect）
-float windowPdf(vec3 w, float d2) {
+// 窓が 2 つ（天窓＋左の窓）のときは、どちらの窓の点を選ぶかを半々で決める。部屋は凸なので、ある向きの光線が抜ける窓は 1 つだけで、
+// その向きの確率密度は「その窓を選ぶ確率 × その窓の点を選んだときの密度」になる（k = 1 つ目 / 2 つ目の窓）
+float windowSel() { return uWin2On > 0.5 ? 0.5 : 1.0; }
+vec3 windowOutwardK(int k) { return k == 2 ? vec3(0.0, 1.0, 0.0) : windowOutward(); }
+float windowPdf(int k, vec3 w, float d2) {
   // 窓の点を一様に選んだときの、方向あたりの確率密度
-  float area = (uWinRect.y - uWinRect.x) * (uWinRect.w - uWinRect.z);
-  return d2 / (max(dot(windowOutward(), w), 1e-6) * area);
+  vec4 r = k == 2 ? uWin2Rect : uWinRect;
+  float area = (r.y - r.x) * (r.w - r.z);
+  return windowSel() * d2 / (max(dot(windowOutwardK(k), w), 1e-6) * area);
 }
 // 窓の中の点を選んで数える空の光（放射照度。π で割ると、拡散面が返す光になる）
 vec3 skyNee(vec3 p, vec3 n) {
-  vec3 q = windowPoint(rnd(), rnd());
+  int k = uWin2On > 0.5 && rnd() < 0.5 ? 2 : 1;
+  float r1 = rnd(), r2 = rnd();
+  vec3 q = k == 2 ? vec3(mix(uWin2Rect.x, uWin2Rect.y, r1), uRoomMax.y, mix(uWin2Rect.z, uWin2Rect.w, r2)) : windowPoint(r1, r2);
   vec3 w = q - p;
   float d2 = dot(w, w);
   w *= inversesqrt(d2);
-  float cp = dot(n, w), cq = dot(windowOutward(), w);
+  float cp = dot(n, w), cq = dot(windowOutwardK(k), w);
   if (cp <= 0.0 || cq <= 0.0) return vec3(0.0);
-  return outsideRadianceAvg(w) * cp / (windowPdf(w, d2) + cp / PI);
+  return outsideRadianceAvg(w) * cp / (windowPdf(k, w, d2) + cp / PI);
 }
-// 照り返しの光線 d が窓から外へ出たとき（t = 窓までの距離）に数える空の光（拡散面が返す光、skyNee / π と同じ単位）
-vec3 skyBsdf(vec3 n, vec3 d, float t) {
+// 照り返しの光線 d が窓 k から外へ出たとき（t = 窓までの距離）に数える空の光（拡散面が返す光、skyNee / π と同じ単位）
+vec3 skyBsdf(vec3 n, vec3 d, float t, int k) {
   float pc = dot(n, d) / PI;
-  return outsideRadianceAvg(d) * pc / (windowPdf(d, t * t) + pc);
+  return outsideRadianceAvg(d) * pc / (windowPdf(k, d, t * t) + pc);
 }
 
 vec3 sunIrradiance(vec3 p, vec3 n) {
@@ -505,7 +523,7 @@ vec3 indirect(vec3 p, vec3 n) {
     int f;
     float t = exitRoom(p, d, f);
     vec3 q = p + d * t;
-    if (inWindow(f, q)) { acc += thr * skyBsdf(n, d, t); break; } // 窓から外へ出た：空の光の 2 つ目の見本
+    if (inWindow(f, q)) { acc += thr * skyBsdf(n, d, t, inWindow2(f, q) ? 2 : 1); break; } // 窓から外へ出た：空の光の 2 つ目の見本
     if (b >= uBounces) break;
     acc += thr * screenLight(f, q, 5.0); // スクリーンに映した映像の光が、部屋をほんのり照らす（照り返しと同じくぼけた光）
     vec3 n2 = inwardNormal(f);

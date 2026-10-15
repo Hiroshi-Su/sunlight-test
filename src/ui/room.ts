@@ -12,6 +12,7 @@ import { BACKEND_LABEL } from './perf.ts';
 import { el, ignoreSliderWheel } from './dom.ts';
 import { type WarpCorners, warpCss } from './warp.ts';
 import { type RoomSettingsFile, mergeKnown, oneOf } from '../room/settings-file.ts';
+import { shareRoomSettings } from '../room/live-share.ts';
 import { mountTimeControls } from './time-controls.ts';
 
 /**
@@ -167,6 +168,11 @@ export function mountRoomUi(
     cS.max(room.heightM * 0.98 - 0.2).updateDisplay();
     cS.show(!ceiling); // 天窓では使わない
     cFull.show(ceiling);
+    // 天窓＋左の窓は、どちらも枠なし（壁・天井いっぱい）で大きさは決まっているので、大きさの項目を隠す
+    const both = state.side === 'ceiling-left';
+    for (const c of [cW, cH, cS]) if (both) c.hide();
+    if (!both) { cW.show(); cH.show(); }
+    cReset.show(!both);
   };
   // 壁の窓は、下端 + 高さが天井を超えないように、下端を動かしたら高さを、高さを動かしたら下端を詰める
   cH.onChange(() => {
@@ -182,7 +188,7 @@ export function mountRoomUi(
     }
   });
   const reset = { run: (): void => { Object.assign(win, configWindow); fit(); } };
-  fr.add(reset, 'run').name('窓の大きさを設定どおりに戻す');
+  const cReset = fr.add(reset, 'run').name('窓の大きさを設定どおりに戻す');
   const full = { run: (): void => { win.widthM = room.widthM; win.heightM = room.depthM; fit(); } };
   const cFull = fr.add(full, 'run').name('天窓を天井いっぱいにする');
   // 部屋の寸法（現地の空間に合わせる）。動かし終えたときに部屋を作り直す
@@ -424,10 +430,15 @@ export function mountRoomUi(
     };
   };
 
+  // パネルの今の値を、同じブラウザ（アプリ）の他の画面と分け合う（site モードの「映すもの」がこの値で描く。src/room/live-share.ts）
+  shareRoomSettings(collect);
+
   const statusEl = el('room-status', HTMLElement);
   const sameAsConfig = (): boolean =>
     win.widthM === configWindow.widthM && win.heightM === configWindow.heightM && win.sillHeightM === configWindow.sillHeightM;
-  const windowSizeText = (): string => state.side === 'ceiling'
+  const windowSizeText = (): string => state.side === 'ceiling-left'
+    ? `左の壁いっぱい（${room.depthM.toFixed(2)}m × ${room.heightM.toFixed(2)}m）＋ 天井いっぱい（${room.widthM.toFixed(2)}m × ${room.depthM.toFixed(2)}m）。どちらも枠なし`
+    : state.side === 'ceiling'
     ? `幅 ${win.widthM.toFixed(2)}m × 奥行き ${win.heightM.toFixed(2)}m（${(win.widthM * win.heightM).toFixed(1)}㎡）`
     : `幅 ${win.widthM.toFixed(2)}m × 高さ ${win.heightM.toFixed(2)}m、床から ${win.sillHeightM.toFixed(2)}m（${(win.widthM * win.heightM).toFixed(1)}㎡）`;
   return {
@@ -460,7 +471,7 @@ export function mountRoomUi(
         `視点  正面＝スクリーン（奥の壁）  窓＝${windowText}`,
         `窓の大きさ  ${windowSizeText()}`,
         ...(state.side === configSide ? [] : [`※ 窓の位置は room モードだけの切り替え（設定は${WINDOW_SIDE_LABEL[configSide]}）`]),
-        ...(sameAsConfig() ? [] : ['※ 窓の大きさは room モードだけの変更（設定ファイルは変わらない）']),
+        ...(sameAsConfig() || state.side === 'ceiling-left' ? [] : ['※ 窓の大きさは room モードだけの変更（設定ファイルは変わらない）']),
         ...(state.side === 'ceiling' && (settings.seaView || settings.seaRipples) ? ['※ 窓の外の海・水面の反射は、壁の窓のときだけ効く'] : []),
         ...(settings.screen ? [`スクリーン  ${findScene(screen.id).label}`] : []),
         `ライト  ${spot.mode === 'off' ? '消す' : spotOn <= 0 ? '消えている（太陽が出ている）' : `点いている ${Math.round(spotOn * 100)}%`}`,
@@ -525,7 +536,7 @@ function mountActualBar(onScale: (s: number) => void, onBack: () => void, onTogg
  * room モードのパネルの既定値（保存したファイルと同じ形）。開いたときの既定：窓は天窓で天井いっぱい、
  * 水盤はオン（水盤で跳ね返った光はオフ）、波の強さ 0.3、雲の影はオフ（ROOM_DEFAULTS）
  */
-function codeDefaults(room: RoomGeometry, configWindow: WindowGeometry) {
+export function codeDefaults(room: RoomGeometry, configWindow: WindowGeometry) {
   return {
     version: 1 as const,
     windowSide: 'ceiling' as string,

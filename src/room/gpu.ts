@@ -78,10 +78,19 @@ fn inwardNormal(face: i32) -> vec3f {
   return vec3f(0.0, 0.0, 1.0);
 }
 
-fn inWindow(face: i32, p: vec3f) -> bool {
+fn inWindow1(face: i32, p: vec3f) -> bool {
   if (face != i32(u.uWinFace)) { return false; }
   let uv = select(p.zy, p.xz, face == 2);
   return uv.x > u.uWinRect.x && uv.x < u.uWinRect.y && uv.y > u.uWinRect.z && uv.y < u.uWinRect.w;
+}
+
+// 2 つ目の窓（天窓＋左の窓のときの天窓）
+fn inWindow2(face: i32, p: vec3f) -> bool {
+  return u.uWin2On > 0.5 && face == 2 && p.x > u.uWin2Rect.x && p.x < u.uWin2Rect.y && p.z > u.uWin2Rect.z && p.z < u.uWin2Rect.w;
+}
+
+fn inWindow(face: i32, p: vec3f) -> bool {
+  return inWindow1(face, p) || inWindow2(face, p);
 }
 
 fn windowPoint(r1: f32, r2: f32) -> vec3f {
@@ -443,25 +452,32 @@ fn cosineSample(n: vec3f) -> vec3f {
 
 // 窓から見える空（と海）から受ける光（窓の面の 1 点を選ぶ）
 // 窓から入る空の光。2 通りの選び方を混ぜる（多重重点サンプリング。GLSL 版の説明を参照）
-fn windowPdf(w: vec3f, d2: f32) -> f32 {
-  let area = (u.uWinRect.y - u.uWinRect.x) * (u.uWinRect.w - u.uWinRect.z);
-  return d2 / (max(dot(windowOutward(), w), 1e-6) * area);
+// 窓が 2 つ（天窓＋左の窓）のときは、どちらの窓の点を選ぶかを半々で決める（GLSL 版の説明を参照）
+fn windowSel() -> f32 { return select(1.0, 0.5, u.uWin2On > 0.5); }
+fn windowOutwardK(k: i32) -> vec3f { return select(windowOutward(), vec3f(0.0, 1.0, 0.0), k == 2); }
+fn windowPdf(k: i32, w: vec3f, d2: f32) -> f32 {
+  let r = select(u.uWinRect, u.uWin2Rect, k == 2);
+  let area = (r.y - r.x) * (r.w - r.z);
+  return windowSel() * d2 / (max(dot(windowOutwardK(k), w), 1e-6) * area);
 }
 fn skyNee(p: vec3f, n: vec3f) -> vec3f {
+  var k = 1;
+  if (u.uWin2On > 0.5 && rnd() < 0.5) { k = 2; }
   let r1 = rnd();
   let r2 = rnd();
-  let q = windowPoint(r1, r2);
+  var q = windowPoint(r1, r2);
+  if (k == 2) { q = vec3f(mix(u.uWin2Rect.x, u.uWin2Rect.y, r1), u.uRoomMax.y, mix(u.uWin2Rect.z, u.uWin2Rect.w, r2)); }
   var w = q - p;
   let d2 = dot(w, w);
   w *= inverseSqrt(d2);
   let cp = dot(n, w);
-  let cq = dot(windowOutward(), w);
+  let cq = dot(windowOutwardK(k), w);
   if (cp <= 0.0 || cq <= 0.0) { return vec3f(0.0); }
-  return outsideRadianceAvg(w) * cp / (windowPdf(w, d2) + cp / PI);
+  return outsideRadianceAvg(w) * cp / (windowPdf(k, w, d2) + cp / PI);
 }
-fn skyBsdf(n: vec3f, d: vec3f, t: f32) -> vec3f {
+fn skyBsdf(n: vec3f, d: vec3f, t: f32, k: i32) -> vec3f {
   let pc = dot(n, d) / PI;
-  return outsideRadianceAvg(d) * pc / (windowPdf(d, t * t) + pc);
+  return outsideRadianceAvg(d) * pc / (windowPdf(k, d, t * t) + pc);
 }
 
 fn sunIrradiance(p: vec3f, n: vec3f) -> vec3f {
@@ -485,7 +501,7 @@ fn indirect(p0: vec3f, n0: vec3f) -> vec3f {
     let e = exitRoom(p, d);
     let f = e.face;
     var q = p + d * e.t;
-    if (inWindow(f, q)) { acc += thr * skyBsdf(n, d, e.t); break; } // 窓から外へ出た：空の光の 2 つ目の見本
+    if (inWindow(f, q)) { acc += thr * skyBsdf(n, d, e.t, select(1, 2, inWindow2(f, q))); break; } // 窓から外へ出た：空の光の 2 つ目の見本
     if (b >= i32(u.uBounces)) { break; }
     acc += thr * screenLight(f, q, 5.0); // スクリーンに映した映像の光が、部屋をほんのり照らす
     let n2 = inwardNormal(f);

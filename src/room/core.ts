@@ -2,7 +2,7 @@
 // 設定と日差しから、シェーダーに渡す値・光の揺らぎを描く網目の一覧・重ね合わせの重みを決める。
 // 実際に描くのは src/room/gl.ts（WebGL2）と src/room/gpu.ts（WebGPU）
 import * as THREE from 'three';
-import type { WindowSide } from '../config.ts';
+import { type WindowSide, wallWindowSide } from '../config.ts';
 import { type RGB, kelvinToRgb } from '../palette.ts';
 import { DriftBlend } from '../scenes/shader.ts';
 import { SUN_ANGULAR_RADIUS_DEG, directSunFactor, skyBrightness } from './daylight.ts';
@@ -40,7 +40,8 @@ export const CAUSTIC_FACES = [0, 1, 2, 4, 5, 6] as const;
 export const SCREEN_IMAGE = { width: 3840, height: 1080 };
 /** 雲の濃さのばらつきの大きさ（大きいほど、雲のかたまりと青空の差がはっきりする） */
 const CLOUD_CONTRAST = 1.7;
-const WINDOW_FACE: Record<WindowSide, number> = { right: 0, left: 1, ceiling: 2 };
+// 1 つ目の窓の面。天窓＋左の窓のときは、1 つ目が左の壁、2 つ目（uWin2Rect）が天窓
+const WINDOW_FACE: Record<WindowSide, number> = { right: 0, left: 1, ceiling: 2, 'ceiling-left': 1 };
 
 /** 水面の光の揺らぎを 1 回描く（水面の網目 1 枚 × 届く先の面 1 つ） */
 export interface CausticPass {
@@ -107,6 +108,7 @@ export class RoomCore {
 
   private readonly facingAzimuth: number;
   private readonly winRect = new THREE.Vector4();
+  private readonly win2Rect = new THREE.Vector4();
   private samples = 0;
   private frameNo = 0;
   private readonly lastCam = new THREE.Matrix4();
@@ -150,6 +152,9 @@ export class RoomCore {
       uRoomMax: { value: new THREE.Vector3(W / 2, H, 0) },
       uWinFace: { value: WINDOW_FACE[windowSide] },
       uWinRect: { value: this.winRect },
+      // 2 つ目の窓（天窓＋左の窓のときの天窓。天井いっぱい）
+      uWin2On: { value: windowSide === 'ceiling-left' ? 1 : 0 },
+      uWin2Rect: { value: this.win2Rect },
       uSunDir: { value: new THREE.Vector3(0, 1, 0) },
       uSunSinR: { value: Math.sin((SUN_ANGULAR_RADIUS_DEG * Math.PI) / 180) },
       uSunE: { value: new THREE.Vector3() },
@@ -230,7 +235,14 @@ export class RoomCore {
     const horizSun = sunE.clone().multiplyScalar(Math.max(0, Math.sin((sun.altitude * Math.PI) / 180)));
     const ground = horizSun.add(top.clone().add(bottom).multiplyScalar(0.5 * Math.PI)).multiplyScalar(GROUND_ALBEDO / Math.PI);
 
-    this.winRect.fromArray(windowRect(windowSide, this.room, settings.window));
+    if (windowSide === 'ceiling-left') {
+      // 天窓＋左の窓：どちらも枠なし。左の窓は左の壁いっぱい（奥行き全部・床から天井まで）、天窓は天井いっぱい。パネルの窓の大きさは使わない
+      const { widthM: W, depthM: D, heightM: H } = this.room;
+      this.winRect.set(-D, 0, 0, H);
+      this.win2Rect.fromArray(windowRect('ceiling', this.room, { widthM: W, heightM: D, sillHeightM: 0 }));
+    } else {
+      this.winRect.fromArray(windowRect(windowSide, this.room, settings.window));
+    }
     const now = (performance.now() - this.t0) / 1000;
     const dt = this.lastT < 0 ? 0 : Math.min(0.25, now - this.lastT);
     this.lastT = now;
@@ -370,12 +382,12 @@ export class RoomCore {
 
   // 窓の外の水面のうち、反射した日差しが窓を通る範囲（窓の四隅から、反射した光の向きを逆にたどって水面に下ろす）
   private seaPatch(sunDir: THREE.Vector3, seaY: number): { o: THREE.Vector3; u: THREE.Vector3; v: THREE.Vector3 } | null {
-    const windowSide = this.windowSide;
+    const wall = wallWindowSide(this.windowSide);
     const W = this.room.widthM;
-    if (windowSide === 'ceiling' || sunDir.y < 0.02) return null;
+    if (!wall || sunDir.y < 0.02) return null;
     const r = new THREE.Vector3(-sunDir.x, sunDir.y, -sunDir.z); // 平らな水面で反射した光の進む向き
-    const wx = windowSide === 'right' ? W / 2 : -W / 2;
-    if ((windowSide === 'right' && r.x >= 0) || (windowSide === 'left' && r.x <= 0)) return null; // 太陽が窓の側にない
+    const wx = wall === 'right' ? W / 2 : -W / 2;
+    if ((wall === 'right' && r.x >= 0) || (wall === 'left' && r.x <= 0)) return null; // 太陽が窓の側にない
     const down = (y: number, z: number): THREE.Vector3 => {
       const c = new THREE.Vector3(wx, y, z);
       return c.addScaledVector(r, -(y - seaY) / r.y);

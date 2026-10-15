@@ -7,3 +7,6 @@ __pycache__/
 .env
 logs/
 dist-electron/
+src/img/test/
+docs/private/
+src/private/

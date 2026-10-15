@@ -236,6 +236,14 @@ export function createRoomScene(
       const c = [pt(wr.x, wr.z), pt(wr.y, wr.z), pt(wr.y, wr.w), pt(wr.x, wr.w)];
       for (let i = 0; i < 4; i++) line(c[i]!, c[(i + 1) % 4]!);
     });
+    // 2 つ目の窓（天窓＋左の窓のときの天窓）
+    if (core.shared.uWin2On.value > 0.5) {
+      const r2 = core.shared.uWin2Rect.value;
+      stroke('rgba(80, 255, 200, 0.9)', 2, () => {
+        const c = [V(r2.x, H, r2.z), V(r2.y, H, r2.z), V(r2.y, H, r2.w), V(r2.x, H, r2.w)];
+        for (let i = 0; i < 4; i++) line(c[i]!, c[(i + 1) % 4]!);
+      });
+    }
     // スクリーン（奥の壁）
     const sr = core.shared.uScreenRect.value;
     stroke('rgba(255, 220, 80, 0.9)', 2, () => {

@@ -61,12 +61,12 @@ def resolve_site(config, site_name=None):
         side = s["window"]["side"]
         if side == "right":
             window_az = facing + 90
-        elif side == "left":
-            window_az = facing - 90
+        elif side in ("left", "ceiling-left"):
+            window_az = facing - 90  # 天窓＋左の窓は、左の壁の窓の外向き
         elif side == "ceiling":
             window_az = facing  # 天窓では入射の計算に使わない
         else:
-            raise ValueError(f'window.side は "left" / "right" / "ceiling": {side}')
+            raise ValueError(f'window.side は "left" / "right" / "ceiling" / "ceiling-left": {side}')
     return {
         "name": site_name,
         "label": s.get("label"),
@@ -86,11 +86,14 @@ def light_on_screen(sun, site):
     x = -math.cos(a) * math.cos(math.radians(sun["azimuth"] - site["rightAzimuth"]))
     y = -math.sin(a)
     z = -math.cos(a) * math.cos(math.radians(sun["azimuth"] - site["facingAzimuth"]))
-    # 壁の窓は外向きが水平（方位 windowAzimuth）、天窓は外向きが真上
+    # 壁の窓は外向きが水平（方位 windowAzimuth）、天窓は外向きが真上。天窓＋左の窓は、太陽をよく受ける方（大きい方）
+    wall = math.cos(a) * math.cos(math.radians(sun["azimuth"] - site["windowAzimuth"]))
     if site.get("windowSide") == "ceiling":
         incidence = math.sin(a)
+    elif site.get("windowSide") == "ceiling-left":
+        incidence = max(math.sin(a), wall)
     else:
-        incidence = math.cos(a) * math.cos(math.radians(sun["azimuth"] - site["windowAzimuth"]))
+        incidence = wall
     length = math.hypot(x, y)
     return {
         "x": x, "y": y, "z": z,

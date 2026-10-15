@@ -1,5 +1,5 @@
 // three.js 非依存。src/solar.py と同じ式・同じ API を保つこと（tests/ で両方を同じ基準値で検証）。
-import type { SiteConfig, WindowSide } from './config.ts';
+import { type SiteConfig, type WindowSide, wallWindowSide } from './config.ts';
 
 export interface SunPosition {
   /** 北=0°, 東=90°（時計回り） */
@@ -89,7 +89,8 @@ export function resolveSite(config: SiteConfig, siteName: string = config.active
     scr.azimuthReference === 'magnetic' ? scr.facingAzimuth + scr.magneticDeclination : scr.facingAzimuth,
   );
   const side = s.window.side;
-  const windowAz = s.window.facingAzimuth ?? (side === 'right' ? facing + 90 : side === 'left' ? facing - 90 : facing);
+  const wall = wallWindowSide(side);
+  const windowAz = s.window.facingAzimuth ?? (wall === 'right' ? facing + 90 : wall === 'left' ? facing - 90 : facing);
   return {
     name: siteName,
     label: s.label,
@@ -107,7 +108,8 @@ export function resolveSite(config: SiteConfig, siteName: string = config.active
 export function withWindowSide(site: Site, side: WindowSide): Site {
   if (side === site.windowSide) return site;
   const f = site.facingAzimuth;
-  return { ...site, windowSide: side, windowAzimuth: norm360(side === 'right' ? f + 90 : side === 'left' ? f - 90 : f) };
+  const wall = wallWindowSide(side);
+  return { ...site, windowSide: side, windowAzimuth: norm360(wall === 'right' ? f + 90 : wall === 'left' ? f - 90 : f) };
 }
 
 type ScreenFrame = Pick<Site, 'facingAzimuth' | 'rightAzimuth' | 'windowAzimuth'> & Partial<Pick<Site, 'windowSide'>>;
@@ -117,10 +119,11 @@ export function lightOnScreen(sun: Pick<SunPosition, 'azimuth' | 'altitude'>, si
   const x = -Math.cos(a) * Math.cos((sun.azimuth - site.rightAzimuth) * RAD);
   const y = -Math.sin(a);
   const z = -Math.cos(a) * Math.cos((sun.azimuth - site.facingAzimuth) * RAD);
-  // 壁の窓は外向きが水平（方位 windowAzimuth）、天窓は外向きが真上
+  // 壁の窓は外向きが水平（方位 windowAzimuth）、天窓は外向きが真上。天窓＋左の窓は、太陽をよく受ける方（大きい方）
+  const wallIncidence = Math.cos(a) * Math.cos((sun.azimuth - site.windowAzimuth) * RAD);
   const windowIncidence = site.windowSide === 'ceiling'
     ? Math.sin(a)
-    : Math.cos(a) * Math.cos((sun.azimuth - site.windowAzimuth) * RAD);
+    : site.windowSide === 'ceiling-left' ? Math.max(Math.sin(a), wallIncidence) : wallIncidence;
   const len = Math.hypot(x, y);
   return {
     x, y, z,

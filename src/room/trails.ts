@@ -146,6 +146,15 @@ export class TrailLayer {
     return tex;
   }
 
+  /** 片付ける（WebGL のコンテキストも手放す。作り直しを繰り返してもコンテキストが溜まらないように） */
+  dispose(): void {
+    this.geometry.dispose();
+    this.material.dispose();
+    this.tex.dispose();
+    this.renderer.dispose();
+    this.renderer.forceContextLoss();
+  }
+
   /** 描く大きさ（出す大きさの画素。部屋の計算の解像度とは別） */
   setSize(w: number, h: number): void {
     const W = Math.max(1, Math.round(w)), H = Math.max(1, Math.round(h));

@@ -4,7 +4,7 @@ import type { AppMode } from '../config.ts';
 import { APP_MODES } from '../config.ts';
 import { el } from './dom.ts';
 
-const LABEL: Record<AppMode, string> = { verify: '検証', visuals: 'visuals', room: 'room', kiosk: '展示' };
+const LABEL: Record<AppMode, string> = { verify: '検証', visuals: 'visuals', room: 'room', site: 'site', kiosk: '展示' };
 const pad = (n: number): string => String(n).padStart(2, '0');
 
 /**

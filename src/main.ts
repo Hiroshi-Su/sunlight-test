@@ -73,8 +73,26 @@ if (mode !== 'kiosk') mountModeSwitch(mode, clock, bridge ? (m) => bridge.setMod
 const screenCanvas = el('screen', HTMLCanvasElement);
 const overlay = el('overlay', HTMLCanvasElement);
 const overlayCtx = overlay.getContext('2d')!;
+// site モード：設置場所の三次元のプレビュー。会場のデータと本体は src/private/site/（Git から外している）にあり、
+// ないときはそのことだけ表示する。描画は site モードが自分で行うので、下の描画ループは動かさない
+if (mode === 'site') {
+  const load = Object.values(import.meta.glob<{ mountSite: (ctx: unknown) => void }>('./private/site/index.ts'))[0];
+  if (load) {
+    const entry = siteConfig.sites[site.name]!;
+    (await load()).mountSite({
+      clock, visuals: visualsConfig, heartbeat: bridge ? (b: Heartbeat) => bridge.heartbeat(b) : undefined,
+      // room モードの絵をスクリーンに映すときに使う（部屋の寸法・窓の大きさ・保存した room の設定）
+      room: { geometry: entry.room, window: entry.window, saved: bridge ? bridge.room : await loadRoomSettingsInBrowser() },
+    });
+  } else {
+    const msg = document.createElement('p');
+    msg.textContent = 'site モードのデータ（src/private/site/）がこの環境にありません。';
+    document.body.append(msg);
+  }
+}
+
 // 描画の方式：WebGPU が使えれば WebGPU、使えない環境や ?gpu=webgl のときは WebGL2（どちらも同じ映像になる）
-const webgpu = params.get('gpu') === 'webgl' ? null : await initWebGpu();
+const webgpu = params.get('gpu') === 'webgl' || mode === 'site' ? null : await initWebGpu();
 const stage: StageLike = webgpu ? new GpuStage(screenCanvas, W, H, webgpu) : new Stage(screenCanvas, W, H);
 // WebGPU の命令の誤り（シェーダーの書き間違いなど）は黙って描かれなくなるので、画面の console とログに出す（最初の 20 件まで）
 let gpuErrors = 0;
@@ -289,4 +307,4 @@ function frame(now: number): void {
 }
 
 bridge?.report('renderer-ready', { mode, w: innerWidth, h: innerHeight, dpr: devicePixelRatio, canvas: [W, H] });
-requestAnimationFrame(frame);
+if (mode !== 'site') requestAnimationFrame(frame);

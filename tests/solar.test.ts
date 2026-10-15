@@ -102,3 +102,17 @@ test('窓の位置の切り替え：窓の外向きも位置に合わせて変�
   assert.equal(lightOnScreen(sun, left).entersWindow, false);
   assert.equal(lightOnScreen(sun, withWindowSide(right, 'ceiling')).entersWindow, true);
 });
+
+test('天窓＋左の窓：窓の外向きは左の窓と同じ。どちらかの窓から入れば入る', () => {
+  const cfg = parseSiteConfig(JSON.parse(readFileSync(new URL('../config/site.json', import.meta.url), 'utf8')));
+  const right = resolveSite(cfg);
+  const both = withWindowSide(right, 'ceiling-left');
+  assert.equal(both.windowAzimuth, 328.5);
+  // 冬至 10 時ごろの太陽は右側：左の窓からは入らないが、天窓からは入る（天窓の入り方 = sin(高度)）
+  const sun = { azimuth: 154.7, altitude: 26.4 };
+  const l = lightOnScreen(sun, both);
+  assert.equal(l.entersWindow, true);
+  assert.ok(Math.abs(l.windowIncidence - Math.sin((26.4 * Math.PI) / 180)) < 1e-9);
+  // 沈んでいれば入らない
+  assert.equal(lightOnScreen({ azimuth: 300, altitude: -1 }, both).entersWindow, false);
+});

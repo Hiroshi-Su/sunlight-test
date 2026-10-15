@@ -127,7 +127,7 @@ function createWindow(): void {
       frame: false, resizable: false, movable: false, fullscreenable: false,
       enableLargerThanScreen: true, hasShadow: false,
     })
-    : new BrowserWindow({ ...common, width: 1600, height: mode === 'visuals' || mode === 'room' ? 1100 : 1000 });
+    : new BrowserWindow({ ...common, width: 1600, height: mode === 'visuals' || mode === 'room' || mode === 'site' ? 1100 : 1000 });
   win = created;
 
   created.once('ready-to-show', () => {
