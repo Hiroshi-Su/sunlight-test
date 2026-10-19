@@ -12,6 +12,11 @@
 
 ## 1. 全体像
 
+構成図（画像。元のファイルは `.vectorcraft`（VectorCraft で開いて直す）と `.svg`）：
+
+- 本番（展示）の構成：[diagrams/system-production.png](diagrams/system-production.png)。展示では検証用のモードは出さず、room モードを元にした空間を映す（7 章）
+- 検証用の構成：[diagrams/system-verification.png](diagrams/system-verification.png)。このリポジトリで今動いているもの（4 つのモード・テスト・検証場所での見比べ）
+
 ```mermaid
 flowchart LR
   GH["GitHub（main）"] -- push --> ACT["GitHub Actions"]

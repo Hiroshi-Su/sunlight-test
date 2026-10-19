@@ -110,7 +110,7 @@ fn windowOutward() -> vec3f {
 }
 
 fn onScreen(face: i32, p: vec3f) -> bool {
-  return face == 5 && p.x > u.uScreenRect.x && p.x < u.uScreenRect.y && p.y > u.uScreenRect.z && p.y < u.uScreenRect.w;
+  return u.uScreenArea > 0.5 && face == 5 && p.x > u.uScreenRect.x && p.x < u.uScreenRect.y && p.y > u.uScreenRect.z && p.y < u.uScreenRect.w;
 }
 
 fn albedo(face: i32, p: vec3f) -> vec3f {

@@ -1,0 +1,151 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1190" viewBox="0 0 1800 1190" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+<defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#7b8794"/></marker></defs>
+<rect width="1800" height="1190" fill="#ffffff"/>
+<text x="40" y="50" font-size="28" font-weight="700" fill="#1f2933">Soracity システム構成図（本番）</text>
+<text x="40" y="78" font-size="14" fill="#52606d">展示で動かす構成（2026-10-16 時点の予定）。実線＝検証用リポジトリで実装済み、破線＝設計のみ・未定</text>
+<text x="40" y="118" font-size="15" font-weight="700" fill="#4a86c5">開発・更新</text>
+<rect x="40" y="130" width="340" height="170" rx="10" fill="#e8f1fb" stroke="#4a86c5" stroke-width="2"/>
+<text x="54" y="156" font-size="17" font-weight="700" fill="#1f2933">開発 PC（検証用）</text>
+<text x="54" y="179" font-size="13.5" fill="#52606d">検証用のモードで確かめる（本番には出さない）</text>
+<text x="54" y="199.5" font-size="13.5" fill="#52606d">検証・visuals・room（パネルで調整）</text>
+<text x="54" y="220" font-size="13.5" fill="#52606d">テスト：TypeScript ＋ Python（pvlib）</text>
+<text x="54" y="240.5" font-size="13.5" fill="#52606d">ビルド：dist/ ＋ dist-electron/</text>
+<rect x="40" y="360" width="340" height="110" rx="10" fill="#e8f1fb" stroke="#4a86c5" stroke-width="2"/>
+<text x="54" y="386" font-size="17" font-weight="700" fill="#1f2933">GitHub（main）</text>
+<text x="54" y="409" font-size="13.5" fill="#52606d">本番用の非公開リポジトリ（予定）</text>
+<text x="54" y="429.5" font-size="13.5" fill="#52606d">検証用の sunlight-test を元に作る</text>
+<rect x="40" y="530" width="340" height="140" rx="10" fill="#ffffff" stroke="#9aa5b1" stroke-width="2" stroke-dasharray="8 6"/>
+<text x="54" y="556" font-size="17" font-weight="700" fill="#1f2933">更新の実行役（設計）</text>
+<text x="54" y="579" font-size="13.5" fill="#52606d">セルフホストランナー</text>
+<text x="54" y="599.5" font-size="13.5" fill="#52606d">（予備：定期的に git fetch）</text>
+<text x="54" y="620" font-size="13.5" fill="#52606d">取り出し → テスト → 切り替え</text>
+<text x="54" y="640.5" font-size="13.5" fill="#52606d">失敗したら前の版に戻す</text>
+<rect x="40" y="770" width="340" height="120" rx="10" fill="#ffffff" stroke="#9aa5b1" stroke-width="2" stroke-dasharray="8 6"/>
+<text x="54" y="796" font-size="17" font-weight="700" fill="#1f2933">OpenWeather（設計）</text>
+<text x="54" y="819" font-size="13.5" fill="#52606d">現在の天気を 10 分ごとに取得</text>
+<text x="54" y="839.5" font-size="13.5" fill="#52606d">雲量・湿度・気温・風・雨</text>
+<text x="54" y="860" font-size="13.5" fill="#52606d">ネットがなくても映像は止めない</text>
+<path d="M210,300 L210,360" fill="none" stroke="#7b8794" stroke-width="2" marker-end="url(#a)"/>
+<text x="222" y="335" font-size="12.5" fill="#52606d" text-anchor="start">push</text>
+<path d="M210,470 L210,530" fill="none" stroke="#7b8794" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#a)"/>
+<text x="222" y="505" font-size="12.5" fill="#52606d" text-anchor="start">main への push</text>
+<rect x="420" y="130" width="940" height="960" rx="14" fill="#f5f6f8" stroke="#9aa5b1" stroke-width="2"/>
+<text x="434" y="156" font-size="19" font-weight="700" fill="#1f2933">展示 PC：Mac mini（M5 Pro・48GB、予定）</text>
+<rect x="450" y="180" width="260" height="90" rx="10" fill="#ffffff" stroke="#9aa5b1" stroke-width="2" stroke-dasharray="8 6"/>
+<text x="464" y="206" font-size="17" font-weight="700" fill="#1f2933">版の置き場（設計）</text>
+<text x="464" y="229" font-size="13.5" fill="#52606d">releases/〈版〉・current</text>
+<rect x="750" y="180" width="300" height="90" rx="10" fill="#ffffff" stroke="#3e4c59" stroke-width="2"/>
+<text x="764" y="206" font-size="17" font-weight="700" fill="#1f2933">監視スクリプト</text>
+<text x="764" y="229" font-size="13.5" fill="#52606d">scripts/supervise.ts</text>
+<text x="764" y="249.5" font-size="13.5" fill="#52606d">落ちたら 5 秒後に起動し直す</text>
+<path d="M380,600 L415,600 L415,225 L450,225" fill="none" stroke="#7b8794" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#a)"/>
+<path d="M710,225 L750,225" fill="none" stroke="#7b8794" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#a)"/>
+<path d="M900,270 L900,320" fill="none" stroke="#7b8794" stroke-width="2" marker-end="url(#a)"/>
+<text x="912" y="300" font-size="12.5" fill="#52606d" text-anchor="start">起動</text>
+<rect x="450" y="320" width="880" height="600" rx="12" fill="#ffffff" stroke="#3e4c59" stroke-width="2"/>
+<text x="464" y="346" font-size="18" font-weight="700" fill="#1f2933">Electron アプリ</text>
+<rect x="470" y="365" width="340" height="535" rx="10" fill="#eef7ee" stroke="#4f9a5b" stroke-width="2"/>
+<text x="484" y="391" font-size="17" font-weight="700" fill="#1f2933">メインプロセス（Node.js）</text>
+<rect x="485" y="410" width="310" height="110" rx="10" fill="#ffffff" stroke="#4f9a5b" stroke-width="2"/>
+<text x="499" y="436" font-size="15" font-weight="700" fill="#1f2933">設定の読み込み・検証</text>
+<text x="499" y="457" font-size="13" fill="#52606d">config/app.json・site.json</text>
+<text x="499" y="477" font-size="13" fill="#52606d">部屋の設定（room.json）</text>
+<text x="499" y="497" font-size="13" fill="#52606d">.env（緯度経度の上書き）</text>
+<rect x="485" y="532" width="310" height="128" rx="10" fill="#ffffff" stroke="#4f9a5b" stroke-width="2"/>
+<text x="499" y="558" font-size="15" font-weight="700" fill="#1f2933">監視・ログ・復帰</text>
+<text x="499" y="579" font-size="13" fill="#52606d">ハートビート（10 秒ごと）</text>
+<text x="499" y="599" font-size="13" fill="#52606d">クラッシュ・GPU の喪失から復帰</text>
+<text x="499" y="619" font-size="13" fill="#52606d">毎日決まった時刻に再読み込み</text>
+<text x="499" y="639" font-size="13" fill="#52606d">スリープしない</text>
+<rect x="485" y="672" width="310" height="80" rx="10" fill="#ffffff" stroke="#4f9a5b" stroke-width="2"/>
+<text x="499" y="698" font-size="15" font-weight="700" fill="#1f2933">設定の保存</text>
+<text x="499" y="719" font-size="13" fill="#52606d">部屋の設定・視点の調整を書き込む</text>
+<rect x="485" y="764" width="310" height="122" rx="10" fill="#ffffff" stroke="#9aa5b1" stroke-width="2" stroke-dasharray="8 6"/>
+<text x="499" y="790" font-size="15" font-weight="700" fill="#1f2933">気象データ（設計）</text>
+<text x="499" y="811" font-size="13" fill="#52606d">最新 → 保存した値 → 平年値</text>
+<text x="499" y="831" font-size="13" fill="#52606d">の 3 段階で必ず値を決める</text>
+<text x="499" y="851" font-size="13" fill="#52606d">値は数分かけてゆっくり変える</text>
+<rect x="840" y="365" width="110" height="535" rx="10" fill="#f3eefb" stroke="#8a63c4" stroke-width="2"/>
+<text x="895" y="391" font-size="15" font-weight="700" fill="#1f2933" text-anchor="middle">preload</text>
+<text x="895" y="412" font-size="12.5" fill="#52606d" text-anchor="middle">bridge.ts</text>
+<text x="895" y="431.5" font-size="12.5" fill="#52606d" text-anchor="middle"></text>
+<text x="895" y="451" font-size="12.5" fill="#52606d" text-anchor="middle">IPC</text>
+<text x="895" y="470.5" font-size="12.5" fill="#52606d" text-anchor="middle"></text>
+<text x="895" y="490" font-size="12.5" fill="#52606d" text-anchor="middle">起動時の設定</text>
+<text x="895" y="509.5" font-size="12.5" fill="#52606d" text-anchor="middle">ハートビート</text>
+<text x="895" y="529" font-size="12.5" fill="#52606d" text-anchor="middle">保存</text>
+<text x="895" y="548.5" font-size="12.5" fill="#52606d" text-anchor="middle">異常の報告</text>
+<text x="895" y="568" font-size="12.5" fill="#52606d" text-anchor="middle">天気（設計）</text>
+<path d="M810,600 L840,600" fill="none" stroke="#7b8794" stroke-width="2" marker-end="url(#a)" marker-start="url(#a)"/>
+<path d="M950,600 L980,600" fill="none" stroke="#7b8794" stroke-width="2" marker-end="url(#a)" marker-start="url(#a)"/>
+<rect x="980" y="365" width="335" height="535" rx="10" fill="#fff6e5" stroke="#d08a1e" stroke-width="2"/>
+<text x="994" y="391" font-size="17" font-weight="700" fill="#1f2933">描画プロセス（画面）</text>
+<rect x="995" y="410" width="305" height="90" rx="10" fill="#ffffff" stroke="#d08a1e" stroke-width="2"/>
+<text x="1009" y="436" font-size="15" font-weight="700" fill="#1f2933">時計 → 太陽の位置</text>
+<text x="1009" y="457" font-size="13" fill="#52606d">clock.ts → solar.ts（NOAA）</text>
+<text x="1009" y="477" font-size="13" fill="#52606d">光の向き・高さ・色温度</text>
+<rect x="995" y="512" width="305" height="132" rx="10" fill="#ffffff" stroke="#d08a1e" stroke-width="2"/>
+<text x="1009" y="538" font-size="15" font-weight="700" fill="#1f2933">映像の中の空間</text>
+<text x="1009" y="559" font-size="13" fill="#52606d">room モードの部屋を元にする</text>
+<text x="1009" y="579" font-size="13" fill="#52606d">パストレーシングで日差しを再現</text>
+<text x="1009" y="599" font-size="13" fill="#52606d">水面の反射・光の軌跡</text>
+<text x="1009" y="619" font-size="13" fill="#52606d">水盤・雲（軽い方法）</text>
+<rect x="995" y="656" width="305" height="100" rx="10" fill="#ffffff" stroke="#9aa5b1" stroke-width="2" stroke-dasharray="8 6"/>
+<text x="1009" y="682" font-size="15" font-weight="700" fill="#1f2933">展示用の出し方（設計）</text>
+<text x="1009" y="703" font-size="13" fill="#52606d">枠なし全画面・パネルなし</text>
+<text x="1009" y="723" font-size="13" fill="#52606d">視点を固定・保存した設定で開く</text>
+<rect x="995" y="768" width="305" height="118" rx="10" fill="#ffffff" stroke="#d08a1e" stroke-width="2"/>
+<text x="1009" y="794" font-size="15" font-weight="700" fill="#1f2933">描画</text>
+<text x="1009" y="815" font-size="13" fill="#52606d">WebGPU（three.js）</text>
+<text x="1009" y="835" font-size="13" fill="#52606d">使えなければ自動で WebGL2</text>
+<text x="1009" y="855" font-size="13" fill="#52606d">1 枚の映像を 2 台にまたがって出す</text>
+<rect x="450" y="960" width="300" height="110" rx="10" fill="#ffffff" stroke="#3e4c59" stroke-width="2"/>
+<text x="464" y="986" font-size="17" font-weight="700" fill="#1f2933">ログ（logs/）</text>
+<text x="464" y="1009" font-size="13" fill="#52606d">起動・復帰・異常、5 分ごとの</text>
+<text x="464" y="1029" font-size="13" fill="#52606d">FPS・メモリ・太陽の値</text>
+<text x="464" y="1049" font-size="13" fill="#52606d">npm run logs で集計</text>
+<rect x="780" y="960" width="550" height="110" rx="10" fill="#ffffff" stroke="#9aa5b1" stroke-width="2" stroke-dasharray="8 6"/>
+<text x="794" y="986" font-size="17" font-weight="700" fill="#1f2933">現地の置き場（設計・git の外）</text>
+<text x="794" y="1009" font-size="13" fill="#52606d">~/soracity/local/：現地の設定・調整値・API キー</text>
+<text x="794" y="1029" font-size="13" fill="#52606d">気象データの保存・ログ（版を入れ替えても残る）</text>
+<path d="M600,920 L600,960" fill="none" stroke="#7b8794" stroke-width="2" marker-end="url(#a)"/>
+<text x="612" y="945" font-size="12.5" fill="#52606d" text-anchor="start">書く</text>
+<path d="M880,920 L880,960" fill="none" stroke="#7b8794" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#a)" marker-start="url(#a)"/>
+<text x="892" y="945" font-size="12.5" fill="#52606d" text-anchor="start">読む・書く</text>
+<path d="M380,830 L485,830" fill="none" stroke="#7b8794" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#a)"/>
+<text x="400" y="820" font-size="12.5" fill="#52606d" text-anchor="middle">HTTPS</text>
+<text x="1400" y="118" font-size="15" font-weight="700" fill="#c4566b">出力・周辺機器</text>
+<rect x="1400" y="300" width="360" height="160" rx="10" fill="#fdecef" stroke="#c4566b" stroke-width="2"/>
+<text x="1414" y="326" font-size="17" font-weight="700" fill="#1f2933">プロジェクター ×2</text>
+<text x="1414" y="349" font-size="13.5" fill="#52606d">機種は未定（system.md 10 章）</text>
+<text x="1414" y="369.5" font-size="13.5" fill="#52606d">1 台目：HDMI</text>
+<text x="1414" y="390" font-size="13.5" fill="#52606d">2 台目：USB-C（Thunderbolt）→ HDMI</text>
+<text x="1414" y="410.5" font-size="13.5" fill="#52606d">並べ方（端を重ねるか）は未定</text>
+<rect x="1400" y="510" width="360" height="80" rx="10" fill="#fdecef" stroke="#c4566b" stroke-width="2"/>
+<text x="1414" y="536" font-size="17" font-weight="700" fill="#1f2933">スクリーン（ロビー）</text>
+<text x="1414" y="559" font-size="13.5" fill="#52606d">外光の中で日差しの映像を映す</text>
+<rect x="1400" y="680" width="360" height="90" rx="10" fill="#fdecef" stroke="#c4566b" stroke-width="2"/>
+<text x="1414" y="706" font-size="17" font-weight="700" fill="#1f2933">保守用の画面</text>
+<text x="1414" y="729" font-size="13.5" fill="#52606d">USB-C 1 本・展示中もつないだまま</text>
+<rect x="1400" y="820" width="360" height="80" rx="10" fill="#fdecef" stroke="#c4566b" stroke-width="2"/>
+<text x="1414" y="846" font-size="17" font-weight="700" fill="#1f2933">キーボード・マウス</text>
+<text x="1414" y="869" font-size="13.5" fill="#52606d">Bluetooth</text>
+<rect x="1400" y="960" width="360" height="110" rx="10" fill="#ffffff" stroke="#9aa5b1" stroke-width="2" stroke-dasharray="8 6"/>
+<text x="1414" y="986" font-size="17" font-weight="700" fill="#1f2933">UPS（付けるか未定）</text>
+<text x="1414" y="1009" font-size="13.5" fill="#52606d">停電への備え</text>
+<text x="1414" y="1029.5" font-size="13.5" fill="#52606d">電池が減ったら PC が自分で終了</text>
+<path d="M1330,380 L1400,380" fill="none" stroke="#7b8794" stroke-width="2" marker-end="url(#a)"/>
+<text x="1365" y="370" font-size="12.5" fill="#52606d" text-anchor="middle">HDMI ×2</text>
+<path d="M1580,460 L1580,510" fill="none" stroke="#7b8794" stroke-width="2" marker-end="url(#a)"/>
+<text x="1592" y="490" font-size="12.5" fill="#52606d" text-anchor="start">投影</text>
+<path d="M1330,725 L1400,725" fill="none" stroke="#7b8794" stroke-width="2" marker-end="url(#a)"/>
+<text x="1380" y="745" font-size="12.5" fill="#52606d" text-anchor="middle">USB-C</text>
+<path d="M1400,860 L1360,860" fill="none" stroke="#7b8794" stroke-width="2" marker-end="url(#a)"/>
+<path d="M1400,1015 L1360,1015" fill="none" stroke="#7b8794" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#a)"/>
+<text x="1380" y="1005" font-size="12.5" fill="#52606d" text-anchor="middle">電源</text>
+<rect x="40" y="1114" width="34" height="20" rx="4" fill="#fff" stroke="#3e4c59" stroke-width="2"/>
+<text x="84" y="1130" font-size="13.5" fill="#52606d">検証用リポジトリで実装済み</text>
+<rect x="290" y="1114" width="34" height="20" rx="4" fill="#fff" stroke="#9aa5b1" stroke-width="2" stroke-dasharray="6 4"/>
+<text x="334" y="1130" font-size="13.5" fill="#52606d">設計のみ・未定（system.md 4〜7 章）</text>
+<text x="40" y="1162" font-size="13" fill="#52606d">検証用のモード（検証・visuals・room）は本番には出さない。設置場所の情報（位置・寸法）はこの図に含めていない。詳しくは docs/system.md 7 章。</text>
+</svg>

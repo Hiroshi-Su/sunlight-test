@@ -181,6 +181,7 @@ export class RoomCore {
       uCloudOffA: { value: new THREE.Vector3() },
       uCloudOffB: { value: new THREE.Vector3() },
       uCloudBlend: { value: 0 },
+      uScreenArea: { value: 0 },
       uScreenOn: { value: 0 },
       uScreenGain: { value: 0.6 },
       uScreenOut: { value: new THREE.Vector2(0, 1) },
@@ -266,6 +267,7 @@ export class RoomCore {
 
     // スクリーンの映像
     const screen = settings.screen && input.screen ? input.screen : null;
+    s.uScreenArea.value = settings.screenArea || screen ? 1 : 0;
     s.uScreenOn.value = screen ? 1 : 0;
     s.uScreenGain.value = settings.screenGain;
     if (screen) s.uScreenOut.value.set(screen.outMin, screen.outMax);
@@ -297,7 +299,7 @@ export class RoomCore {
       moon.on, moon.strength, moon.skyStrength, moon.color, moon.azimuthDeg, moon.altitudeDeg,
       settings.bounces, settings.seaView, settings.seaRipples, settings.pool, settings.poolReflect, settings.waveAmp, settings.poolDepthM, settings.seaLevelM, this.winRect.toArray(),
       cloudsOn, settings.cloudShadow, settings.cloudAmount, settings.cloudOpacity, settings.cloudSizeM, settings.cloudHeightM,
-      !!screen, screen?.def.id, settings.screenGain,
+      settings.screenArea, !!screen, screen?.def.id, settings.screenGain,
     ].join();
     if (!this.lastCam.equals(camera.matrixWorld) || !this.lastProj.equals(camera.projectionMatrix) || key !== this.refKey) {
       this.samples = 0;

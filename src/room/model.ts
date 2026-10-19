@@ -72,6 +72,8 @@ export interface RoomRenderSettings {
   /** 雲の高さでの風速（m/s）と、風が吹いてくる方位（度、真北 0・東 90） */
   windMS: number;
   windFromDeg: number;
+  /** 奥の壁に、投影する場所（スクリーンの長方形）を少し違う色で示す。映像を映しているときは、オフでも映像の所は示す */
+  screenArea: boolean;
   /** スクリーンに映像を映す（映像は RoomInput.screen） */
   screen: boolean;
   /** スクリーンの明るさ（プロジェクターの明るさ） */

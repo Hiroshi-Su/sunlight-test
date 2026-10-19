@@ -325,6 +325,7 @@ export function mountRoomUi(
 
   // スクリーン：visuals の映像を、奥の壁のスクリーンに投影したように映す（調整値は config/visuals.json の保存値）
   const fs = gui.addFolder('スクリーン');
+  fs.add(settings, 'screenArea').name('奥の壁に投影する場所を示す');
   fs.add(settings, 'screen').name('スクリーンに映像を映す');
   fs.add(screen, 'id', Object.fromEntries(SCENES.map((d) => [d.label, d.id]))).name('映す映像');
   fs.add(settings, 'screenGain', 0, 3, 0.01).name('プロジェクターの明るさ');
@@ -550,7 +551,7 @@ export function codeDefaults(room: RoomGeometry, configWindow: WindowGeometry) {
       waveAmp: ROOM_DEFAULTS.waveAmp as number, poolDepthM: 0.3, seaLevelM: -1,
       clouds: false, cloudShadow: ROOM_DEFAULTS.cloudShadow as boolean, cloudAmount: 0.45, cloudOpacity: 0.8,
       cloudSizeM: 1500, cloudHeightM: 1500, windMS: 30, windFromDeg: 270,
-      screen: false, screenGain: 0.6,
+      screenArea: false, screen: false, screenGain: 0.6,
       trails: { ...TRAIL_DEFAULTS },
       moon: { ...MOON_DEFAULTS },
     },

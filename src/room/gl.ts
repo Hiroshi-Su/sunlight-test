@@ -38,6 +38,7 @@ uniform vec3 uSkyTop;
 uniform vec3 uSkyBottom;
 uniform vec3 uGround;
 uniform vec4 uScreenRect;    // スクリーン面（奥の壁の x0, x1, y0, y1）
+uniform int uScreenArea;     // スクリーン面を壁と分けて示す（0 なら、ただの壁として扱う）
 uniform int uSeaOn;          // 窓の外に海を描く
 uniform float uSeaY;         // 窓の外の水面の高さ
 uniform vec3 uSeaBody;       // 水の中から出てくる光（水の色）
@@ -152,7 +153,7 @@ vec3 windowOutward() {
 }
 
 bool onScreen(int face, vec3 p) {
-  return face == 5 && p.x > uScreenRect.x && p.x < uScreenRect.y && p.y > uScreenRect.z && p.y < uScreenRect.w;
+  return uScreenArea != 0 && face == 5 && p.x > uScreenRect.x && p.x < uScreenRect.y && p.y > uScreenRect.z && p.y < uScreenRect.w;
 }
 
 vec3 albedo(int face, vec3 p) {
