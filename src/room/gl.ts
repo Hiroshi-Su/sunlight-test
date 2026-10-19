@@ -317,6 +317,10 @@ vec3 ambientIrradiance(vec3 p, vec3 n) {
   vec3 v3 = normalize(vec3(uAmbRect.x, y, uAmbRect.w) - p);
   return uAmbL * (0.5 * abs(ambEdge(v0, v1, n) + ambEdge(v1, v2, n) + ambEdge(v2, v3, n) + ambEdge(v3, v0, n)));
 }
+// 全体照明の光る面そのものの明るさ（目に見える天井パネル。部屋を照らす光は ambientIrradiance で足すので、ここは見え方だけ）
+vec3 ambientPanel(int face, vec3 p) {
+  return face == 2 && p.x > uAmbRect.x && p.x < uAmbRect.y && p.z > uAmbRect.z && p.z < uAmbRect.w ? uAmbL : vec3(0.0);
+}
 vec3 spotIrradiance(vec3 p, vec3 n) {
   vec3 e = ambientIrradiance(p, n);
   for (int i = 0; i < MAX_SPOTS; i++) {
@@ -640,7 +644,7 @@ vec3 surfaceRadiance(int f, vec3 q, vec3 fallback) {
     vec2 uv = c.xy / c.w * 0.5 + 0.5;
     if (all(greaterThan(uv, vec2(0.0))) && all(lessThan(uv, vec2(1.0)))) ind = texture(uAccum, uv).rgb;
   }
-  return a * ind + a / PI * (sunDirect(q + n * EPS, n) + uSunE * causticAt(f, q) + spotIrradiance(q + n * EPS, n)) + screenLight(f, q, 2.0);
+  return a * ind + a / PI * (sunDirect(q + n * EPS, n) + uSunE * causticAt(f, q) + spotIrradiance(q + n * EPS, n)) + screenLight(f, q, 2.0) + ambientPanel(f, q);
 }
 
 // 水盤：水面で反射する光と、屈折して底から戻る光を、反射の割合（フレネル）で混ぜる
@@ -689,7 +693,7 @@ void main() {
     if (uPoolOn == 1 && f == 3) { col += poolRadiance(p, d, ind); continue; }
     vec3 n = inwardNormal(f);
     vec3 a = albedo(f, p);
-    col += a * ind + a / PI * (sunDirect(p + n * EPS, n) + uSunE * causticAt(f, p) + spotIrradiance(p + n * EPS, n)) + screenLight(f, p, -1.0);
+    col += a * ind + a / PI * (sunDirect(p + n * EPS, n) + uSunE * causticAt(f, p) + spotIrradiance(p + n * EPS, n)) + screenLight(f, p, -1.0) + ambientPanel(f, p);
   }
   col *= 0.25 * uExposure;
   col = toSrgb(aces(col));
