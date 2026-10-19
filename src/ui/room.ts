@@ -3,7 +3,7 @@ import GUI from 'lil-gui';
 import type { Clock } from '../clock.ts';
 import { WINDOW_SIDES, WINDOW_SIDE_LABEL, type WindowSide } from '../config.ts';
 import { PALETTE_KELVIN_ALTS, PALETTE_SKY_ALTS, type PaletteTable, defaultPalette, kelvinAt, setPalette } from '../palette.ts';
-import { EXHIBIT_SIZE, type GuideOptions, MAX_SPOTS, type MoonSettings, SPOT_MODES, TRAIL_COLOR_MODES, type TrailSettings, type RoomGeometry, type RoomOutput, type RoomRenderSettings, type RoomResolution, type SpotLight, type SpotMode, type SpotSettings, type ViewCalibration, type WindowGeometry, defaultCalibration } from '../room/scene.ts';
+import { EXHIBIT_SIZE, type GuideOptions, LIGHT_KINDS, type LightKind, MAX_SPOTS, type MoonSettings, SPOT_MODES, TRAIL_COLOR_MODES, type TrailSettings, type RoomGeometry, type RoomOutput, type RoomRenderSettings, type RoomResolution, type SpotLight, type SpotMode, type SpotSettings, type ViewCalibration, type WindowGeometry, defaultCalibration } from '../room/scene.ts';
 import { SCENES, findScene } from '../scenes/index.ts';
 import type { SceneDef } from '../scenes/types.ts';
 import type { SolarState } from '../solar.ts';
@@ -34,7 +34,7 @@ const SPOT_LIGHT_BASE: SpotLight = {
 const SPOT_LIGHT_PLACES: Partial<SpotLight>[] = [{}, { xM: -2.5 }, { xM: 2.5 }, { fromFrontM: 2.0, tiltDeg: 20 }];
 export const spotLightDefault = (i: number): SpotLight => ({ ...SPOT_LIGHT_BASE, ...SPOT_LIGHT_PLACES[i % SPOT_LIGHT_PLACES.length] });
 export const SPOT_DEFAULTS: SpotSettings = {
-  mode: 'auto', count: 3, onAltDeg: 5, fullAltDeg: -4, showLamp: false,
+  mode: 'auto', kind: 'ambient', ambient: { strength: 1, marginM: 0.5, kelvin: 4000 }, count: 3, onAltDeg: 5, fullAltDeg: -4, showLamp: false,
   lights: Array.from({ length: MAX_SPOTS }, (_, i) => spotLightDefault(i)),
 };
 /** 光の軌跡の既定（部屋の中央・目の高さのあたりに、半径 1.2m で 1,024 本）。既定では出さない（?trails=1 か、パネルで出す） */
@@ -48,6 +48,7 @@ export const MOON_DEFAULTS: MoonSettings = {
   on: true, strength: 0.5, skyStrength: 0.7, color: '#a9bfff', azimuthDeg: 180, altitudeDeg: 50, onAltDeg: 0, fullAltDeg: -8,
 };
 const SPOT_MODE_LABEL: Record<SpotMode, string> = { auto: '自動（太陽が沈むと点く）', on: '常に点ける', off: '消す' };
+const LIGHT_KIND_LABEL: Record<LightKind, string> = { spot: 'スポットライト（頭上から丸く照らす）', ambient: '全体照明（天井全体がやわらかく光る）' };
 
 /** パネルの操作を、部屋の表示へ伝える */
 export interface RoomUiHooks {
@@ -139,9 +140,12 @@ export function mountRoomUi(
     // ?trails=1 で光の軌跡を出して開く（既定は出さない）
     trails: { ...r0.trails, on: on('trails', r0.trails.on), colorMode: oneOf(r0.trails.colorMode, TRAIL_COLOR_MODES, 'scene') },
     // ?spot=on / off / auto でスポットライトの点け方、?spotCount=2 で台数を指定できる
+    // ?light=ambient で全体照明、?light=spot でスポットライト
     spot: {
       ...base.spot,
       mode: oneOf(q.get('spot') ?? base.spot.mode, SPOT_MODES, SPOT_DEFAULTS.mode),
+      kind: oneOf(q.get('light') ?? base.spot.kind, LIGHT_KINDS, SPOT_DEFAULTS.kind),
+      ambient: { ...base.spot.ambient },
       count: Math.min(MAX_SPOTS, Math.max(1, Math.round(num('spotCount', base.spot.count)))),
       lights: base.spot.lights.map((l) => ({ ...l, colorMode: oneOf(l.colorMode, ['kelvin', 'color'] as const, 'kelvin') })),
     },
@@ -356,10 +360,17 @@ export function mountRoomUi(
   const spot = settings.spot;
   const fl = gui.addFolder('ライト（夜）');
   fl.add(spot, 'mode', Object.fromEntries(SPOT_MODES.map((m) => [SPOT_MODE_LABEL[m], m]))).name('点け方');
-  fl.add(spot, 'count', 1, MAX_SPOTS, 1).name('台数').onChange(() => showLights());
+  fl.add(spot, 'kind', Object.fromEntries(LIGHT_KINDS.map((k) => [LIGHT_KIND_LABEL[k], k]))).name('照明の種類').onChange(() => showLights());
   fl.add(spot, 'onAltDeg', -18, 20, 0.5).name('自動：点き始める太陽の高度（度）');
   fl.add(spot, 'fullAltDeg', -18, 20, 0.5).name('自動：最大になる太陽の高度（度）');
-  fl.add(spot, 'showLamp').name('ライトの器具を描く（照らす光は変わらない）');
+  // 全体照明
+  const fa = fl.addFolder('全体照明');
+  fa.add(spot.ambient, 'strength', 0, 5, 0.01).name('明るさ');
+  fa.add(spot.ambient, 'marginM', 0, Math.min(room.widthM, room.depthM) / 2 - 0.1, 0.05).name('光る面：天井の端から内側へ（m）');
+  fa.add(spot.ambient, 'kelvin', 1800, 10000, 50).name('色温度（K）');
+  // スポットライト
+  const cCount = fl.add(spot, 'count', 1, MAX_SPOTS, 1).name('台数').onChange(() => showLights());
+  const cLamp = fl.add(spot, 'showLamp').name('ライトの器具を描く（照らす光は変わらない）');
   const lightFolders = spot.lights.map((light, i) => {
     const f = fl.addFolder(`ライト ${i + 1}`);
     f.add(light, 'strength', 0, 5, 0.01).name('明るさ');
@@ -379,7 +390,13 @@ export function mountRoomUi(
     if (i > 0) f.close();
     return f;
   });
-  const showLights = (): void => lightFolders.forEach((f, i) => f.show(i < spot.count));
+  const showLights = (): void => {
+    const isSpot = spot.kind === 'spot';
+    fa.show(!isSpot);
+    cCount.show(isSpot);
+    cLamp.show(isSpot);
+    lightFolders.forEach((f, i) => f.show(isSpot && i < spot.count));
+  };
   showLights();
 
   // 日差しと空の色：太陽の高度ごとの日差しの色温度と、空の色の表（src/palette.ts の目安の値）を変える。

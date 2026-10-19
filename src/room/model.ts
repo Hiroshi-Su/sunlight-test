@@ -159,6 +159,20 @@ export interface TrailSettings {
 /** スポットライトの点け方：auto = 太陽が沈むにつれて点く、on = いつも点ける、off = 消す */
 export type SpotMode = 'auto' | 'on' | 'off';
 export const SPOT_MODES: readonly SpotMode[] = ['auto', 'on', 'off'];
+/** 照明の種類：spot = 鑑賞者の頭上のスポットライト（床に丸い光）、ambient = 全体照明（天井全体がむらなく光る。大型施設の天井照明のように、部屋全体を均一に照らす） */
+export type LightKind = 'spot' | 'ambient';
+export const LIGHT_KINDS: readonly LightKind[] = ['spot', 'ambient'];
+
+/** 全体照明。天井の長方形（端から marginM 内側）が、むらなく光る面になる */
+export interface AmbientLight {
+  /** 明るさの倍率（1 で、スポットライト 1 台の真下と同じくらいの床の明るさを、部屋全体に） */
+  strength: number;
+  /** 光る面を、天井の端からどれだけ内側にするか（m） */
+  marginM: number;
+  /** 色温度（K） */
+  kelvin: number;
+}
+
 /** スポットライトの最大の台数（シェーダーの配列の大きさ） */
 export const MAX_SPOTS = 4;
 
@@ -168,6 +182,10 @@ export const MAX_SPOTS = 4;
  */
 export interface SpotSettings {
   mode: SpotMode;
+  /** 照明の種類（スポットライトか全体照明か）。点け方・自動で点く高度は共通 */
+  kind: LightKind;
+  /** 全体照明の設定（kind が ambient のとき使う） */
+  ambient: AmbientLight;
   /** 使う台数（1〜MAX_SPOTS） */
   count: number;
   /** 自動のとき：点き始める太陽の高度（度）と、最大の明るさになる太陽の高度（度） */

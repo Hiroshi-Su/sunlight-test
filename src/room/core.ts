@@ -27,6 +27,8 @@ export const POOL_ALBEDO = 0.62; // 水盤の底（明るい石）
 // スポットライトの明るさの目盛り（光度、演出上の値）。明るさの倍率 1 で、真下 3m の床の放射照度が
 // 晴れた日の直射日光の約 1/3（夜に露出 2.5 のとき、照らされた床がほどよく見える程度）
 const SPOT_SCALE = 7.0;
+/** 全体照明の明るさの目盛り。明るさ 1 で、10 × 6 × 3.2m の部屋の床の中央が、スポットライト 1 台の真下と同じくらいになる */
+const AMBIENT_SCALE = 0.045;
 // 月明かりの明るさの目盛り（演出上の値。実際の月の光は日差しの約 40 万分の 1 で、そのままでは見えない）。
 // 倍率 1 で、月の光（光に垂直な面での放射照度）は晴れた日の直射日光の約 1/10、夜空の明るさは昼の空の約 1/8
 const MOON_SCALE = 0.25;
@@ -192,6 +194,8 @@ export class RoomCore {
       uSpotCos: { value: Array.from({ length: MAX_SPOTS }, () => new THREE.Vector2(0.8, 0.9)) },
       uSpotR: { value: SPOT_RADIUS },
       uSpotLampOn: { value: 0 },
+      uAmbL: { value: new THREE.Vector3() },
+      uAmbRect: { value: new THREE.Vector4() },
     };
   }
 
@@ -276,7 +280,8 @@ export class RoomCore {
     const sp = settings.spot;
     const spotW = spotWeight(sp, sun.altitude);
     let n = 0;
-    if (spotW > 0) {
+    const ambient = sp.kind === 'ambient';
+    if (spotW > 0 && !ambient) {
       for (const light of sp.lights.slice(0, Math.min(MAX_SPOTS, Math.max(0, Math.round(sp.count))))) {
         if (light.strength <= 0) continue;
         const pose = spotPose(light, this.room);
@@ -291,11 +296,19 @@ export class RoomCore {
     }
     s.uSpotCount.value = n;
     s.uSpotLampOn.value = sp.showLamp ? 1 : 0;
-    this.spotOn = n > 0 ? spotW : 0;
+    // 全体照明：天井の長方形が光る面になる（光る面の明るさ = 放射輝度）
+    const amb = sp.ambient;
+    const ambOn = ambient && spotW > 0 && amb.strength > 0;
+    const { widthM: W, depthM: D } = this.room;
+    const m = Math.min(Math.max(0, amb.marginM), Math.min(W, D) / 2 - 0.05);
+    s.uAmbRect.value.set(-W / 2 + m, W / 2 - m, -D + m, -m);
+    if (ambOn) s.uAmbL.value.copy(spotColor({ colorMode: 'kelvin', kelvin: amb.kelvin, color: '#ffffff' } as SpotLight)).multiplyScalar(SPOT_SCALE * AMBIENT_SCALE * amb.strength * spotW);
+    else s.uAmbL.value.set(0, 0, 0);
+    this.spotOn = n > 0 || ambOn ? spotW : 0;
 
     // 重ね合わせのやり直し：視点や設定（窓の大きさを含む）が変わったら最初から
     const key = [
-      sp.mode, sp.count, JSON.stringify(sp.lights.slice(0, sp.count)),
+      sp.mode, sp.kind, JSON.stringify(sp.ambient), sp.count, JSON.stringify(sp.lights.slice(0, sp.count)),
       moon.on, moon.strength, moon.skyStrength, moon.color, moon.azimuthDeg, moon.altitudeDeg,
       settings.bounces, settings.seaView, settings.seaRipples, settings.pool, settings.poolReflect, settings.waveAmp, settings.poolDepthM, settings.seaLevelM, this.winRect.toArray(),
       cloudsOn, settings.cloudShadow, settings.cloudAmount, settings.cloudOpacity, settings.cloudSizeM, settings.cloudHeightM,

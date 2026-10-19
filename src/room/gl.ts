@@ -63,6 +63,8 @@ uniform vec3 uSpotI[MAX_SPOTS];      // 光度（色 × 強さ × 点き具合�
 uniform vec2 uSpotCos[MAX_SPOTS];    // 円すいの縁の cos（外側・内側）
 uniform float uSpotR;                // 器具の大きさ（球の半径）
 uniform float uSpotLampOn;           // 器具を描くか（0 = 描かない。照らす光は変わらない）
+uniform vec3 uAmbL;                  // 全体照明：天井の光る面の明るさ（放射輝度。0 = 消えている）
+uniform vec4 uAmbRect;               // 全体照明：光る面の範囲（x0, x1, z0, z1。高さは天井）
 
 const float PI = 3.14159265358979;
 const float EPS = 1e-4;
@@ -299,8 +301,24 @@ vec3 spotOne(int i, vec3 p, vec3 n) {
   float cone = smoothstep(uSpotCos[i].x, uSpotCos[i].y, dot(-l, uSpotDir[i]));
   return uSpotI[i] * (cone * c / d2);
 }
+// 全体照明：天井の長方形がむらなく光る面（拡散面光源）。点 p に届く光は、長方形の 4 辺から式で求める（光線を飛ばさないのでざらつかない）。
+// 部屋は箱で、光る面は天井の中にあるので、部屋の中のどの面から見ても面全体が手前側にある（遮るものもない）
+float ambEdge(vec3 a, vec3 b, vec3 n) {
+  vec3 c = cross(a, b);
+  float l = length(c);
+  return l < 1e-6 ? 0.0 : acos(clamp(dot(a, b), -1.0, 1.0)) * dot(n, c) / l;
+}
+vec3 ambientIrradiance(vec3 p, vec3 n) {
+  if (uAmbL.x + uAmbL.y + uAmbL.z <= 0.0 || p.y > uRoomMax.y - 1e-3) return vec3(0.0);
+  float y = uRoomMax.y;
+  vec3 v0 = normalize(vec3(uAmbRect.x, y, uAmbRect.z) - p);
+  vec3 v1 = normalize(vec3(uAmbRect.y, y, uAmbRect.z) - p);
+  vec3 v2 = normalize(vec3(uAmbRect.y, y, uAmbRect.w) - p);
+  vec3 v3 = normalize(vec3(uAmbRect.x, y, uAmbRect.w) - p);
+  return uAmbL * (0.5 * abs(ambEdge(v0, v1, n) + ambEdge(v1, v2, n) + ambEdge(v2, v3, n) + ambEdge(v3, v0, n)));
+}
 vec3 spotIrradiance(vec3 p, vec3 n) {
-  vec3 e = vec3(0.0);
+  vec3 e = ambientIrradiance(p, n);
   for (int i = 0; i < MAX_SPOTS; i++) {
     if (float(i) >= uSpotCount) break;
     e += spotOne(i, p, n);
@@ -315,6 +333,7 @@ vec3 spotBottom(vec3 b) {
     vec3 l = normalize(uSpotPos[i] - b);
     e += spotOne(i, b, vec3(0.0, 1.0, 0.0)) * exp(-WATER_ABS * uPoolDepth / max(l.y, 0.2));
   }
+  e += ambientIrradiance(b, vec3(0.0, 1.0, 0.0)) * exp(-WATER_ABS * uPoolDepth * 1.3); // 全体照明は斜めからも入るので、水の中の道のりを少し長めに見る
   return e * 0.97;
 }
 // 光線がライトの器具（小さな球）に当たれば、いちばん手前の器具の明るさ。

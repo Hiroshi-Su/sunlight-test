@@ -247,8 +247,24 @@ fn spotOne(i: i32, p: vec3f, n: vec3f) -> vec3f {
   let cone = smoothstep(u.uSpotCos[i].x, u.uSpotCos[i].y, dot(-l, u.uSpotDir[i]));
   return u.uSpotI[i] * (cone * c / d2);
 }
+// 全体照明：天井の長方形がむらなく光る面。点 p に届く光は、長方形の 4 辺から式で求める（src/room/gl.ts と同じ）
+fn ambEdge(a: vec3f, b: vec3f, n: vec3f) -> f32 {
+  let c = cross(a, b);
+  let l = length(c);
+  if (l < 1e-6) { return 0.0; }
+  return acos(clamp(dot(a, b), -1.0, 1.0)) * dot(n, c) / l;
+}
+fn ambientIrradiance(p: vec3f, n: vec3f) -> vec3f {
+  if (u.uAmbL.x + u.uAmbL.y + u.uAmbL.z <= 0.0 || p.y > u.uRoomMax.y - 1e-3) { return vec3f(0.0); }
+  let y = u.uRoomMax.y;
+  let v0 = normalize(vec3f(u.uAmbRect.x, y, u.uAmbRect.z) - p);
+  let v1 = normalize(vec3f(u.uAmbRect.y, y, u.uAmbRect.z) - p);
+  let v2 = normalize(vec3f(u.uAmbRect.y, y, u.uAmbRect.w) - p);
+  let v3 = normalize(vec3f(u.uAmbRect.x, y, u.uAmbRect.w) - p);
+  return u.uAmbL * (0.5 * abs(ambEdge(v0, v1, n) + ambEdge(v1, v2, n) + ambEdge(v2, v3, n) + ambEdge(v3, v0, n)));
+}
 fn spotIrradiance(p: vec3f, n: vec3f) -> vec3f {
-  var e = vec3f(0.0);
+  var e = ambientIrradiance(p, n);
   for (var i = 0; i < MAX_SPOTS; i++) {
     if (f32(i) >= u.uSpotCount) { break; }
     e += spotOne(i, p, n);
@@ -262,6 +278,7 @@ fn spotBottom(b: vec3f) -> vec3f {
     let l = normalize(u.uSpotPos[i] - b);
     e += spotOne(i, b, vec3f(0.0, 1.0, 0.0)) * exp(-WATER_ABS * u.uPoolDepth / max(l.y, 0.2));
   }
+  e += ambientIrradiance(b, vec3f(0.0, 1.0, 0.0)) * exp(-WATER_ABS * u.uPoolDepth * 1.3);
   return e * 0.97;
 }
 fn spotLamp(o: vec3f, d: vec3f, tMax: f32) -> vec3f {
