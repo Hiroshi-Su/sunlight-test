@@ -2,7 +2,7 @@ import { type MoonPosition, moonPosition } from './moon.ts';
 import bundledSite from '../config/site.json';
 import type { Heartbeat } from './bridge.ts';
 import { Clock } from './clock.ts';
-import { APP_MODES, type AppMode, type ParamValues, type VisualsConfig, applyEnvToSiteConfig, parseSiteConfig, parseVisualsConfig } from './config.ts';
+import { APP_MODES, type AppMode, type ParamValues, type VisualsConfig, applyEnvToSiteConfig, envLatLon, parseSiteConfig, parseVisualsConfig } from './config.ts';
 import { drawGuides, drawLightArrow } from './diagram.ts';
 import { kelvinAt, kelvinToRgb, skyColors } from './palette.ts';
 import { type RoomView, createRoomScene } from './room/scene.ts';
@@ -17,7 +17,7 @@ import { el } from './ui/dom.ts';
 import { mountVerify } from './ui/verify.ts';
 import { formatBench, formatPerf, gpuTotalMs } from './ui/perf.ts';
 import { mountModeSwitch } from './ui/mode-switch.ts';
-import { type VenuePreset, mountRoomUi } from './ui/room.ts';
+import { type RoomLocation, type VenuePreset, mountRoomUi } from './ui/room.ts';
 import { TrailLayer } from './room/trails.ts';
 import { mountVisuals } from './ui/visuals.ts';
 
@@ -142,6 +142,16 @@ const visualsUi = mode === 'visuals'
 
 // room モード：窓の位置はパネルで切り替えられる（room の表示と光の計算だけ。設定ファイルは変えない）
 const roomEntry = siteConfig.sites[site.name]!;
+// room モードで選べる場所：.env の緯度経度（設置場所。.env があるときだけ）と、config/site.json の各場所（.env で上書きする前の値）
+const rawSites = parseSiteConfig(bundledSite).sites;
+const envLL = envLatLon(import.meta.env) ?? (bridge && (roomEntry.latitude !== rawSites[site.name]?.latitude || roomEntry.longitude !== rawSites[site.name]?.longitude)
+  ? { latitude: roomEntry.latitude, longitude: roomEntry.longitude } : null);
+const roomLocations: RoomLocation[] = [
+  ...(envLL ? [{ id: 'venue', label: '設置場所（.env）', ...envLL }] : []),
+  ...Object.entries(rawSites).map(([id, e]) => ({ id, label: `${e.label}（config/site.json）`, latitude: e.latitude, longitude: e.longitude })),
+];
+let roomLoc: RoomLocation | undefined = roomLocations[0];
+const locatedSite = (s: Site): Site => (roomLoc ? { ...s, latitude: roomLoc.latitude, longitude: roomLoc.longitude } : s);
 // 最初に表示する窓の位置は、パネルが決める（URL の ?window=、保存した値、既定の天窓の順。src/ui/room.ts）
 let roomSite: Site = site;
 // 計算の解像度はパネル（とURL の ?scale= ?out= ?upscale=）で切り替える。パネルは部屋を作るより先に用意する
@@ -157,7 +167,9 @@ const loadVenueFit = Object.values(import.meta.glob<{ venueRoomPreset: () => Ven
 const venuePreset = mode === 'room' && loadVenueFit ? (await loadVenueFit()).venueRoomPreset() : null;
 const roomUi = mode === 'room'
   ? mountRoomUi(clock, roomEntry.room, roomEntry.window, site.windowSide, bridge ? bridge.room : await loadRoomSettingsInBrowser(), {
-    onWindowSide: (side) => { roomSite = withWindowSide(site, side); rebuildRoom(); },
+    onWindowSide: (side) => { roomSite = locatedSite(withWindowSide(site, side)); rebuildRoom(); },
+    locations: roomLocations,
+    onLocation: (loc) => { roomLoc = loc; roomSite = locatedSite(roomSite); },
     onRoomSize: rebuildRoom,
     benchmark: async () => (room ? room.benchmark() : null),
     onResolution: (res) => room?.setResolution(res),
@@ -167,7 +179,10 @@ const roomUi = mode === 'room'
     venuePreset,
   })
   : null;
-if (roomUi) roomSite = withWindowSide(site, roomUi.side);
+if (roomUi) {
+  roomLoc = roomUi.location ?? roomLoc;
+  roomSite = locatedSite(withWindowSide(site, roomUi.side));
+}
 // 部屋の中央の光の軌跡（部屋を作り直しても線の動きが続くよう、1 つだけ作る）
 const trailLayer = mode === 'room' ? new TrailLayer(el('roomTrails', HTMLCanvasElement)) : null;
 const buildRoom = (view?: RoomView) =>

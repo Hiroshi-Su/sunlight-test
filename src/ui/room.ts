@@ -112,6 +112,18 @@ export interface RoomUiHooks {
   save(file: RoomSettingsFile): Promise<void>;
   /** 「会場の値を入れる」で入れる値（非公開の会場のデータがあるときだけ。src/main.ts） */
   venuePreset?: VenuePreset | null;
+  /** 選べる場所（緯度経度）。.env の緯度経度（設置場所）と config/site.json の場所 */
+  locations?: RoomLocation[];
+  /** 場所を変えたとき */
+  onLocation?(loc: RoomLocation): void;
+}
+
+/** room モードで選べる場所（太陽と月の計算に使う緯度経度） */
+export interface RoomLocation {
+  id: string;
+  label: string;
+  latitude: number;
+  longitude: number;
 }
 
 /** 現地（会場）に合わせた部屋の寸法と視点。パース調整の出発点にする */
@@ -169,9 +181,16 @@ export function mountRoomUi(
   if (q.has('open')) {
     const list = (q.get('open') ?? '').split(',');
     Object.assign(openings, { left: list.includes('left'), right: list.includes('right'), top: list.includes('skylight') ? 'skylight' : list.includes('full') ? 'full' : 'none' });
-    if (!openings.left && !openings.right && openings.top === 'none') openings.left = true;
   }
   const state = { side: openingsLayout(openings, room, configWindow.sillHeightM).side };
+  // 場所（太陽と月の計算に使う緯度経度）。?location=venue / verification などで最初の場所を指定できる
+  const locs = hooks.locations ?? [];
+  const pickLoc = (id: string): RoomLocation | undefined => locs.find((l) => l.id === id);
+  const locState = { id: (pickLoc(q.get('location') ?? '') ?? pickLoc(base.render.location) ?? locs[0])?.id ?? '' };
+  if (locs.length > 1) {
+    gui.add(locState, 'id', Object.fromEntries(locs.map((l) => [`${l.label}（北緯 ${l.latitude.toFixed(4)}°・東経 ${l.longitude.toFixed(4)}°）`, l.id])))
+      .name('場所（太陽と月の緯度経度）').onChange((id: string) => { settings.location = id; const l = pickLoc(id); if (l) hooks.onLocation?.(l); });
+  }
   const fr = gui.addFolder('部屋');
 
   // 画面の設定。照り返しを 0 にすると、窓から直接届く光だけになる（照り返しの効果を見比べられる）
@@ -195,6 +214,7 @@ export function mountRoomUi(
     waveAmp: num('wave', r0.waveAmp),
     window: { ...winBase },
     openings,
+    location: locState.id,
     clouds: on('clouds', r0.clouds), cloudShadow: on('cloudShadow', r0.cloudShadow),
     screen: q.has('screen') ? q.get('screen') !== '0' : r0.screen,
     // ?moon=0 で月明かりを消して開く
@@ -234,10 +254,9 @@ export function mountRoomUi(
   const screenParam = q.get('screen') ?? base.screenScene;
   const screen = { id: SCENES.some((d) => d.id === screenParam) ? screenParam : 'light-clouds' };
 
-  // 窓のあり・なし。最後の 1 つは外せない（窓がないと光が入らない）。変えたら窓の大きさを決め直し、1 つ目の窓の位置が変わったら部屋を作り直す
+  // 窓のあり・なし（全部なしもできる。窓がないと日差し・月明かり・空の光は入らず、夜のライトだけになる）。変えたら窓の大きさを決め直し、1 つ目の窓の位置が変わったら部屋を作り直す
   const win = settings.window;
   const applyOpenings = (): void => {
-    if (!openings.left && !openings.right && openings.top === 'none') { openings.left = true; cLeft.updateDisplay(); }
     openings.skyWidthM = Math.min(openings.skyWidthM, room.widthM);
     openings.skyDepthM = Math.min(openings.skyDepthM, room.depthM);
     const lay = openingsLayout(openings, room, configWindow.sillHeightM);
@@ -246,7 +265,7 @@ export function mountRoomUi(
     cSkyD.max(room.depthM).show(openings.top === 'skylight').updateDisplay();
     if (lay.side !== state.side) { state.side = lay.side; onWindowSide(state.side); }
   };
-  const cLeft = fr.add(openings, 'left').name('左の壁を窓に（壁いっぱい）').onChange(applyOpenings);
+  fr.add(openings, 'left').name('左の壁を窓に（壁いっぱい）').onChange(applyOpenings);
   fr.add(openings, 'right').name('右の壁を窓に（壁いっぱい）').onChange(applyOpenings);
   fr.add(openings, 'top', { 'なし': 'none', '天井いっぱい': 'full', '天窓（天井の一部）': 'skylight' }).name('天井の窓').onChange(applyOpenings);
   const cSkyW = fr.add(openings, 'skyWidthM', 0.2, room.widthM, 0.05).name('天窓の幅（左右、m）').onChange(applyOpenings);
@@ -736,6 +755,8 @@ export function mountRoomUi(
     get screenScene(): SceneDef { return findScene(screen.id); },
     /** 窓の位置（URL・保存した値・既定から決めたもの。切り替えると onWindowSide） */
     get side(): WindowSide { return state.side; },
+    /** 選んでいる場所（緯度経度） */
+    get location(): RoomLocation | undefined { return pickLoc(locState.id); },
     /** 計算の解像度・出す大きさ */
     get resolution(): RoomResolution { return { ...resolution }; },
     /** フレームの速さの上限（0 = 画面の更新ごと、30 = 30fps に固定） */
@@ -840,7 +861,9 @@ export function openingsLayout(o: Openings, room: RoomGeometry, sill: number): {
     const window = o.top === 'full' ? { widthM: room.widthM, heightM: room.depthM, sillHeightM: sill } : { widthM: o.skyWidthM, heightM: o.skyDepthM, sillHeightM: sill };
     return { side: o.left ? 'ceiling-left' : 'ceiling', window };
   }
-  return { side: o.left || !o.right ? 'left' : 'right', window: { widthM: room.depthM, heightM: room.heightM, sillHeightM: 0 } };
+  // 窓がひとつもないときは、大きさ 0 の左の窓（光は入らない）
+  if (!o.left && !o.right) return { side: 'left', window: { widthM: 0, heightM: 0, sillHeightM: 0 } };
+  return { side: o.left ? 'left' : 'right', window: { widthM: room.depthM, heightM: room.heightM, sillHeightM: 0 } };
 }
 /** 前の窓の位置の選択肢（?window= や保存した窓の位置）を、窓の組み合わせにする（天窓の大きさは、天窓なら窓の大きさ、そうでなければ base のまま） */
 export function openingsFromChoice(c: WindowChoice, base: Openings, win?: WindowGeometry): Openings {
@@ -886,7 +909,8 @@ export function codeDefaults(room: RoomGeometry, configWindow: WindowGeometry) {
     render: {
       exposure: 2.5, bounces: 3, smooth: true,
       seaView: ROOM_DEFAULTS.seaView as boolean, seaRipples: false, pool: ROOM_DEFAULTS.pool as boolean, poolReflect: ROOM_DEFAULTS.poolReflect as boolean,
-      waveAmp: ROOM_DEFAULTS.waveAmp as number, poolDepthM: 0.3, seaLevelM: -1, seaWaves: 'fft' as SeaWaves, seaCompare: false, openings: { left: true, right: false, top: 'none' as WindowTop, skyWidthM: Math.round(room.widthM * 0.4 * 20) / 20, skyDepthM: Math.round(room.depthM * 0.5 * 20) / 20 },
+      waveAmp: ROOM_DEFAULTS.waveAmp as number, poolDepthM: 0.3, seaLevelM: -1, seaWaves: 'fft' as SeaWaves, seaCompare: false, location: 'venue',
+      openings: { left: true, right: false, top: 'none' as WindowTop, skyWidthM: Math.round(room.widthM * 0.4 * 20) / 20, skyDepthM: Math.round(room.depthM * 0.5 * 20) / 20 },
       glass: { right: false, left: false, ceiling: false, front: false, back: false },
       glassSpec: { kind: 'lowIron' as GlassKind, color: '#9ec9d6', transmission: 1, surface: 'flat' as GlassSurface, scaleM: 0.15, depthMM: 0.8, prism: false, prismStrength: 15 }, seaWindMS: 6, seaWaveScale: 1, seaRoughness: 0.004, seaScatter: 0.6,
       clouds: false, cloudShadow: ROOM_DEFAULTS.cloudShadow as boolean, cloudAmount: 0.45, cloudOpacity: 0.8,

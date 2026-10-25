@@ -66,6 +66,8 @@ export interface RoomRenderSettings {
   seaWindMS: number;
   /** 窓の外の海の波の高さの倍率（FFT のとき。1 で、その風速で十分に発達した海の高さ） */
   seaWaveScale: number;
+  /** 太陽と月の計算に使う場所（緯度経度）の名前（RoomLocation の id。venue = .env の緯度経度、それ以外は config/site.json の場所） */
+  location: string;
   /** 窓にする所（左右の壁は壁いっぱい、天井はなし・天井いっぱい・天窓（天井の一部）のどれか）。いくつでも組み合わせられる */
   openings: Openings;
   /** ガラスの壁にする面（枠なしの一枚ガラス。外は空と海）。窓（穴）の所は窓のまま。天窓のときに天井をガラスにすると、天窓のまわりの天井がガラスになる */
