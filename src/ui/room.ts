@@ -4,7 +4,7 @@ import type { Clock } from '../clock.ts';
 import { mountCalibMode } from './calib-mode.ts';
 import { WINDOW_SIDES, WINDOW_SIDE_LABEL, type WindowSide } from '../config.ts';
 import { PALETTE_KELVIN_ALTS, PALETTE_SKY_ALTS, type PaletteTable, defaultPalette, kelvinAt, setPalette } from '../palette.ts';
-import { EXHIBIT_SIZE, type GuideOptions, LIGHT_KINDS, type LightKind, MAX_BLOBS, MAX_SHIM_COLORS, MAX_SHIM_PALETTE, MAX_SPOTS, MAX_PRISMS, type MoonSettings, type OrganicLook, PRISM_MOTIONS, PRISM_PATTERNS, SHIMMER_COLOR_MODES, type PrismMotion, type PrismPattern, type PrismSettings, SPOT_MODES, TRAIL_COLOR_MODES, type TrailSettings, type RoomGeometry, type RoomOutput, type RoomRenderSettings, type RoomResolution, type SpotLight, type SpotMode, type SpotSettings, type ViewCalibration, type WindowGeometry, defaultCalibration } from '../room/scene.ts';
+import { EXHIBIT_SIZE, type GuideOptions, LIGHT_KINDS, type LightKind, MAX_BLOBS, MAX_SHIM_COLORS, MAX_SHIM_PALETTE, MAX_SPOTS, MAX_PRISMS, type MoonSettings, type OrganicLook, PRISM_MOTIONS, PRISM_PATTERNS, SHIMMER_ANCHORS, SHIMMER_COLOR_MODES, type PrismMotion, type PrismPattern, type PrismSettings, SPOT_MODES, TRAIL_COLOR_MODES, type TrailSettings, type RoomGeometry, type RoomOutput, type RoomRenderSettings, type RoomResolution, type SpotLight, type SpotMode, type SpotSettings, type ViewCalibration, type WindowGeometry, defaultCalibration } from '../room/scene.ts';
 import { SCENES, findScene } from '../scenes/index.ts';
 import type { SceneDef } from '../scenes/types.ts';
 import type { SolarState } from '../solar.ts';
@@ -22,7 +22,7 @@ import { mountTimeControls } from './time-controls.ts';
  * - 雲が日差しをさえぎる（雲の影）はオフ
  * - 天窓の大きさは天井いっぱい（天井の面が消える大きさ）。URL の ?winW= ?winH= を指定したときはその値
  */
-export const ROOM_DEFAULTS = { pool: true, poolReflect: false, waveAmp: 0.3, fullCeiling: true, cloudShadow: false } as const;
+export const ROOM_DEFAULTS = { pool: true, poolReflect: false, seaView: true, waveAmp: 0.3, fullCeiling: true, cloudShadow: false } as const;
 
 /**
  * スポットライト 1 台の既定（鑑賞者の頭上：手前の端から 0.6m、天井から 0.15m。真下から奥へ 35° 傾ける）。
@@ -64,7 +64,7 @@ export const PRISM_DEFAULTS: PrismSettings = {
     fringe: 0.35, soft: 0.08, halo: 0.5, haloWidth: 0.6, haloHue: 1, saturation: 1.6,
   },
   shimmer: {
-    on: false, amount: 1, scaleM: 0.6, lineWidth: 0.05, warp: 1.2, speed: 0.3, base: 0.6, gain: 2, dispersion: 0.04, iridescence: 0.6,
+    on: false, amount: 1, anchor: 'surface', scaleM: 0.6, lineWidth: 0.05, warp: 1.2, speed: 0.3, base: 0.6, gain: 2, dispersion: 0.04, iridescence: 0.6,
     colorMode: 'spectrum', colorCount: 3, hueStart: 0, hueEnd: 1,
     // 選んだ色の既定は、参考の水底の写真の色（水色・ラベンダー・ピンク・淡い黄・白）
     palette: ['#7fe3ff', '#c9a8ff', '#ff9ad5', '#fff1a8', '#ffffff'], paletteCount: 4,
@@ -196,7 +196,11 @@ export function mountRoomUi(
       ...r0.prism,
       pattern: oneOf(r0.prism.pattern, PRISM_PATTERNS, PRISM_DEFAULTS.pattern),
       motion: oneOf(r0.prism.motion, PRISM_MOTIONS, PRISM_DEFAULTS.motion),
-      shimmer: { ...r0.prism.shimmer, colorMode: oneOf(r0.prism.shimmer.colorMode, SHIMMER_COLOR_MODES, PRISM_DEFAULTS.shimmer.colorMode) },
+      shimmer: {
+        ...r0.prism.shimmer,
+        anchor: oneOf(r0.prism.shimmer.anchor, SHIMMER_ANCHORS, PRISM_DEFAULTS.shimmer.anchor),
+        colorMode: oneOf(r0.prism.shimmer.colorMode, SHIMMER_COLOR_MODES, PRISM_DEFAULTS.shimmer.colorMode),
+      },
     },
     // ?trails=1 で光の軌跡を出して開く（既定は出さない）
     trails: { ...r0.trails, on: on('trails', r0.trails.on), colorMode: oneOf(r0.trails.colorMode, TRAIL_COLOR_MODES, 'scene') },
@@ -391,6 +395,8 @@ export function mountRoomUi(
   fw.add(settings, 'waveAmp', 0, 3, 0.05).name('波の強さ');
   fw.add(settings, 'poolDepthM', 0.02, 1.5, 0.01).name('水盤の深さ（m）');
   fw.add(settings, 'seaLevelM', -5, 0, 0.05).name('窓の外の水面の高さ（床から m）');
+  fw.add(settings, 'seaRoughness', 0.0005, 0.03, 0.0005).name('海面の細かい粗さ（大きいほど太陽のきらめきが広い帯に）');
+  fw.add(settings, 'seaScatter', 0, 3, 0.05).name('海の波の山が透ける強さ');
 
   // 空・雲：窓から見える空に雲が流れ、太陽を横切ると日差しが弱まる（雲の影が部屋を通り過ぎる）
   const fc = gui.addFolder('空・雲');
@@ -489,6 +495,7 @@ export function mountRoomUi(
   const pzH = fpz.addFolder('H：水のきらめき（日なたに水底のような光の網目。A〜G と重ねられる）');
   pzH.add(pr.shimmer, 'on').name('水のきらめきを重ねる');
   pzH.add(pr.shimmer, 'amount', 0, 1, 0.01).name('重ねる強さ');
+  pzH.add(pr.shimmer, 'anchor', { '日差しと一緒に動く（斜めの面では伸びる）': 'light', '面に固定（どこでも大きさが変わらない）': 'surface' }).name('網目の置き方');
   pzH.add(pr.shimmer, 'scaleM', 0.05, 1.5, 0.01).name('網目の大きさ（m）');
   pzH.add(pr.shimmer, 'lineWidth', 0.01, 0.3, 0.005).name('線の太さ（網目に対する割合）');
   pzH.add(pr.shimmer, 'warp', 0, 2, 0.01).name('網目のゆがみ（大きいほど丸く流れる）');
@@ -795,8 +802,8 @@ export function codeDefaults(room: RoomGeometry, configWindow: WindowGeometry) {
       : { ...configWindow },
     render: {
       exposure: 2.5, bounces: 3, smooth: true,
-      seaView: false, seaRipples: false, pool: ROOM_DEFAULTS.pool as boolean, poolReflect: ROOM_DEFAULTS.poolReflect as boolean,
-      waveAmp: ROOM_DEFAULTS.waveAmp as number, poolDepthM: 0.3, seaLevelM: -1,
+      seaView: ROOM_DEFAULTS.seaView as boolean, seaRipples: false, pool: ROOM_DEFAULTS.pool as boolean, poolReflect: ROOM_DEFAULTS.poolReflect as boolean,
+      waveAmp: ROOM_DEFAULTS.waveAmp as number, poolDepthM: 0.3, seaLevelM: -1, seaRoughness: 0.004, seaScatter: 0.6,
       clouds: false, cloudShadow: ROOM_DEFAULTS.cloudShadow as boolean, cloudAmount: 0.45, cloudOpacity: 0.8,
       cloudSizeM: 1500, cloudHeightM: 1500, windMS: 30, windFromDeg: 270,
       screenArea: false, screen: false, screenGain: 0.6,

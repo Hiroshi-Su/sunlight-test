@@ -177,14 +177,32 @@ fn sunLobe(r: vec3f) -> f32 {
 }
 
 // 窓の外の海：点 o から向き d（下向き）で見た水面の明るさ
+fn seaGlint(n: vec3f, v: vec3f, m2: f32) -> f32 {
+  let l = u.uSunDir;
+  let nl = dot(n, l);
+  if (l.y <= 0.0 || nl <= 0.0) { return 0.0; }
+  let h = normalize(v + l);
+  let nh = max(dot(n, h), 1e-3);
+  let c2 = nh * nh;
+  let D = exp(-(1.0 - c2) / (c2 * m2)) / (PI * m2 * c2 * c2);
+  return fresnelWater(dot(h, v)) * D / (4.0 * max(dot(n, v), 0.05));
+}
 fn seaRadiance(o: vec3f, d: vec3f) -> vec3f {
   let t = (u.uSeaY - o.y) / min(d.y, -1e-4);
   let x = o + d * t;
-  let n = waveNormal(seaWave(x.xz) + fineWave(x.xz));
-  let F = fresnelWater(dot(-d, n));
+  let fw = t * u.uPixAngle / sqrt(max(-d.y, 1e-3));
+  let sw = seaSurface(x.xz, fw);
+  let n = waveNormal(sw.xyz);
+  let v = -d;
+  let F = fresnelWater(dot(v, n));
   var r = reflect(d, n);
   r.y = abs(r.y);
-  let c = F * (cloudySky(x, r) + u.uSunE * sunLobe(r) * cloudTrans(x)) + (1.0 - F) * u.uSeaBody;
+  let crest = clamp(sw.x / (0.03 * u.uWaveAmp + 1e-4), 0.0, 1.0);
+  let dh = normalize(d.xz + 1e-6);
+  let sh = normalize(u.uSunDir.xz + 1e-6);
+  let toward = pow(0.5 + 0.5 * dot(dh, sh), 4.0);
+  let body = u.uSeaBody + u.uSunE * (vec3f(0.02, 0.09, 0.07) * (u.uSeaLook.y * crest * (0.25 + toward) * max(u.uSunDir.y, 0.0)));
+  let c = F * cloudySky(x, r) + u.uSunE * (seaGlint(n, v, u.uSeaLook.x + sw.w) * cloudTrans(x)) + (1.0 - F) * body;
   return mix(c, skyRadiance(normalize(vec3f(d.x, 0.02, d.z))), 1.0 - exp(-t / 600.0));
 }
 
@@ -861,12 +879,18 @@ fn shimSat(c: vec3f) -> vec3f {
   let l = dot(c, vec3f(1.0 / 3.0));
   return max(vec3f(l) + (c - vec3f(l)) * u.uShimColor.w, vec3f(0.0));
 }
-fn shimmer(p: vec3f) -> vec3f {
-  let ws = windowSd(p);
-  if (ws.z > 1e2) { return vec3f(1.0); }
+fn shimmer(p: vec3f, n: vec3f) -> vec3f {
+  var q: vec2f;
+  if (u.uShimSurface > 0.5) {
+    q = select(select(p.xy, p.zy, abs(n.x) > 0.5), p.xz, abs(n.y) > 0.5);
+  } else {
+    let ws = windowSd(p);
+    if (ws.z > 1e2) { return vec3f(1.0); }
+    q = ws.xy;
+  }
   let t = u.uShimShape.w;
   let w = u.uShimShape.y;
-  var x = ws.xy / u.uShimShape.x;
+  var x = q / u.uShimShape.x;
   x += u.uShimShape.z * vec2f(orgNoise(x * 0.5, t), orgNoise(x * 0.5 + 7.3, 1.1 * t));
   let dd = u.uShimLook.z * vec2f(0.6, 0.8);
   let e = shimCell(x, t);
@@ -974,7 +998,7 @@ fn sunLight(p: vec3f, n: vec3f) -> vec3f {
   if (panelOn()) { return panelLight(p, n) + blobLight(p, n); }
   var sun: vec3f;
   if (u.uOrgOn > 0.5) { sun = organicSun(p, n); } else { sun = sunDirect(p, n); }
-  if (u.uShimOn > 0.0 && sun.x + sun.y + sun.z > 0.0) { sun *= shimmer(p); }
+  if (u.uShimOn > 0.0 && sun.x + sun.y + sun.z > 0.0) { sun *= shimmer(p, n); }
   return sun + prismLight(p, n);
 }
 
@@ -1029,7 +1053,7 @@ fn bottomSun(b: vec3f, fade: f32, edge: vec3f, flatSun: f32, inner: f32) -> vec3
   if (panelOn()) { return panelLight(top, up) * 0.97 + blobLight(top, up); }
   var c = causticBottomRGB(b, fade);
   if (u.uWaveOn > 0.5 || u.uOrgOn > 0.5) { c = mix(vec3f(flatSun), c, inner) * edge; }
-  if (u.uShimOn > 0.0 && c.x + c.y + c.z > 0.0) { c *= shimmer(top); }
+  if (u.uShimOn > 0.0 && c.x + c.y + c.z > 0.0) { c *= shimmer(top, up); }
   return u.uSunE * c + prismLight(top, up);
 }
 

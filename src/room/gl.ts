@@ -42,6 +42,8 @@ uniform int uScreenArea;     // スクリーン面を壁と分けて示す（0 �
 uniform int uSeaOn;          // 窓の外に海を描く
 uniform float uSeaY;         // 窓の外の水面の高さ
 uniform vec3 uSeaBody;       // 水の中から出てくる光（水の色）
+uniform vec2 uSeaLook;       // 海面の細かい粗さ（傾きの 2 乗平均）・波の山が透ける強さ
+uniform float uPixAngle;     // 1 画素が見込む角度（ラジアン）
 uniform int uPoolOn;         // 床の水盤
 uniform float uPoolDepth;    // 水盤の深さ
 uniform int uCloudOn;        // 窓の外の空に雲
@@ -78,6 +80,7 @@ uniform float uShimOn;       // H：水のきらめきを重ねる強さ（0 = �
 uniform vec4 uShimShape;     // H：網目の大きさ（m）・線の太さ・ゆがみ・形の変化の進み
 uniform vec4 uShimLook;      // H：線のない所の明るさ・線の明るさ・虹のずれ・膜の虹色の濃さ
 uniform vec4 uShimColor;     // H：線の縁の色の数・虹の色の範囲の始め・終わり・色の濃さ
+uniform float uShimSurface;  // H：1 = 網目を面そのものに置く（大きさが変わらない）
 uniform float uShimPalN;     // H：選んだ色の数（0 = 虹の色の範囲を使う）
 const int MAX_SHIM_COLORS = ${MAX_SHIM_COLORS};
 const int MAX_SHIM_PALETTE = ${MAX_SHIM_PALETTE};
@@ -271,14 +274,36 @@ float sunLobe(vec3 r) {
 }
 
 // 窓の外の海：点 o から向き d（下向き）で見た水面の明るさ。空の映り込み・太陽のきらめき・水の色を、反射の割合で混ぜる
+// 海面の太陽のきらめき（マイクロファセット）。n は描いた波の向き、m2 は描ききれない細かい波の傾きの 2 乗平均（粗さ）。
+// 細かい傾きの分布を Beckmann 分布とし、太陽の向き l と視線 v の中間の向き h を向いた細かい面の割合で光らせる。
+// 粗いほど、きらめきが広い帯になって暗くなる（光の量は同じ）
+float seaGlint(vec3 n, vec3 v, float m2) {
+  vec3 l = uSunDir;
+  float nl = dot(n, l);
+  if (l.y <= 0.0 || nl <= 0.0) return 0.0;
+  vec3 h = normalize(v + l);
+  float nh = max(dot(n, h), 1e-3);
+  float c2 = nh * nh;
+  float D = exp(-(1.0 - c2) / (c2 * m2)) / (PI * m2 * c2 * c2);
+  return fresnelWater(dot(h, v)) * D / (4.0 * max(dot(n, v), 0.05));
+}
 vec3 seaRadiance(vec3 o, vec3 d) {
   float t = (uSeaY - o.y) / min(d.y, -1e-4);
   vec3 x = o + d * t;
-  vec3 n = waveNormal(seaWave(x.xz) + fineWave(x.xz));
-  float F = fresnelWater(dot(-d, n));
+  // 画素の大きさ（水面の上で m）。斜めに見るほど奥行きの向きに伸びる
+  float fw = t * uPixAngle / sqrt(max(-d.y, 1e-3));
+  vec4 sw = seaSurface(x.xz, fw);
+  vec3 n = waveNormal(sw.xyz);
+  vec3 v = -d;
+  float F = fresnelWater(dot(v, n));
   vec3 r = reflect(d, n);
   r.y = abs(r.y);
-  vec3 c = F * (cloudySky(x, r) + uSunE * sunLobe(r) * cloudTrans(x)) + (1.0 - F) * uSeaBody;
+  // 水の中の色：波の山（薄い所）は日差しが透けて緑がかる。太陽の方を見ているほど強い
+  float crest = clamp(sw.x / (0.03 * uWaveAmp + 1e-4), 0.0, 1.0);
+  vec2 dh = normalize(d.xz + 1e-6), sh = normalize(uSunDir.xz + 1e-6);
+  float toward = pow(0.5 + 0.5 * dot(dh, sh), 4.0);
+  vec3 body = uSeaBody + uSunE * (vec3(0.02, 0.09, 0.07) * (uSeaLook.y * crest * (0.25 + toward) * max(uSunDir.y, 0.0)));
+  vec3 c = F * cloudySky(x, r) + uSunE * (seaGlint(n, v, uSeaLook.x + sw.w) * cloudTrans(x)) + (1.0 - F) * body;
   // 遠くはかすんで、地平線の空の色に近づく
   return mix(c, skyRadiance(normalize(vec3(d.x, 0.02, d.z))), 1.0 - exp(-t / 600.0));
 }
@@ -944,9 +969,11 @@ vec3 shimSat(vec3 c) {
   float l = dot(c, vec3(1.0 / 3.0));
   return max(vec3(l) + (c - vec3(l)) * uShimColor.w, vec3(0.0));
 }
-vec3 shimmer(vec3 p) {
+// 網目を置く位置。面に置くときは、面の向きに合わせた 2 つの軸（床・天井は左右と奥行き、左右の壁は奥行きと高さ、奥と手前の壁は左右と高さ）
+vec3 shimmer(vec3 p, vec3 n) {
   vec2 q;
-  if (windowSd(p, q) > 1e2) return vec3(1.0);
+  if (uShimSurface > 0.5) q = abs(n.y) > 0.5 ? p.xz : (abs(n.x) > 0.5 ? p.zy : p.xy);
+  else if (windowSd(p, q) > 1e2) return vec3(1.0);
   float t = uShimShape.w, w = uShimShape.y;
   vec2 x = q / uShimShape.x;
   x += uShimShape.z * vec2(orgNoise(x * 0.5, t), orgNoise(x * 0.5 + 7.3, 1.1 * t));
@@ -1060,7 +1087,7 @@ vec3 sunDirect(vec3 p, vec3 n) {
 vec3 sunLight(vec3 p, vec3 n) {
   if (panelOn()) return panelLight(p, n) + blobLight(p, n);
   vec3 sun = uOrgOn > 0.5 ? organicSun(p, n) : sunDirect(p, n);
-  if (uShimOn > 0.0 && sun.x + sun.y + sun.z > 0.0) sun *= shimmer(p);
+  if (uShimOn > 0.0 && sun.x + sun.y + sun.z > 0.0) sun *= shimmer(p, n);
   return sun + prismLight(p, n);
 }
 
@@ -1112,7 +1139,7 @@ vec3 bottomSun(vec3 b, float fade, vec3 edge, float flatSun, float inner) {
   if (panelOn()) return panelLight(top, up) * 0.97 + blobLight(top, up);
   vec3 c = causticBottomRGB(b, fade);
   if (uWaveOn > 0.5 || uOrgOn > 0.5) c = mix(vec3(flatSun), c, inner) * edge;
-  if (uShimOn > 0.0 && c.x + c.y + c.z > 0.0) c *= shimmer(top);
+  if (uShimOn > 0.0 && c.x + c.y + c.z > 0.0) c *= shimmer(top, up);
   return uSunE * c + prismLight(top, up);
 }
 

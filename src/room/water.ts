@@ -79,12 +79,43 @@ vec3 ${name.toLowerCase()}Wave(vec2 p) {
 }`;
 };
 
+// 窓の外の海面（海の波 SEA と細かい波 FINE を合わせる）。画素より細かい波は描ききれず、遠くでちらつくので、
+// 画素の大きさ fw（水面の上で m）に対して波長が 2〜5 画素より短い波は弱めて消し、消した分の傾きのばらつき（振幅 × 波数）² / 2 を w に足す。
+// 消した波は、きらめきの広がり（面の粗さ）として光り方に残る
+const seaSurfaceBody = (lang: 'glsl' | 'wgsl'): string => {
+  const sets = [['SEA', SEA.length], ['FINE', FINE.length]] as const;
+  return sets.map(([name, n]) => lang === 'glsl'
+    ? `
+  for (int i = 0; i < ${n}; i++) {
+    vec3 w = ${name}_W[i];
+    float k = length(w.xy);
+    float keep = 1.0 - smoothstep(1.257, 3.1416, k * fw);
+    float a = dot(w.xy, p) - u${name}Ph[i];
+    r.xyz += keep * w.z * vec3(sin(a), w.x * cos(a), w.y * cos(a));
+    r.w += (1.0 - keep * keep) * 0.5 * (w.z * k) * (w.z * k);
+  }`
+    : `
+  for (var i = 0; i < ${n}; i++) {
+    let w = ${name}_W[i];
+    let k = length(w.xy);
+    let keep = 1.0 - smoothstep(1.257, 3.1416, k * fw);
+    let a = dot(w.xy, p) - u.u${name}Ph[i];
+    r += vec4f(keep * w.z * vec3f(sin(a), w.x * cos(a), w.y * cos(a)), (1.0 - keep * keep) * 0.5 * (w.z * k) * (w.z * k));
+  }`).join('');
+};
+
 /** 波の GLSL（uWaveAmp：波の強さの倍率、u*Ph：各波の位相） */
 export const WATER_GLSL = /* glsl */ `
 uniform float uWaveAmp;
 ${glslSet('POOL', POOL)}
 ${glslSet('SEA', SEA)}
 ${glslSet('FINE', FINE)}
+
+// 窓の外の海面：vec4(高さ, dh/dx, dh/dz, 描ききれない細かい波の傾きの 2 乗平均)。fw は画素の大きさ（水面の上で m）
+vec4 seaSurface(vec2 p, float fw) {
+  vec4 r = vec4(0.0);${seaSurfaceBody('glsl')}
+  return vec4(r.xyz * uWaveAmp, r.w * uWaveAmp * uWaveAmp);
+}
 
 vec3 waveNormal(vec3 hw) { return normalize(vec3(-hw.y, 1.0, -hw.z)); }
 
@@ -118,6 +149,11 @@ export const WATER_WGSL = /* wgsl */ `
 ${wgslSet('POOL', POOL)}
 ${wgslSet('SEA', SEA)}
 ${wgslSet('FINE', FINE)}
+
+fn seaSurface(p: vec2f, fw: f32) -> vec4f {
+  var r = vec4f(0.0);${seaSurfaceBody('wgsl')}
+  return vec4f(r.xyz * u.uWaveAmp, r.w * u.uWaveAmp * u.uWaveAmp);
+}
 
 fn waveNormal(hw: vec3f) -> vec3f { return normalize(vec3f(-hw.y, 1.0, -hw.z)); }
 

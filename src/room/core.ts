@@ -183,6 +183,8 @@ export class RoomCore {
       uSeaOn: { value: 0 },
       uSeaY: { value: -1 },
       uSeaBody: { value: new THREE.Vector3() },
+      uSeaLook: { value: new THREE.Vector2(0.004, 0.6) },        // 海面の細かい粗さ・波の山が透ける強さ
+      uPixAngle: { value: 1e-3 },                                // 1 画素が見込む角度（ラジアン。遠くの細かい波を消すのに使う）
       uPoolOn: { value: 0 },
       uPoolDepth: { value: 0.3 },
       uWaveAmp: { value: 1 },
@@ -238,6 +240,7 @@ export class RoomCore {
       uShimShape: { value: new THREE.Vector4(0.35, 0.06, 0.6, 0) }, // 網目の大きさ（m）・線の太さ・ゆがみ・形の変化の進み
       uShimLook: { value: new THREE.Vector4(0.6, 2, 0.04, 0.6) },   // 線のない所の明るさ・線の明るさ・虹のずれ・膜の虹色の濃さ
       uShimColor: { value: new THREE.Vector4(3, 0, 1, 1) },         // 色の数・虹の色の範囲の始め・終わり・色の濃さ
+      uShimSurface: { value: 0 },                                  // 1 = 網目を面そのものに置く（大きさが変わらない）
       uShimPalN: { value: 0 },                                     // 選んだ色の数（0 = 虹の色の範囲を使う）
       uShimPal: { value: Array.from({ length: MAX_SHIM_PALETTE }, () => new THREE.Vector3(1, 1, 1)) },
       uShimLineCol: { value: new THREE.Vector3(1, 1, 1) },
@@ -509,6 +512,7 @@ export class RoomCore {
     s.uShimOn.value = pz.on && sh.on ? Math.min(1, Math.max(0, sh.amount)) : 0;
     s.uShimShape.value.set(Math.max(0.02, sh.scaleM), Math.max(0.005, sh.lineWidth), Math.max(0, sh.warp), this.shimPhase);
     s.uShimLook.value.set(Math.max(0, sh.base), Math.max(0, sh.gain), sh.dispersion, Math.min(1, Math.max(0, sh.iridescence)));
+    s.uShimSurface.value = sh.anchor === 'surface' ? 1 : 0;
     s.uShimColor.value.set(Math.min(MAX_SHIM_COLORS, Math.max(3, Math.round(sh.colorCount))), sh.hueStart, sh.hueEnd, Math.max(0, sh.saturation));
     const nPal = Math.min(MAX_SHIM_PALETTE, Math.max(2, Math.round(sh.paletteCount)));
     s.uShimPalN.value = sh.colorMode === 'palette' ? nPal : 0;
@@ -607,6 +611,8 @@ export class RoomCore {
     s.uSeaOn.value = settings.seaView && windowSide !== 'ceiling' ? 1 : 0;
     s.uSeaY.value = settings.seaLevelM;
     s.uSeaBody.value.set(0.12, 0.35, 0.42).multiplyScalar(skyL * 0.25);
+    s.uSeaLook.value.set(Math.max(1e-4, settings.seaRoughness), Math.max(0, settings.seaScatter));
+    s.uPixAngle.value = 2 / (Math.max(1e-3, camera.projectionMatrix.elements[5]) * Math.max(1, this.shared.uRes.value.y));
     s.uPoolOn.value = settings.pool ? 1 : 0;
     s.uPoolDepth.value = settings.poolDepthM;
     this.causOn.value = settings.pool || (settings.seaRipples && windowSide !== 'ceiling') ? 1 : 0;

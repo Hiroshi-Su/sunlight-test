@@ -57,6 +57,10 @@ export interface RoomRenderSettings {
   poolDepthM: number;
   /** 窓の外の水面の高さ（床を 0 とした m。負なら床より下） */
   seaLevelM: number;
+  /** 窓の外の海面の、描かない細かいさざ波の粗さ（傾きの 2 乗平均）。大きいほど太陽のきらめきが広い帯になる */
+  seaRoughness: number;
+  /** 窓の外の海の、波の山が日差しで透けて緑がかる強さ（0 = 透けない） */
+  seaScatter: number;
   /** 窓の大きさ（パネルで変えられる。初期値は config/site.json） */
   window: WindowGeometry;
   /** 窓の外の空に雲を浮かべる */
@@ -347,6 +351,9 @@ export interface PrismShimmer {
   on: boolean;
   /** 重ねる強さ（0 = 日なたそのまま、1 = 網目の明暗をそのまま） */
   amount: number;
+  /** 網目をどこに置くか（light = 窓の面の上で作って日差しの向きに写す：日差しと一緒に動き、斜めの面では伸びる。
+   *  surface = 床・壁・天井の面そのものに置く：どの面でも網目の大きさが変わらない） */
+  anchor: ShimmerAnchor;
   /** 網目の 1 つ分の大きさ（m） */
   scaleM: number;
   /** 線の太さ（網目の 1 つ分に対する割合） */
@@ -380,6 +387,9 @@ export interface PrismShimmer {
   saturation: number;
 }
 
+/** H の網目の置き方 */
+export const SHIMMER_ANCHORS = ['light', 'surface'] as const;
+export type ShimmerAnchor = (typeof SHIMMER_ANCHORS)[number];
 /** H の色の決め方 */
 export const SHIMMER_COLOR_MODES = ['spectrum', 'palette'] as const;
 export type ShimmerColorMode = (typeof SHIMMER_COLOR_MODES)[number];
