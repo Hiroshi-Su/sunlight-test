@@ -63,6 +63,8 @@ export interface RoomRenderSettings {
   seaWindMS: number;
   /** 窓の外の海の波の高さの倍率（FFT のとき。1 で、その風速で十分に発達した海の高さ） */
   seaWaveScale: number;
+  /** 正弦波の海と FFT の海を並べて比べる（海を窓の奥行きの真ん中で分け、手前側：正弦波、奥側：FFT。WebGPU のとき） */
+  seaCompare: boolean;
   /** 窓の外の海面の、描かない細かいさざ波の粗さ（傾きの 2 乗平均）。大きいほど太陽のきらめきが広い帯になる */
   seaRoughness: number;
   /** 窓の外の海の、波の山が日差しで透けて緑がかる強さ（0 = 透けない） */
@@ -116,6 +118,15 @@ export interface MoonSettings {
   /** 点き始める太陽の高度（度）と、最大になる太陽の高度（度） */
   onAltDeg: number;
   fullAltDeg: number;
+  /** 窓の外の海に月の光の道を映す（夜、月明かりが点いているとき）。海に映す月は、部屋を照らす月とは別に、窓の正面の低い所に置く
+   *  （部屋を照らす月は高いので、そのままでは海に映る所が窓から見えない） */
+  seaRoad: boolean;
+  /** 海に映す月の光の明るさの倍率（部屋を照らす月の光に対して） */
+  seaRoadStrength: number;
+  /** 海に映す月の向き：見ている所から窓の真ん中を見た向きから、奥（スクリーンの側）へ回す角度（度）と、高度（度）。
+   *  見ている所から窓の真ん中の向きに置くので、視点を動かしても光の道は窓の中に見える */
+  seaRoadOffsetDeg: number;
+  seaRoadAltDeg: number;
 }
 
 /** 月明かりの点き具合（0〜1）。太陽の高度が onAltDeg から fullAltDeg へ下がる間に、なめらかに明るくなる */

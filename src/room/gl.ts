@@ -44,6 +44,8 @@ uniform float uSeaY;         // 窓の外の水面の高さ
 uniform vec3 uSeaBody;       // 水の中から出てくる光（水の色）
 uniform vec2 uSeaLook;       // 海面の細かい粗さ（傾きの 2 乗平均）・波の山が透ける強さ
 uniform float uPixAngle;     // 1 画素が見込む角度（ラジアン）
+uniform vec3 uSeaGlintDir;   // 海に映すきらめきの光の向き（昼は太陽、夜は海に映す月）
+uniform vec3 uSeaGlintE;     // その光の強さ
 uniform int uPoolOn;         // 床の水盤
 uniform float uPoolDepth;    // 水盤の深さ
 uniform int uCloudOn;        // 窓の外の空に雲
@@ -278,7 +280,7 @@ float sunLobe(vec3 r) {
 // 細かい傾きの分布を Beckmann 分布とし、太陽の向き l と視線 v の中間の向き h を向いた細かい面の割合で光らせる。
 // 粗いほど、きらめきが広い帯になって暗くなる（光の量は同じ）
 float seaGlint(vec3 n, vec3 v, float m2) {
-  vec3 l = uSunDir;
+  vec3 l = uSeaGlintDir;
   float nl = dot(n, l);
   if (l.y <= 0.0 || nl <= 0.0) return 0.0;
   vec3 h = normalize(v + l);
@@ -303,7 +305,7 @@ vec3 seaRadiance(vec3 o, vec3 d) {
   vec2 dh = normalize(d.xz + 1e-6), sh = normalize(uSunDir.xz + 1e-6);
   float toward = pow(0.5 + 0.5 * dot(dh, sh), 4.0);
   vec3 body = uSeaBody + uSunE * (vec3(0.02, 0.09, 0.07) * (uSeaLook.y * crest * (0.25 + toward) * max(uSunDir.y, 0.0)));
-  vec3 c = F * cloudySky(x, r) + uSunE * (seaGlint(n, v, uSeaLook.x + sw.w) * cloudTrans(x)) + (1.0 - F) * body;
+  vec3 c = F * cloudySky(x, r) + uSeaGlintE * (seaGlint(n, v, uSeaLook.x + sw.w) * cloudTrans(x)) + (1.0 - F) * body;
   // 遠くはかすんで、地平線の空の色に近づく
   return mix(c, skyRadiance(normalize(vec3(d.x, 0.02, d.z))), 1.0 - exp(-t / 600.0));
 }

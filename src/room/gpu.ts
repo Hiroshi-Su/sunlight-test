@@ -196,7 +196,7 @@ fn oceanSurface(p: vec2f, fw: f32) -> vec4f {
   return oceanLayer(ocean0, u.uOceanSize.x, 0, p, fw) + oceanLayer(ocean1, u.uOceanSize.y, 1, p, fw);
 }
 fn seaGlint(n: vec3f, v: vec3f, m2: f32) -> f32 {
-  let l = u.uSunDir;
+  let l = u.uSeaGlintDir;
   let nl = dot(n, l);
   if (l.y <= 0.0 || nl <= 0.0) { return 0.0; }
   let h = normalize(v + l);
@@ -209,19 +209,22 @@ fn seaRadiance(o: vec3f, d: vec3f) -> vec3f {
   let t = (u.uSeaY - o.y) / min(d.y, -1e-4);
   let x = o + d * t;
   let fw = t * u.uPixAngle / sqrt(max(-d.y, 1e-3));
+  // 比べるとき（uSeaSplit）は、海を窓の奥行きの真ん中で 2 つに分け、手前側（見る人の側）を正弦波の海にする（窓からどちらも見える）
+  let zMid = 0.5 * (u.uWinRect.x + u.uWinRect.y);
+  let fft = u.uOceanOn > 0.5 && !(u.uSeaSplit > 0.5 && x.z > zMid);
   var sw: vec4f;
-  if (u.uOceanOn > 0.5) { sw = oceanSurface(x.xz, fw); } else { sw = seaSurface(x.xz, fw); }
+  if (fft) { sw = oceanSurface(x.xz, fw); } else { sw = seaSurface(x.xz, fw); }
   let n = waveNormal(sw.xyz);
   let v = -d;
   let F = fresnelWater(dot(v, n));
   var r = reflect(d, n);
   r.y = abs(r.y);
-  let crest = clamp(sw.x / select(0.03 * u.uWaveAmp + 1e-4, 2.0 * u.uOceanRms + 1e-4, u.uOceanOn > 0.5), 0.0, 1.0);
+  let crest = clamp(sw.x / select(0.03 * u.uWaveAmp + 1e-4, 2.0 * u.uOceanRms + 1e-4, fft), 0.0, 1.0);
   let dh = normalize(d.xz + 1e-6);
   let sh = normalize(u.uSunDir.xz + 1e-6);
   let toward = pow(0.5 + 0.5 * dot(dh, sh), 4.0);
   let body = u.uSeaBody + u.uSunE * (vec3f(0.02, 0.09, 0.07) * (u.uSeaLook.y * crest * (0.25 + toward) * max(u.uSunDir.y, 0.0)));
-  let c = F * cloudySky(x, r) + u.uSunE * (seaGlint(n, v, u.uSeaLook.x + sw.w) * cloudTrans(x)) + (1.0 - F) * body;
+  let c = F * cloudySky(x, r) + u.uSeaGlintE * (seaGlint(n, v, u.uSeaLook.x + sw.w) * cloudTrans(x)) + (1.0 - F) * body;
   return mix(c, skyRadiance(normalize(vec3f(d.x, 0.02, d.z))), 1.0 - exp(-t / 600.0));
 }
 

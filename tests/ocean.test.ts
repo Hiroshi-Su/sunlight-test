@@ -15,7 +15,7 @@ test('FFT の海：高さの標準偏差は Hs / 4（Hs = 0.21 × 風速² / g�
 });
 
 test('FFT の海：h0 の後ろ 2 つは conj(h0(−k))（逆変換で実数の海面になる）', () => {
-  for (const [x, y] of [[3, 5], [200, 17], [128, 1]]) {
+  for (const [x, y] of [[3, 5], [200, 17], [128, 1]] as const) {
     const i = y * N + x;
     const m = ((N - y) % N) * N + ((N - x) % N);
     assert.equal(spec.h0[i * 4 + 2], spec.h0[m * 4]);

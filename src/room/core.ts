@@ -190,6 +190,9 @@ export class RoomCore {
       uSeaBody: { value: new THREE.Vector3() },
       uSeaLook: { value: new THREE.Vector2(0.004, 0.6) },        // 海面の細かい粗さ・波の山が透ける強さ
       uPixAngle: { value: 1e-3 },
+      uSeaGlintDir: { value: new THREE.Vector3(0, 1, 0) },        // 海に映すきらめきの光の向き（昼は太陽、夜は海に映す月）
+      uSeaGlintE: { value: new THREE.Vector3() },                 // その光の強さ
+      uSeaSplit: { value: 0 },                                   // 1 = 海の手前側（窓の奥行きの真ん中より手前）は正弦波の海（比べるとき）
       uOceanOn: { value: 0 },                                    // 1 = 海の波を FFT の画像から読む（WebGPU のときだけ使う）
       uOceanSize: { value: new THREE.Vector2(OCEAN_CASCADES[0].sizeM, OCEAN_CASCADES[1].sizeM) },
       uOceanRms: { value: 0.1 },                                 // 海面の高さの標準偏差（m）
@@ -641,6 +644,25 @@ export class RoomCore {
 
     s.uSunDir.value.copy(sunDir);
     s.uSunE.value.copy(sunE);
+    // 海に映すきらめき：ふだんは太陽（夜は部屋を照らす月）。夜に「海に月の光の道」がオンなら、窓の正面の低い所に置いた月
+    s.uSeaGlintDir.value.copy(sunDir);
+    s.uSeaGlintE.value.copy(sunE);
+    if (useMoon && moon.seaRoad && s.uSeaOn.value) {
+      // 見ている所から窓の真ん中を見た水平の向き（壁の窓。天窓＋左は左の窓）を、奥（−z）の側へ turn だけ回す
+      const r = this.winRect;
+      const wx = windowSide === 'right' ? s.uRoomMax.value.x : s.uRoomMin.value.x;
+      let hx = wx - camera.position.x;
+      let hz = 0.5 * (r.x + r.y) - camera.position.z;
+      const hl = Math.hypot(hx, hz) || 1;
+      hx /= hl;
+      hz /= hl;
+      const turn = ((windowSide === 'right' ? -1 : 1) * moon.seaRoadOffsetDeg * Math.PI) / 180; // 奥（−z）の側へ回る向き
+      const [cx, cz] = [hx * Math.cos(turn) - hz * Math.sin(turn), hx * Math.sin(turn) + hz * Math.cos(turn)];
+      const alt = (Math.max(1, moon.seaRoadAltDeg) * Math.PI) / 180;
+      s.uSeaGlintDir.value.set(cx * Math.cos(alt), Math.sin(alt), cz * Math.cos(alt)).normalize();
+      s.uSeaGlintE.value.copy(moonCol).multiplyScalar(MOON_SCALE * moon.strength * moonW * Math.max(0, moon.seaRoadStrength));
+    }
+    s.uSeaSplit.value = settings.seaCompare && s.uOceanOn.value ? 1 : 0;
     s.uSkyTop.value.copy(top);
     s.uSkyBottom.value.copy(bottom);
     s.uGround.value.copy(ground);
