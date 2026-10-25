@@ -63,6 +63,8 @@ export interface RoomRenderSettings {
   seaWindMS: number;
   /** 窓の外の海の波の高さの倍率（FFT のとき。1 で、その風速で十分に発達した海の高さ） */
   seaWaveScale: number;
+  /** ガラスの壁にする面（面ぜんたいが枠なしの一枚ガラス。外は空と海） */
+  glass: Record<GlassFace, boolean>;
   /** 正弦波の海と FFT の海を並べて比べる（海を窓の奥行きの真ん中で分け、手前側：正弦波、奥側：FFT。WebGPU のとき） */
   seaCompare: boolean;
   /** 窓の外の海面の、描かない細かいさざ波の粗さ（傾きの 2 乗平均）。大きいほど太陽のきらめきが広い帯になる */
@@ -118,16 +120,27 @@ export interface MoonSettings {
   /** 点き始める太陽の高度（度）と、最大になる太陽の高度（度） */
   onAltDeg: number;
   fullAltDeg: number;
-  /** 窓の外の海に月の光の道を映す（夜、月明かりが点いているとき）。海に映す月は、部屋を照らす月とは別に、窓の正面の低い所に置く
-   *  （部屋を照らす月は高いので、そのままでは海に映る所が窓から見えない） */
-  seaRoad: boolean;
-  /** 海に映す月の光の明るさの倍率（部屋を照らす月の光に対して） */
+  /** 月の置き方。low = 部屋を照らす月も海に映す月も、見ている所から窓の真ん中の向きの低い月（A。海の光の道と部屋の月明かりの向きがそろう）、
+   *  set = どちらも、方位・高度で決めた月（B。本物どおり。月が低く窓の正面にあるときだけ海に光の道が見える）、
+   *  split = 部屋は方位・高度で決めた月、海だけ窓の真ん中の向きの低い月（前の作り方。向きがそろわない） */
+  mode: MoonMode;
+  /** 海に映す月の光の明るさの倍率（部屋を照らす月の光に対して。0 で海に光の道を出さない） */
   seaRoadStrength: number;
   /** 海に映す月の向き：見ている所から窓の真ん中を見た向きから、奥（スクリーンの側）へ回す角度（度）と、高度（度）。
    *  見ている所から窓の真ん中の向きに置くので、視点を動かしても光の道は窓の中に見える */
   seaRoadOffsetDeg: number;
   seaRoadAltDeg: number;
 }
+
+/** 月の置き方 */
+export const MOON_MODES = ['low', 'set', 'split'] as const;
+export type MoonMode = (typeof MOON_MODES)[number];
+
+/** ガラスにできる面（面ぜんたいが枠なしの一枚ガラス。床は水盤なので除く） */
+export const GLASS_FACES = ['right', 'left', 'ceiling', 'front', 'back'] as const;
+export type GlassFace = (typeof GLASS_FACES)[number];
+/** シェーダーの面の番号（0 = +x 右、1 = −x 左、2 = 天井、4 = 手前、5 = 奥） */
+export const GLASS_FACE_INDEX: Record<GlassFace, number> = { right: 0, left: 1, ceiling: 2, front: 4, back: 5 };
 
 /** 月明かりの点き具合（0〜1）。太陽の高度が onAltDeg から fullAltDeg へ下がる間に、なめらかに明るくなる */
 export function moonWeight(moon: MoonSettings, sunAltDeg: number): number {
@@ -597,8 +610,9 @@ export function windowRect(side: WindowSide, room: RoomGeometry, win: WindowGeom
     const w = Math.min(win.widthM, W) / 2, d = Math.min(win.heightM, D) / 2;
     return [-w, w, midZ - d, midZ + d];
   }
-  const w = Math.min(win.widthM, D * 0.95) / 2;
-  const y0 = Math.min(win.sillHeightM, H * 0.9), y1 = Math.min(win.sillHeightM + win.heightM, H * 0.98);
+  // 壁の窓は壁いっぱい（奥行き全部・床から天井まで。壁がなくなる大きさ）まで開けられる
+  const w = Math.min(win.widthM, D) / 2;
+  const y0 = Math.min(win.sillHeightM, H * 0.9), y1 = Math.min(win.sillHeightM + win.heightM, H);
   return [midZ - w, midZ + w, y0, Math.max(y1, y0 + 0.01)];
 }
 

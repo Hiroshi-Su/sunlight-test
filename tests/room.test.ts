@@ -26,10 +26,11 @@ test('窓の範囲：大きさの変更がそのまま反映され、部屋か�
   const room = { widthM: 10, depthM: 6, heightM: 3.2 };
   // 壁の窓：奥行きの中央（z = -3）に幅 2m、床から 0.5〜2.0m
   assert.deepEqual(windowRect('right', room, { widthM: 2, heightM: 1.5, sillHeightM: 0.5 }), [-4, -2, 0.5, 2]);
-  // 幅は奥行きの 95%、上端は天井高の 98% まで
+  // 幅は奥行きいっぱい、上端は天井まで（壁いっぱい＝壁がなくなる大きさ）
   const [z0, z1, , y1] = windowRect('left', room, { widthM: 99, heightM: 99, sillHeightM: 0.4 });
-  assert.ok(Math.abs(z1 - z0 - 6 * 0.95) < 1e-9);
-  assert.ok(Math.abs(y1 - 3.2 * 0.98) < 1e-9);
+  assert.ok(Math.abs(z1 - z0 - 6) < 1e-9);
+  assert.ok(Math.abs(y1 - 3.2) < 1e-9);
+  assert.deepEqual(windowRect('left', room, { widthM: 6, heightM: 3.2, sillHeightM: 0 }), [-6, 0, 0, 3.2]);
   // 天窓：天井の中央に 幅（左右）× 奥行き
   assert.deepEqual(windowRect('ceiling', room, { widthM: 4, heightM: 2, sillHeightM: 0.4 }), [-2, 2, -4, -2]);
   // 天窓は天井いっぱい（天井の面が消える大きさ）まで。それより大きくても天井の大きさで止める

@@ -94,9 +94,13 @@ fn inWindow2(face: i32, p: vec3f) -> bool {
   return u.uWin2On > 0.5 && face == 2 && p.x > u.uWin2Rect.x && p.x < u.uWin2Rect.y && p.z > u.uWin2Rect.z && p.z < u.uWin2Rect.w;
 }
 
+// ガラスの壁（src/room/gl.ts と同じ）
+fn isGlass(face: i32) -> bool { return (u32(u.uGlassMask + 0.5) & (1u << u32(face))) != 0u; }
+
 fn inWindow(face: i32, p: vec3f) -> bool {
-  return inWindow1(face, p) || inWindow2(face, p);
+  return inWindow1(face, p) || inWindow2(face, p) || isGlass(face);
 }
+fn windowIndex(face: i32, p: vec3f) -> i32 { return select(select(0, 1, inWindow1(face, p)), 2, inWindow2(face, p)); }
 
 fn windowPoint(r1: f32, r2: f32) -> vec3f {
   let a = mix(u.uWinRect.x, u.uWinRect.y, r1);
@@ -522,6 +526,7 @@ fn cosineSample(n: vec3f) -> vec3f {
 fn windowSel() -> f32 { return select(1.0, 0.5, u.uWin2On > 0.5); }
 fn windowOutwardK(k: i32) -> vec3f { return select(windowOutward(), vec3f(0.0, 1.0, 0.0), k == 2); }
 fn windowPdf(k: i32, w: vec3f, d2: f32) -> f32 {
+  if (k == 0) { return 0.0; }
   let r = select(u.uWinRect, u.uWin2Rect, k == 2);
   let area = (r.y - r.x) * (r.w - r.z);
   return windowSel() * d2 / (max(dot(windowOutwardK(k), w), 1e-6) * area);
@@ -567,7 +572,7 @@ fn indirect(p0: vec3f, n0: vec3f) -> vec3f {
     let e = exitRoom(p, d);
     let f = e.face;
     var q = p + d * e.t;
-    if (inWindow(f, q)) { acc += thr * skyBsdf(n, d, e.t, select(1, 2, inWindow2(f, q))); break; } // 窓から外へ出た：空の光の 2 つ目の見本
+    if (inWindow(f, q)) { acc += thr * skyBsdf(n, d, e.t, windowIndex(f, q)); break; } // 窓から外へ出た：空の光の 2 つ目の見本
     if (b >= i32(u.uBounces)) { break; }
     acc += thr * screenLight(f, q, 5.0); // スクリーンに映した映像の光が、部屋をほんのり照らす
     let n2 = inwardNormal(f);
@@ -1123,6 +1128,10 @@ fn poolRadiance(p: vec3f, d: vec3f, ind: vec3f) -> vec3f {
   return (1.0 - F) * lb + F * lr;
 }
 
+// ガラスの壁（src/room/gl.ts と同じ）
+fn glassFresnel(c: f32) -> f32 { return 0.04 + 0.96 * pow(1.0 - c, 5.0); }
+fn glassTint(c: f32) -> vec3f { return pow(vec3f(0.94, 0.975, 0.965), vec3f(1.0 / max(c, 0.2))); }
+
 fn aces(x: vec3f) -> vec3f {
   return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), vec3f(0.0), vec3f(1.0));
 }
@@ -1149,11 +1158,32 @@ ${FULLSCREEN_VS}
     if (!h.ok) { col += OUTSIDE; continue; }
     let lamp = spotLamp(u.uCamPos, h.dir, distance(u.uCamPos, h.p)); // ライトの器具そのもの
     if (lamp.x + lamp.y + lamp.z > 0.0) { col += lamp; continue; }
-    if (inWindow(h.face, h.p)) { col += outsideRadiance(h.p, h.dir); continue; }
-    if (u.uPoolOn > 0.5 && h.face == 3) { col += poolRadiance(h.p, h.dir, ind); continue; }
-    let n = inwardNormal(h.face);
-    let a = albedo(h.face, h.p);
-    col += a * ind + a / PI * (sunLight(h.p + n * EPS, n) + u.uSunE * causticRGB(h.face, h.p, n) + spotIrradiance(h.p + n * EPS, n)) + screenLight(h.face, h.p, -1.0) + ambientPanel(h.face, h.p);
+    var f = h.face;
+    var p = h.p;
+    var d = h.dir;
+    var w = 1.0;
+    var ind2 = ind;
+    if (isGlass(f)) {
+      let gn = inwardNormal(f);
+      let c = clamp(dot(-d, gn), 0.0, 1.0);
+      w = glassFresnel(c);
+      col += (1.0 - w) * outsideRadiance(p, d) * glassTint(c);
+      let o2 = p + gn * EPS;
+      d = reflect(d, gn);
+      let e2 = exitRoom(o2, d);
+      f = e2.face;
+      p = o2 + d * e2.t;
+      col += w * spotLamp(o2, d, e2.t);
+      if (inWindow(f, p)) { col += w * (outsideRadiance(p, d) + u.uSunE * (sunLobe(d) * cloudTrans(p))); continue; }
+      let cc = u.uViewProj * vec4f(p, 1.0);
+      let uv = cc.xy / max(cc.w, 1e-6) * 0.5 + 0.5;
+      if (cc.w > 0.0 && all(uv > vec2f(0.0)) && all(uv < vec2f(1.0))) { ind2 = accumAt(uv * u.uRes); }
+    }
+    if (inWindow(f, p)) { col += outsideRadiance(p, d); continue; }
+    if (u.uPoolOn > 0.5 && f == 3) { col += w * poolRadiance(p, d, ind2); continue; }
+    let n = inwardNormal(f);
+    let a = albedo(f, p);
+    col += w * (a * ind2 + a / PI * (sunLight(p + n * EPS, n) + u.uSunE * causticRGB(f, p, n) + spotIrradiance(p + n * EPS, n)) + screenLight(f, p, -1.0) + ambientPanel(f, p));
   }
   col = max(col, vec3f(0.0)) * (0.25 * u.uExposure); // プリズムで白を減らした所が負にならないように
   col = toSrgb(aces(col));

@@ -1,10 +1,10 @@
 // config/*.json の型と検証。現地で手編集されるファイルなので、起動時に問題点をまとめて報告する。
 
 /** 窓の位置。left / right = 鑑賞者から見て左右の壁、ceiling = 天井（天窓） */
-/** 窓の位置。'ceiling-left' は天窓（天井いっぱい）と左の壁の窓の両方 */
+/** 窓の位置。'ceiling-left' は天井（天井いっぱいの窓）と左の壁の窓の両方 */
 export type WindowSide = 'left' | 'right' | 'ceiling' | 'ceiling-left';
 export const WINDOW_SIDES: readonly WindowSide[] = ['left', 'right', 'ceiling', 'ceiling-left'];
-export const WINDOW_SIDE_LABEL: Record<WindowSide, string> = { left: '左', right: '右', ceiling: '天井', 'ceiling-left': '天窓＋左' };
+export const WINDOW_SIDE_LABEL: Record<WindowSide, string> = { left: '左', right: '右', ceiling: '天井', 'ceiling-left': '天井＋左' };
 /** 壁の窓の側（天窓＋左は左。天窓だけのときは null） */
 export const wallWindowSide = (side: WindowSide): 'left' | 'right' | null => (side === 'ceiling' ? null : side === 'ceiling-left' ? 'left' : side);
 export type AzimuthReference = 'magnetic' | 'true';

@@ -4,7 +4,7 @@ import type { Clock } from '../clock.ts';
 import { mountCalibMode } from './calib-mode.ts';
 import { WINDOW_SIDES, WINDOW_SIDE_LABEL, type WindowSide } from '../config.ts';
 import { PALETTE_KELVIN_ALTS, PALETTE_SKY_ALTS, type PaletteTable, defaultPalette, kelvinAt, setPalette } from '../palette.ts';
-import { EXHIBIT_SIZE, type GuideOptions, LIGHT_KINDS, type LightKind, MAX_BLOBS, MAX_SHIM_COLORS, MAX_SHIM_PALETTE, MAX_SPOTS, MAX_PRISMS, type MoonSettings, type OrganicLook, PRISM_MOTIONS, PRISM_PATTERNS, SEA_WAVES, type SeaWaves, SHIMMER_ANCHORS, SHIMMER_COLOR_MODES, type PrismMotion, type PrismPattern, type PrismSettings, SPOT_MODES, TRAIL_COLOR_MODES, type TrailSettings, type RoomGeometry, type RoomOutput, type RoomRenderSettings, type RoomResolution, type SpotLight, type SpotMode, type SpotSettings, type ViewCalibration, type WindowGeometry, defaultCalibration } from '../room/scene.ts';
+import { EXHIBIT_SIZE, type GuideOptions, LIGHT_KINDS, type LightKind, MAX_BLOBS, MAX_SHIM_COLORS, MAX_SHIM_PALETTE, MAX_SPOTS, MAX_PRISMS, type MoonSettings, type OrganicLook, PRISM_MOTIONS, PRISM_PATTERNS, GLASS_FACES, type GlassFace, MOON_MODES, SEA_WAVES, type SeaWaves, SHIMMER_ANCHORS, SHIMMER_COLOR_MODES, type PrismMotion, type PrismPattern, type PrismSettings, SPOT_MODES, TRAIL_COLOR_MODES, type TrailSettings, type RoomGeometry, type RoomOutput, type RoomRenderSettings, type RoomResolution, type SpotLight, type SpotMode, type SpotSettings, type ViewCalibration, type WindowGeometry, defaultCalibration } from '../room/scene.ts';
 import { SCENES, findScene } from '../scenes/index.ts';
 import type { SceneDef } from '../scenes/types.ts';
 import type { SolarState } from '../solar.ts';
@@ -22,7 +22,7 @@ import { mountTimeControls } from './time-controls.ts';
  * - 雲が日差しをさえぎる（雲の影）はオフ
  * - 天窓の大きさは天井いっぱい（天井の面が消える大きさ）。URL の ?winW= ?winH= を指定したときはその値
  */
-export const ROOM_DEFAULTS = { pool: true, poolReflect: false, seaView: true, waveAmp: 0.3, fullCeiling: true, cloudShadow: false } as const;
+export const ROOM_DEFAULTS = { pool: true, poolReflect: false, seaView: true, waveAmp: 0.3, cloudShadow: false } as const;
 
 /**
  * スポットライト 1 台の既定（鑑賞者の頭上：手前の端から 0.6m、天井から 0.15m。真下から奥へ 35° 傾ける）。
@@ -88,7 +88,7 @@ const PRISM_MOTION_LABEL: Record<PrismMotion, string> = {
 /** 月明かりの既定（南の空、高度 50° の月。太陽が 0° を切ると点き始め、−8° で最大） */
 export const MOON_DEFAULTS: MoonSettings = {
   on: true, strength: 0.5, skyStrength: 0.7, color: '#a9bfff', azimuthDeg: 180, altitudeDeg: 50, onAltDeg: 0, fullAltDeg: -8,
-  seaRoad: true, seaRoadStrength: 1.5, seaRoadOffsetDeg: 0, seaRoadAltDeg: 6,
+  mode: 'low', seaRoadStrength: 1.5, seaRoadOffsetDeg: 0, seaRoadAltDeg: 6,
 };
 const SPOT_MODE_LABEL: Record<SpotMode, string> = { auto: '自動（太陽が沈むと点く）', on: '常に点ける', off: '消す' };
 const LIGHT_KIND_LABEL: Record<LightKind, string> = { spot: 'スポットライト（頭上から丸く照らす）', ambient: '全体照明（天井全体がやわらかく光る）' };
@@ -159,15 +159,23 @@ export function mountRoomUi(
   gui.add({ run: doSave }, 'run').name('部屋の設定を保存（config/room.json）');
   gui.add(saveState, 'text').name('保存').disable().listen();
 
-  // 窓の位置の切り替えスイッチ。?window=right などで、最初に表示する窓の位置を指定できる（指定がなければ保存した位置、既定は天窓）
-  const urlSide = WINDOW_SIDES.find((w) => w === q.get('window'));
-  const state = { side: urlSide ?? oneOf(base.windowSide, WINDOW_SIDES, 'ceiling-left') };
+  // 窓の位置の切り替えスイッチ。?window=right・?window=skylight などで、最初に表示する窓の位置を指定できる（指定がなければ保存した位置、既定は左）。
+  // 「天井」（天井いっぱい）と「天窓」（天井の一部）は、計算の上ではどちらも天井の窓（side = ceiling）で、大きさだけが違う
+  const urlChoice = WINDOW_CHOICES.find((w) => w === q.get('window'));
+  const urlSide = urlChoice ? choiceSide(urlChoice) : undefined;
+  const state = { side: urlSide ?? oneOf(base.windowSide, WINDOW_SIDES, 'left') };
   const options = Object.fromEntries(
-    WINDOW_SIDES.map((s) => [`${WINDOW_SIDE_LABEL[s]}${s === configSide ? '（設定どおり）' : ''}`, s]),
+    WINDOW_CHOICES.map((c) => [`${WINDOW_CHOICE_LABEL[c]}${c === configSide ? '（設定どおり）' : ''}`, c]),
   );
   const fr = gui.addFolder('部屋');
-  // 窓の位置のスイッチ（いちばん上）。切り替えたら窓の大きさの上限も合わせる（fit は下で定義）
-  fr.add(state, 'side', options).name('窓の位置').onChange((v: WindowSide) => { fit(); onWindowSide(v); });
+  // 窓の位置のスイッチ（いちばん上）。切り替えたら、その位置の既定の大きさにする（壁の窓・天井は壁いっぱい・天井いっぱい、天窓は天井の一部）
+  const pick = { choice: 'left' as WindowChoice };
+  const cPick = fr.add(pick, 'choice', options).name('窓の位置').onChange((c: WindowChoice) => {
+    state.side = choiceSide(c);
+    Object.assign(win, defaultWindow(c, room, configWindow));
+    fit();
+    onWindowSide(state.side);
+  });
 
   // 画面の設定。照り返しを 0 にすると、窓から直接届く光だけになる（照り返しの効果を見比べられる）
   // 水は ?sea=1（海）・?ripples=1（水面の反射の揺らぎ）・?pool=1（水盤）で最初からオンにできる
@@ -179,10 +187,8 @@ export function mountRoomUi(
     return q.has(k) && Number.isFinite(v) && v >= 0 ? v : fallback;
   };
   const r0 = base.render;
-  // URL で窓の位置だけを保存した位置から変えたときは、窓の大きさはその位置の既定（天窓なら天井いっぱい、壁なら config/site.json）
-  const winBase = urlSide && urlSide !== base.windowSide
-    ? (urlSide === 'ceiling' ? { widthM: room.widthM, heightM: room.depthM, sillHeightM: configWindow.sillHeightM } : { ...configWindow })
-    : base.window;
+  // URL で窓の位置だけを保存した位置から変えたときは、窓の大きさはその位置の既定（壁の窓は壁いっぱい、天窓は天井の一部）
+  const winBase = urlChoice && (urlSide !== base.windowSide || urlChoice === 'skylight' || urlChoice === 'ceiling') ? defaultWindow(urlChoice, room, configWindow) : base.window;
   const settings: RoomRenderSettings = {
     ...r0,
     // ?seaWaves=sines で前の正弦波の海
@@ -194,7 +200,9 @@ export function mountRoomUi(
     clouds: on('clouds', r0.clouds), cloudShadow: on('cloudShadow', r0.cloudShadow),
     screen: q.has('screen') ? q.get('screen') !== '0' : r0.screen,
     // ?moon=0 で月明かりを消して開く
-    moon: { ...r0.moon, on: on('moon', r0.moon.on) },
+    moon: { ...r0.moon, on: on('moon', r0.moon.on), mode: oneOf(q.get('moonMode') ?? r0.moon.mode, MOON_MODES, 'low') },
+    // ?glass=right,back のように、ガラスの壁にする面を並べる（?glass=0 ですべて壁）
+    glass: Object.fromEntries(GLASS_FACES.map((f) => [f, q.has('glass') ? (q.get('glass') ?? '').split(',').includes(f) : !!r0.glass[f]])) as Record<GlassFace, boolean>,
     // プリズム：保存した値の出し方・動き方が選択肢になければ既定にする
     prism: {
       ...r0.prism,
@@ -230,33 +238,42 @@ export function mountRoomUi(
   const cS = fr.add(win, 'sillHeightM', 0, 1, 0.05).name('窓の下端の高さ（床から m）');
   const fit = (): void => {
     const ceiling = state.side === 'ceiling';
-    // 天窓は天井いっぱいまで（天井の面が消える）、壁の窓は壁の 95% まで
-    const maxW = ceiling ? room.widthM : room.depthM * 0.95;
-    const maxH = ceiling ? room.depthM : room.heightM * 0.98 - 0.2;
+    // 天窓は天井いっぱいまで（天井の面が消える）、壁の窓は壁いっぱいまで（壁の面が消える）
+    const maxW = ceiling ? room.widthM : room.depthM;
+    const maxH = ceiling ? room.depthM : room.heightM;
     win.widthM = Math.min(win.widthM, maxW);
     win.heightM = Math.min(win.heightM, maxH);
-    win.sillHeightM = Math.min(win.sillHeightM, room.heightM * 0.98 - 0.2);
+    win.sillHeightM = Math.min(win.sillHeightM, room.heightM - 0.2);
     cW.max(maxW).name(ceiling ? '窓の幅（左右、m）' : '窓の幅（奥行き方向、m）').updateDisplay();
     cH.max(maxH).name(ceiling ? '窓の奥行き（m）' : '窓の高さ（m）').updateDisplay();
-    cS.max(room.heightM * 0.98 - 0.2).updateDisplay();
+    cS.max(room.heightM - 0.2).updateDisplay();
     cS.show(!ceiling); // 天窓では使わない
-    cFull.show(ceiling);
-    // 天窓＋左の窓は、どちらも枠なし（壁・天井いっぱい）で大きさは決まっているので、大きさの項目を隠す
+    // 天井＋左は、どちらも枠なし（天井いっぱい・左の壁いっぱい）で大きさは決まっているので、大きさの項目を隠す
     const both = state.side === 'ceiling-left';
     for (const c of [cW, cH, cS]) if (both) c.hide();
     if (!both) { cW.show(); cH.show(); }
+    cFull.show(ceiling);
+    cFullWall.show(!ceiling && !both);
     cReset.show(!both);
+    syncPick();
   };
+  // 天井の窓の大きさを変えたら、「天井」（天井いっぱい）と「天窓」（天井の一部）の表示を合わせる
+  const syncPick = (): void => {
+    pick.choice = state.side === 'ceiling-left' ? 'ceiling-left' : choiceOf(state.side, win, room);
+    cPick.updateDisplay();
+  };
+  cW.onChange(syncPick);
   // 壁の窓は、下端 + 高さが天井を超えないように、下端を動かしたら高さを、高さを動かしたら下端を詰める
   cH.onChange(() => {
-    if (state.side !== 'ceiling' && win.sillHeightM + win.heightM > room.heightM * 0.98) {
-      win.sillHeightM = Math.max(0, room.heightM * 0.98 - win.heightM);
+    syncPick();
+    if (state.side !== 'ceiling' && win.sillHeightM + win.heightM > room.heightM) {
+      win.sillHeightM = Math.max(0, room.heightM - win.heightM);
       cS.updateDisplay();
     }
   });
   cS.onChange(() => {
-    if (win.sillHeightM + win.heightM > room.heightM * 0.98) {
-      win.heightM = Math.max(0.2, room.heightM * 0.98 - win.sillHeightM);
+    if (win.sillHeightM + win.heightM > room.heightM) {
+      win.heightM = Math.max(0.2, room.heightM - win.sillHeightM);
       cH.updateDisplay();
     }
   });
@@ -264,6 +281,8 @@ export function mountRoomUi(
   const cReset = fr.add(reset, 'run').name('窓の大きさを設定どおりに戻す');
   const full = { run: (): void => { win.widthM = room.widthM; win.heightM = room.depthM; fit(); } };
   const cFull = fr.add(full, 'run').name('天窓を天井いっぱいにする');
+  const fullWall = { run: (): void => { win.widthM = room.depthM; win.heightM = room.heightM; win.sillHeightM = 0; fit(); } };
+  const cFullWall = fr.add(fullWall, 'run').name('窓を壁いっぱいにする（壁なし）');
   // 部屋の寸法（現地の空間に合わせる）。動かし終えたときに部屋を作り直す
   const roomChanged = (): void => { fit(); hooks.onRoomSize(); };
   fr.add(room, 'widthM', 2, 40, 0.05).name('部屋の幅（m）').onFinishChange(roomChanged);
@@ -343,7 +362,7 @@ export function mountRoomUi(
     fp.add({ run: () => {
       Object.assign(room, preset.room);
       Object.assign(calib, { ...preset.calibration, mode: 'fixed' });
-      if (preset.windowSide && preset.windowSide !== state.side) { state.side = preset.windowSide; onWindowSide(state.side); }
+      if (preset.windowSide && preset.windowSide !== state.side) { state.side = preset.windowSide; pick.choice = choiceOf(state.side, win, room); onWindowSide(state.side); }
       gui.controllersRecursive().forEach((c) => c.updateDisplay());
       roomChanged();
       calibChanged();
@@ -389,6 +408,11 @@ export function mountRoomUi(
   for (const [k, label] of warpNames) fw4.add(warpPct, k, -25, 25, 0.05).name(label).onChange(applyWarp);
   fw4.add({ run: () => { for (const [k] of warpNames) warpPct[k] = 0; fw4.controllers.forEach((c) => c.updateDisplay()); applyWarp(); } }, 'run').name('四隅を元に戻す');
   fw4.close();
+
+  // ガラスの壁：面ごとに、面ぜんたいを枠なしの一枚ガラスにする（外は空と海。光も景色も通り、部屋の中が映り込む）
+  const fgl = gui.addFolder('ガラスの壁（面ぜんたいを一枚ガラスに）');
+  const GLASS_LABEL: Record<GlassFace, string> = { right: '右の壁', left: '左の壁', ceiling: '天井', front: '手前の壁（見る人の側）', back: '奥の壁（スクリーンの側）' };
+  for (const f of GLASS_FACES) fgl.add(settings.glass, f).name(GLASS_LABEL[f]);
 
   // 水：3 つはそれぞれ独立に出し消しできる（窓の外の 2 つは、壁の窓のときだけ効く）
   const fw = gui.addFolder('水');
@@ -676,10 +700,14 @@ export function mountRoomUi(
   fm.add(mn, 'altitudeDeg', 1, 89, 1).name('月の高度（度）');
   fm.add(mn, 'onAltDeg', -18, 10, 0.5).name('点き始める太陽の高度（度）');
   fm.add(mn, 'fullAltDeg', -18, 10, 0.5).name('最大になる太陽の高度（度）');
-  fm.add(mn, 'seaRoad').name('窓の外の海に月の光の道を映す');
-  fm.add(mn, 'seaRoadStrength', 0, 20, 0.1).name('海に映す月の光の明るさ');
-  fm.add(mn, 'seaRoadOffsetDeg', -80, 80, 1).name('海に映す月の向き：窓の真ん中から奥へ（度）');
-  fm.add(mn, 'seaRoadAltDeg', 1, 60, 0.5).name('海に映す月の高度（度。低いほど光の道が長い）');
+  fm.add(mn, 'mode', {
+    'A：部屋も海も、窓の真ん中の向きの低い月（向きがそろう）': 'low',
+    'B：部屋も海も、方位・高度で決めた月（本物どおり）': 'set',
+    '前の作り方：部屋は決めた月、海だけ低い月（向きがそろわない）': 'split',
+  }).name('月の置き方');
+  fm.add(mn, 'seaRoadStrength', 0, 20, 0.1).name('海に映す月の光の明るさ（0 で海に光の道を出さない）');
+  fm.add(mn, 'seaRoadOffsetDeg', -80, 80, 1).name('低い月の向き：窓の真ん中から奥へ（度、A と前の作り方）');
+  fm.add(mn, 'seaRoadAltDeg', 1, 60, 0.5).name('低い月の高度（度。低いほど光の道が長く、部屋の奥まで差し込む）');
   fm.add({ run: () => { Object.assign(mn, { ...MOON_DEFAULTS, on: mn.on }); fm.controllers.forEach((c) => c.updateDisplay()); } }, 'run').name('月明かりの設定を既定に戻す');
 
   mountTimeControls(gui, clock);
@@ -807,22 +835,39 @@ function mountActualBar(onScale: (s: number) => void, onBack: () => void, onTogg
   };
 }
 
+/** パネルの窓の位置の選択肢。天井 = 天井いっぱいの窓、天窓 = 天井の一部の窓（どちらも side は ceiling）、天井＋左 = 天井いっぱい＋左の壁いっぱい */
+export const WINDOW_CHOICES = ['left', 'right', 'ceiling', 'skylight', 'ceiling-left'] as const;
+export type WindowChoice = (typeof WINDOW_CHOICES)[number];
+const WINDOW_CHOICE_LABEL: Record<WindowChoice, string> = { left: '左', right: '右', ceiling: '天井（天井いっぱい）', skylight: '天窓（天井の一部）', 'ceiling-left': '天井＋左' };
+const choiceSide = (c: WindowChoice): WindowSide => (c === 'skylight' ? 'ceiling' : c);
+/** 窓の位置と大きさから、パネルの選択肢を決める（天井の窓は、天井いっぱいなら「天井」、そうでなければ「天窓」） */
+function choiceOf(side: WindowSide, win: WindowGeometry, room: RoomGeometry): WindowChoice {
+  if (side !== 'ceiling') return side;
+  return win.widthM >= room.widthM - 1e-6 && win.heightM >= room.depthM - 1e-6 ? 'ceiling' : 'skylight';
+}
+
+/** 窓の位置ごとの既定の大きさ。壁の窓は壁いっぱい（壁がない）、天井は天井いっぱい、天窓は天井の一部（幅 40%・奥行き 50%） */
+export function defaultWindow(c: WindowChoice, room: RoomGeometry, configWindow: WindowGeometry): WindowGeometry {
+  if (c === 'left' || c === 'right' || c === 'ceiling-left') return { widthM: room.depthM, heightM: room.heightM, sillHeightM: 0 };
+  if (c === 'ceiling') return { widthM: room.widthM, heightM: room.depthM, sillHeightM: configWindow.sillHeightM };
+  return { widthM: Math.round(room.widthM * 0.4 * 20) / 20, heightM: Math.round(room.depthM * 0.5 * 20) / 20, sillHeightM: configWindow.sillHeightM };
+}
+
 /**
- * room モードのパネルの既定値（保存したファイルと同じ形）。開いたときの既定：窓は天窓＋左（天井と左の壁がまるごと窓）、
+ * room モードのパネルの既定値（保存したファイルと同じ形）。開いたときの既定：窓は左で壁いっぱい（左の壁がない。天井はある）、
  * 水盤はオン（水盤で跳ね返った光はオフ）、波の強さ 0.3、雲の影はオフ（ROOM_DEFAULTS）
  */
 export function codeDefaults(room: RoomGeometry, configWindow: WindowGeometry) {
   return {
     version: 1 as const,
-    windowSide: 'ceiling-left' as string,
+    windowSide: 'left' as string,
     room: { ...room },
-    window: ROOM_DEFAULTS.fullCeiling
-      ? { widthM: room.widthM, heightM: room.depthM, sillHeightM: configWindow.sillHeightM }
-      : { ...configWindow },
+    // 既定は左の窓を壁いっぱい（左の壁がない）。天井はある
+    window: defaultWindow('left', room, configWindow),
     render: {
       exposure: 2.5, bounces: 3, smooth: true,
       seaView: ROOM_DEFAULTS.seaView as boolean, seaRipples: false, pool: ROOM_DEFAULTS.pool as boolean, poolReflect: ROOM_DEFAULTS.poolReflect as boolean,
-      waveAmp: ROOM_DEFAULTS.waveAmp as number, poolDepthM: 0.3, seaLevelM: -1, seaWaves: 'fft' as SeaWaves, seaCompare: false, seaWindMS: 6, seaWaveScale: 1, seaRoughness: 0.004, seaScatter: 0.6,
+      waveAmp: ROOM_DEFAULTS.waveAmp as number, poolDepthM: 0.3, seaLevelM: -1, seaWaves: 'fft' as SeaWaves, seaCompare: false, glass: { right: false, left: false, ceiling: false, front: false, back: false }, seaWindMS: 6, seaWaveScale: 1, seaRoughness: 0.004, seaScatter: 0.6,
       clouds: false, cloudShadow: ROOM_DEFAULTS.cloudShadow as boolean, cloudAmount: 0.45, cloudOpacity: 0.8,
       cloudSizeM: 1500, cloudHeightM: 1500, windMS: 30, windFromDeg: 270,
       screenArea: false, screen: false, screenGain: 0.6,

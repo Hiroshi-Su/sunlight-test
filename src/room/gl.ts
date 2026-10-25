@@ -46,6 +46,7 @@ uniform vec2 uSeaLook;       // 海面の細かい粗さ（傾きの 2 乗平均
 uniform float uPixAngle;     // 1 画素が見込む角度（ラジアン）
 uniform vec3 uSeaGlintDir;   // 海に映すきらめきの光の向き（昼は太陽、夜は海に映す月）
 uniform vec3 uSeaGlintE;     // その光の強さ
+uniform float uGlassMask;    // ガラスの壁の面（ビット：1 = +x 右、2 = −x 左、4 = 天井、16 = 手前、32 = 奥）
 uniform int uPoolOn;         // 床の水盤
 uniform float uPoolDepth;    // 水盤の深さ
 uniform int uCloudOn;        // 窓の外の空に雲
@@ -185,9 +186,14 @@ bool inWindow2(int face, vec3 p) {
   return uWin2On > 0.5 && face == 2 && p.x > uWin2Rect.x && p.x < uWin2Rect.y && p.z > uWin2Rect.z && p.z < uWin2Rect.w;
 }
 
+// ガラスの壁（面ぜんたいが枠なしの一枚ガラス）。光と景色はそのまま通すので、計算の上では面ぜんたいが窓。画面に出す段階で、ガラスの映り込みを足す
+bool isGlass(int face) { return (int(uGlassMask + 0.5) & (1 << face)) != 0; }
+
 bool inWindow(int face, vec3 p) {
-  return inWindow1(face, p) || inWindow2(face, p);
+  return inWindow1(face, p) || inWindow2(face, p) || isGlass(face);
 }
+// 光線が抜けた所が、窓の点を選ぶ方法で選ばれうる窓か（1 = 窓、2 = 2 つ目の窓、0 = ガラスの壁だけ：その向きは窓の点を選ぶ方法では選ばれない）
+int windowIndex(int face, vec3 p) { return inWindow2(face, p) ? 2 : (inWindow1(face, p) ? 1 : 0); }
 
 vec3 windowPoint(float r1, float r2) {
   float u = mix(uWinRect.x, uWinRect.y, r1), v = mix(uWinRect.z, uWinRect.w, r2);
@@ -578,6 +584,7 @@ vec3 cosineSample(vec3 n) {
 float windowSel() { return uWin2On > 0.5 ? 0.5 : 1.0; }
 vec3 windowOutwardK(int k) { return k == 2 ? vec3(0.0, 1.0, 0.0) : windowOutward(); }
 float windowPdf(int k, vec3 w, float d2) {
+  if (k == 0) return 0.0;
   // 窓の点を一様に選んだときの、方向あたりの確率密度
   vec4 r = k == 2 ? uWin2Rect : uWinRect;
   float area = (r.y - r.x) * (r.w - r.z);
@@ -617,7 +624,7 @@ vec3 indirect(vec3 p, vec3 n) {
     int f;
     float t = exitRoom(p, d, f);
     vec3 q = p + d * t;
-    if (inWindow(f, q)) { acc += thr * skyBsdf(n, d, t, inWindow2(f, q) ? 2 : 1); break; } // 窓から外へ出た：空の光の 2 つ目の見本
+    if (inWindow(f, q)) { acc += thr * skyBsdf(n, d, t, windowIndex(f, q)); break; } // 窓から外へ出た：空の光の 2 つ目の見本
     if (b >= uBounces) break;
     acc += thr * screenLight(f, q, 5.0); // スクリーンに映した映像の光が、部屋をほんのり照らす（照り返しと同じくぼけた光）
     vec3 n2 = inwardNormal(f);
@@ -1201,6 +1208,12 @@ vec3 toSrgb(vec3 c) {
   return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c));
 }
 
+// ガラスの壁：外の景色（空・海）を透かし、部屋の中を映す。映る割合はフレネル反射（ガラスの屈折率 1.5、真正面で約 4%）。
+// 斜めに見るほどガラスの中を長く通るので、ガラスの色（わずかな緑）が濃くなる。
+// 映り込みは、画素の光線をガラスで反射させた先を、ふつうの画素と同じ処理で描いて、反射の割合を掛ける（水盤などの処理を 2 つ持たないため）
+float glassFresnel(float c) { return 0.04 + 0.96 * pow(1.0 - c, 5.0); }
+vec3 glassTint(float c) { return pow(vec3(0.94, 0.975, 0.965), vec3(1.0 / max(c, 0.2))); }
+
 void main() {
   vec2 px = gl_FragCoord.xy;
   int fc; vec3 pc, dc;
@@ -1215,11 +1228,30 @@ void main() {
     if (!primaryHit(px + o, f, p, d)) { col += OUTSIDE; continue; }
     vec3 lamp = spotLamp(uCamPos, d, distance(uCamPos, p)); // ライトの器具そのもの
     if (lamp.x + lamp.y + lamp.z > 0.0) { col += lamp; continue; }
+    // ガラスの壁：透けた外の景色を足し、光線を反射させて、その先を下の処理で描く（反射の割合 w を掛ける）
+    float w = 1.0;
+    vec3 ind2 = ind;
+    if (isGlass(f)) {
+      vec3 gn = inwardNormal(f);
+      float c = clamp(dot(-d, gn), 0.0, 1.0);
+      w = glassFresnel(c);
+      col += (1.0 - w) * outsideRadiance(p, d) * glassTint(c);
+      vec3 o2 = p + gn * EPS;
+      d = reflect(d, gn);
+      float t2 = exitRoom(o2, d, f);
+      p = o2 + d * t2;
+      col += w * spotLamp(o2, d, t2);
+      if (inWindow(f, p)) { col += w * (outsideRadiance(p, d) + uSunE * (sunLobe(d) * cloudTrans(p))); continue; }
+      // 映った所の照り返しは、その所が画面に映っていればその画素の値を使う
+      vec4 cc = uViewProj * vec4(p, 1.0);
+      vec2 uv = cc.xy / max(cc.w, 1e-6) * 0.5 + 0.5;
+      if (cc.w > 0.0 && all(greaterThan(uv, vec2(0.0))) && all(lessThan(uv, vec2(1.0)))) ind2 = texture(uAccum, uv).rgb;
+    }
     if (inWindow(f, p)) { col += outsideRadiance(p, d); continue; }
-    if (uPoolOn == 1 && f == 3) { col += poolRadiance(p, d, ind); continue; }
+    if (uPoolOn == 1 && f == 3) { col += w * poolRadiance(p, d, ind2); continue; }
     vec3 n = inwardNormal(f);
     vec3 a = albedo(f, p);
-    col += a * ind + a / PI * (sunLight(p + n * EPS, n) + uSunE * causticRGB(f, p, n) + spotIrradiance(p + n * EPS, n)) + screenLight(f, p, -1.0) + ambientPanel(f, p);
+    col += w * (a * ind2 + a / PI * (sunLight(p + n * EPS, n) + uSunE * causticRGB(f, p, n) + spotIrradiance(p + n * EPS, n)) + screenLight(f, p, -1.0) + ambientPanel(f, p));
   }
   col = max(col, vec3(0.0)) * (0.25 * uExposure); // プリズムで白を減らした所が負にならないように
   col = toSrgb(aces(col));
