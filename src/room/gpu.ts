@@ -10,6 +10,7 @@ import { WGSL_SIMPLEX3 } from '../scenes/shader.ts';
 import { CAUSTIC_FACES, CAUSTIC_SIZE, FLOOR_ALBEDO, POOL_ALBEDO, SCREEN_ALBEDO, SCREEN_IMAGE, WALL_ALBEDO, type CausticPass, type RoomCore, type RoomFrame } from './core.ts';
 import type { RoomRenderer } from './gl.ts';
 import { MAX_BLOBS, MAX_PRISMS, MAX_SHIM_COLORS, MAX_SHIM_PALETTE, MAX_SPOTS, type RoomScreenImage } from './model.ts';
+import { GpuOcean, OCEAN_LODS, OCEAN_N } from './ocean.ts';
 import { WATER_ABSORPTION, WATER_IOR, WATER_WGSL } from './water.ts';
 
 const f3 = (n: number): string => n.toFixed(4);
@@ -177,6 +178,23 @@ fn sunLobe(r: vec3f) -> f32 {
 }
 
 // 窓の外の海：点 o から向き d（下向き）で見た水面の明るさ
+@group(0) @binding(11) var ocean0: texture_2d<f32>;
+@group(0) @binding(12) var ocean1: texture_2d<f32>;
+@group(0) @binding(13) var oceanS: sampler;
+
+// FFT の海面（src/room/ocean.ts）：2 枚の画像から、高さ・傾きと、描ききれない波の傾きの 2 乗平均を読んで足す。
+// 画素の大きさ fw（水面の上で m）に合わせてミップマップの段を選ぶ（遠くの細かい波は平均されて消え、その分を粗さに回す）
+fn oceanLayer(tex: texture_2d<f32>, size: f32, layer: i32, p: vec2f, fw: f32) -> vec4f {
+  let lod = clamp(log2(max(fw * ${OCEAN_N}.0 / size, 1e-6)), 0.0, ${OCEAN_LODS - 1}.0);
+  let s = textureSampleLevel(tex, oceanS, p / size, lod);
+  let i0 = i32(floor(lod));
+  let i1 = min(i0 + 1, ${OCEAN_LODS - 1});
+  let m = mix(u.uOceanMss[layer * ${OCEAN_LODS} + i0], u.uOceanMss[layer * ${OCEAN_LODS} + i1], lod - f32(i0));
+  return vec4f(s.xyz, m);
+}
+fn oceanSurface(p: vec2f, fw: f32) -> vec4f {
+  return oceanLayer(ocean0, u.uOceanSize.x, 0, p, fw) + oceanLayer(ocean1, u.uOceanSize.y, 1, p, fw);
+}
 fn seaGlint(n: vec3f, v: vec3f, m2: f32) -> f32 {
   let l = u.uSunDir;
   let nl = dot(n, l);
@@ -191,13 +209,14 @@ fn seaRadiance(o: vec3f, d: vec3f) -> vec3f {
   let t = (u.uSeaY - o.y) / min(d.y, -1e-4);
   let x = o + d * t;
   let fw = t * u.uPixAngle / sqrt(max(-d.y, 1e-3));
-  let sw = seaSurface(x.xz, fw);
+  var sw: vec4f;
+  if (u.uOceanOn > 0.5) { sw = oceanSurface(x.xz, fw); } else { sw = seaSurface(x.xz, fw); }
   let n = waveNormal(sw.xyz);
   let v = -d;
   let F = fresnelWater(dot(v, n));
   var r = reflect(d, n);
   r.y = abs(r.y);
-  let crest = clamp(sw.x / (0.03 * u.uWaveAmp + 1e-4), 0.0, 1.0);
+  let crest = clamp(sw.x / select(0.03 * u.uWaveAmp + 1e-4, 2.0 * u.uOceanRms + 1e-4, u.uOceanOn > 0.5), 0.0, 1.0);
   let dh = normalize(d.xz + 1e-6);
   let sh = normalize(u.uSunDir.xz + 1e-6);
   let toward = pow(0.5 + 0.5 * dot(dh, sh), 4.0);
@@ -1168,6 +1187,10 @@ export class GpuRoomRenderer implements RoomRenderer {
   private readonly screenS: GPUSampler;
   private readonly grids: Record<'pool' | 'sea', { vertex: GPUBuffer; index: GPUBuffer; format: GPUIndexFormat; count: number }>;
   private readonly mips: MipGenerator;
+  private readonly core: RoomCore;
+  private readonly ocean: GpuOcean;
+  private readonly oceanS: GPUSampler;
+  private oceanVersion = 0;
   private accum: [GPUTexture, GPUTexture] | null = null;
   private traceBinds: GPUBindGroup[] = [];
   private displayBinds: GPUBindGroup[] = [];
@@ -1179,6 +1202,9 @@ export class GpuRoomRenderer implements RoomRenderer {
     const device = gpu.device;
     this.ctx = configureCanvas(gpu, this.canvas);
     this.mips = new MipGenerator(device);
+    this.core = core;
+    this.ocean = new GpuOcean(device);
+    this.oceanS = device.createSampler({ magFilter: 'linear', minFilter: 'linear', mipmapFilter: 'linear', addressModeU: 'repeat', addressModeV: 'repeat' });
 
     // 値はすべて core の同じ物を参照する（core が書き換えれば、そのまま描く値になる）
     this.uniforms = { ...core.shared, uCausOn: core.causOn, ...core.trace, ...core.display };
@@ -1213,6 +1239,8 @@ export class GpuRoomRenderer implements RoomRenderer {
         { binding: 8, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
         tex(9),
         { binding: 10, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
+        tex(11), tex(12),
+        { binding: 13, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
       ],
     });
     const fullscreen = (code: string, format: GPUTextureFormat, label: string): GPURenderPipeline => {
@@ -1284,6 +1312,9 @@ export class GpuRoomRenderer implements RoomRenderer {
         { binding: 8, resource: this.linearS },
         { binding: 9, resource: this.screenTex.createView() },
         { binding: 10, resource: this.screenS },
+        { binding: 11, resource: this.ocean.textures[0].createView() },
+        { binding: 12, resource: this.ocean.textures[1].createView() },
+        { binding: 13, resource: this.oceanS },
       ],
     });
     // 段階 1 は前の結果（i）を読んで、もう片方に書く。段階 2 は書いたばかりの方を読む
@@ -1300,6 +1331,15 @@ export class GpuRoomRenderer implements RoomRenderer {
     const encoder = device.createCommandEncoder();
 
     if (frame.screen) this.renderScreenImage(frame.screen, encoder);
+    // FFT の海：スペクトルが変わったら送り直し、毎フレーム海面の画像を作る
+    const oc = this.core.ocean;
+    if (this.uniforms.uOceanOn!.value && oc) {
+      if (oc.version !== this.oceanVersion) {
+        this.ocean.upload(oc.spectrum);
+        this.oceanVersion = oc.version;
+      }
+      this.ocean.run(encoder, this.core.oceanTime);
+    }
     this.renderCaustics(frame.caustics, encoder);
 
     // 段階 1：空の光と照り返し

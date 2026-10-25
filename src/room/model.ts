@@ -57,6 +57,12 @@ export interface RoomRenderSettings {
   poolDepthM: number;
   /** 窓の外の水面の高さ（床を 0 とした m。負なら床より下） */
   seaLevelM: number;
+  /** 窓の外の海の波の作り方（fft = 海の波の統計から FFT で作る（WebGPU のときだけ。WebGL2 では正弦波）、sines = 正弦波 20 本） */
+  seaWaves: SeaWaves;
+  /** 窓の外の海の上の風速（m/s。FFT のとき。大きいほど波が高く長い）。風の向きは雲と同じ「風が吹いてくる方位」 */
+  seaWindMS: number;
+  /** 窓の外の海の波の高さの倍率（FFT のとき。1 で、その風速で十分に発達した海の高さ） */
+  seaWaveScale: number;
   /** 窓の外の海面の、描かない細かいさざ波の粗さ（傾きの 2 乗平均）。大きいほど太陽のきらめきが広い帯になる */
   seaRoughness: number;
   /** 窓の外の海の、波の山が日差しで透けて緑がかる強さ（0 = 透けない） */
@@ -386,6 +392,10 @@ export interface PrismShimmer {
   /** 色の濃さ（0 = 白黒、1 = そのまま、2 = 濃く） */
   saturation: number;
 }
+
+/** 窓の外の海の波の作り方 */
+export const SEA_WAVES = ['fft', 'sines'] as const;
+export type SeaWaves = (typeof SEA_WAVES)[number];
 
 /** H の網目の置き方 */
 export const SHIMMER_ANCHORS = ['light', 'surface'] as const;

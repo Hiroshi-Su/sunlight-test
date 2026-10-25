@@ -7,6 +7,7 @@ import { type RGB, kelvinToRgb } from '../palette.ts';
 import { DriftBlend } from '../scenes/shader.ts';
 import { SUN_ANGULAR_RADIUS_DEG, directSunFactor, skyBrightness } from './daylight.ts';
 import { MAX_BLOBS, MAX_PRISMS, MAX_SHIM_COLORS, MAX_SHIM_PALETTE, MAX_SPOTS, PRISM_PATTERNS, type OrganicLook, type PrismMotion, type RoomGeometry, type RoomInput, type RoomRenderSettings, type RoomScreenImage, type SpotLight, cloudFlowDir, moonDirection, moonWeight, spotPose, spotWeight, toThree, windowRect } from './model.ts';
+import { OCEAN_CASCADES, OCEAN_LODS, type OceanSpectrum, buildOceanSpectrum } from './ocean.ts';
 import { wavePhases } from './water.ts';
 
 // palette.ts の色は sRGB 表記の 0〜1。光の計算は線形の値で行う
@@ -106,6 +107,10 @@ export class RoomCore {
   private orgPhase = 0;
   private blobPhase = 0;
   private shimPhase = 0;
+  /** 窓の外の海の波のスペクトル（FFT の海。風速・向き・高さが変わったときだけ作り直す。version が変わったら GPU に送り直す） */
+  ocean: { spectrum: OceanSpectrum; version: number; key: string } | null = null;
+  /** 海面を作る時刻（秒、実際の時間） */
+  oceanTime = 0;
   /** 水面の網目の細かさ（網目の大きさは、光の揺らぎの画像の画素の 2 倍程度。小さすぎると描き漏れが出る） */
   readonly poolGridSegs: [number, number];
   readonly seaGridSegs: [number, number] = [220, 220];
@@ -184,7 +189,11 @@ export class RoomCore {
       uSeaY: { value: -1 },
       uSeaBody: { value: new THREE.Vector3() },
       uSeaLook: { value: new THREE.Vector2(0.004, 0.6) },        // 海面の細かい粗さ・波の山が透ける強さ
-      uPixAngle: { value: 1e-3 },                                // 1 画素が見込む角度（ラジアン。遠くの細かい波を消すのに使う）
+      uPixAngle: { value: 1e-3 },
+      uOceanOn: { value: 0 },                                    // 1 = 海の波を FFT の画像から読む（WebGPU のときだけ使う）
+      uOceanSize: { value: new THREE.Vector2(OCEAN_CASCADES[0].sizeM, OCEAN_CASCADES[1].sizeM) },
+      uOceanRms: { value: 0.1 },                                 // 海面の高さの標準偏差（m）
+      uOceanMss: { value: new Float32Array(OCEAN_CASCADES.length * OCEAN_LODS) }, // 画像の段ごとの、描ききれない波の傾きの 2 乗平均                                // 1 画素が見込む角度（ラジアン。遠くの細かい波を消すのに使う）
       uPoolOn: { value: 0 },
       uPoolDepth: { value: 0.3 },
       uWaveAmp: { value: 1 },
@@ -612,6 +621,19 @@ export class RoomCore {
     s.uSeaY.value = settings.seaLevelM;
     s.uSeaBody.value.set(0.12, 0.35, 0.42).multiplyScalar(skyL * 0.25);
     s.uSeaLook.value.set(Math.max(1e-4, settings.seaRoughness), Math.max(0, settings.seaScatter));
+    // FFT の海：風速・向き・高さが変わったら波のスペクトルを作り直す
+    s.uOceanOn.value = s.uSeaOn.value && settings.seaWaves === 'fft' ? 1 : 0;
+    if (s.uOceanOn.value) {
+      const dir = cloudFlowDir(settings.windFromDeg, this.facingAzimuth);
+      const key = [settings.seaWindMS, settings.seaWaveScale, dir.x.toFixed(4), dir.z.toFixed(4)].join();
+      if (this.ocean?.key !== key) {
+        const spectrum = buildOceanSpectrum({ windMS: settings.seaWindMS, dirX: dir.x, dirZ: dir.z, heightScale: settings.seaWaveScale });
+        this.ocean = { spectrum, key, version: (this.ocean?.version ?? 0) + 1 };
+        s.uOceanMss.value.set(spectrum.unresolvedMss);
+        s.uOceanRms.value = spectrum.rmsHeight;
+      }
+      this.oceanTime = now;
+    }
     s.uPixAngle.value = 2 / (Math.max(1e-3, camera.projectionMatrix.elements[5]) * Math.max(1, this.shared.uRes.value.y));
     s.uPoolOn.value = settings.pool ? 1 : 0;
     s.uPoolDepth.value = settings.poolDepthM;

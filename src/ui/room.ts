@@ -4,7 +4,7 @@ import type { Clock } from '../clock.ts';
 import { mountCalibMode } from './calib-mode.ts';
 import { WINDOW_SIDES, WINDOW_SIDE_LABEL, type WindowSide } from '../config.ts';
 import { PALETTE_KELVIN_ALTS, PALETTE_SKY_ALTS, type PaletteTable, defaultPalette, kelvinAt, setPalette } from '../palette.ts';
-import { EXHIBIT_SIZE, type GuideOptions, LIGHT_KINDS, type LightKind, MAX_BLOBS, MAX_SHIM_COLORS, MAX_SHIM_PALETTE, MAX_SPOTS, MAX_PRISMS, type MoonSettings, type OrganicLook, PRISM_MOTIONS, PRISM_PATTERNS, SHIMMER_ANCHORS, SHIMMER_COLOR_MODES, type PrismMotion, type PrismPattern, type PrismSettings, SPOT_MODES, TRAIL_COLOR_MODES, type TrailSettings, type RoomGeometry, type RoomOutput, type RoomRenderSettings, type RoomResolution, type SpotLight, type SpotMode, type SpotSettings, type ViewCalibration, type WindowGeometry, defaultCalibration } from '../room/scene.ts';
+import { EXHIBIT_SIZE, type GuideOptions, LIGHT_KINDS, type LightKind, MAX_BLOBS, MAX_SHIM_COLORS, MAX_SHIM_PALETTE, MAX_SPOTS, MAX_PRISMS, type MoonSettings, type OrganicLook, PRISM_MOTIONS, PRISM_PATTERNS, SEA_WAVES, type SeaWaves, SHIMMER_ANCHORS, SHIMMER_COLOR_MODES, type PrismMotion, type PrismPattern, type PrismSettings, SPOT_MODES, TRAIL_COLOR_MODES, type TrailSettings, type RoomGeometry, type RoomOutput, type RoomRenderSettings, type RoomResolution, type SpotLight, type SpotMode, type SpotSettings, type ViewCalibration, type WindowGeometry, defaultCalibration } from '../room/scene.ts';
 import { SCENES, findScene } from '../scenes/index.ts';
 import type { SceneDef } from '../scenes/types.ts';
 import type { SolarState } from '../solar.ts';
@@ -160,7 +160,7 @@ export function mountRoomUi(
 
   // 窓の位置の切り替えスイッチ。?window=right などで、最初に表示する窓の位置を指定できる（指定がなければ保存した位置、既定は天窓）
   const urlSide = WINDOW_SIDES.find((w) => w === q.get('window'));
-  const state = { side: urlSide ?? oneOf(base.windowSide, WINDOW_SIDES, 'ceiling') };
+  const state = { side: urlSide ?? oneOf(base.windowSide, WINDOW_SIDES, 'ceiling-left') };
   const options = Object.fromEntries(
     WINDOW_SIDES.map((s) => [`${WINDOW_SIDE_LABEL[s]}${s === configSide ? '（設定どおり）' : ''}`, s]),
   );
@@ -184,6 +184,8 @@ export function mountRoomUi(
     : base.window;
   const settings: RoomRenderSettings = {
     ...r0,
+    // ?seaWaves=sines で前の正弦波の海
+    seaWaves: oneOf(q.get('seaWaves') ?? r0.seaWaves, SEA_WAVES, 'fft'),
     seaView: on('sea', r0.seaView), seaRipples: on('ripples', r0.seaRipples), pool: on('pool', r0.pool), poolReflect: on('poolReflect', r0.poolReflect),
     waveAmp: num('wave', r0.waveAmp),
     window: { widthM: num('winW', winBase.widthM), heightM: num('winH', winBase.heightM), sillHeightM: num('sill', winBase.sillHeightM) },
@@ -395,6 +397,9 @@ export function mountRoomUi(
   fw.add(settings, 'waveAmp', 0, 3, 0.05).name('波の強さ');
   fw.add(settings, 'poolDepthM', 0.02, 1.5, 0.01).name('水盤の深さ（m）');
   fw.add(settings, 'seaLevelM', -5, 0, 0.05).name('窓の外の水面の高さ（床から m）');
+  fw.add(settings, 'seaWaves', { 'FFT（海の波の統計から。WebGPU のとき）': 'fft', '正弦波 20 本（前の作り方）': 'sines' }).name('海の波の作り方');
+  fw.add(settings, 'seaWindMS', 0.5, 20, 0.1).name('海の上の風速（m/s、FFT のとき）');
+  fw.add(settings, 'seaWaveScale', 0, 3, 0.01).name('海の波の高さの倍率（FFT のとき）');
   fw.add(settings, 'seaRoughness', 0.0005, 0.03, 0.0005).name('海面の細かい粗さ（大きいほど太陽のきらめきが広い帯に）');
   fw.add(settings, 'seaScatter', 0, 3, 0.05).name('海の波の山が透ける強さ');
 
@@ -789,13 +794,13 @@ function mountActualBar(onScale: (s: number) => void, onBack: () => void, onTogg
 }
 
 /**
- * room モードのパネルの既定値（保存したファイルと同じ形）。開いたときの既定：窓は天窓で天井いっぱい、
+ * room モードのパネルの既定値（保存したファイルと同じ形）。開いたときの既定：窓は天窓＋左（天井と左の壁がまるごと窓）、
  * 水盤はオン（水盤で跳ね返った光はオフ）、波の強さ 0.3、雲の影はオフ（ROOM_DEFAULTS）
  */
 export function codeDefaults(room: RoomGeometry, configWindow: WindowGeometry) {
   return {
     version: 1 as const,
-    windowSide: 'ceiling' as string,
+    windowSide: 'ceiling-left' as string,
     room: { ...room },
     window: ROOM_DEFAULTS.fullCeiling
       ? { widthM: room.widthM, heightM: room.depthM, sillHeightM: configWindow.sillHeightM }
@@ -803,7 +808,7 @@ export function codeDefaults(room: RoomGeometry, configWindow: WindowGeometry) {
     render: {
       exposure: 2.5, bounces: 3, smooth: true,
       seaView: ROOM_DEFAULTS.seaView as boolean, seaRipples: false, pool: ROOM_DEFAULTS.pool as boolean, poolReflect: ROOM_DEFAULTS.poolReflect as boolean,
-      waveAmp: ROOM_DEFAULTS.waveAmp as number, poolDepthM: 0.3, seaLevelM: -1, seaRoughness: 0.004, seaScatter: 0.6,
+      waveAmp: ROOM_DEFAULTS.waveAmp as number, poolDepthM: 0.3, seaLevelM: -1, seaWaves: 'fft' as SeaWaves, seaWindMS: 6, seaWaveScale: 1, seaRoughness: 0.004, seaScatter: 0.6,
       clouds: false, cloudShadow: ROOM_DEFAULTS.cloudShadow as boolean, cloudAmount: 0.45, cloudOpacity: 0.8,
       cloudSizeM: 1500, cloudHeightM: 1500, windMS: 30, windFromDeg: 270,
       screenArea: false, screen: false, screenGain: 0.6,
