@@ -72,6 +72,8 @@ export interface RoomRenderSettings {
   /** 雲の高さでの風速（m/s）と、風が吹いてくる方位（度、真北 0・東 90） */
   windMS: number;
   windFromDeg: number;
+  /** プリズム：日差しの当たる所に虹色の筋を出し、水の光の揺らぎの縁を虹色ににじませる */
+  prism: PrismSettings;
   /** 奥の壁に、投影する場所（スクリーンの長方形）を少し違う色で示す。映像を映しているときは、オフでも映像の所は示す */
   screenArea: boolean;
   /** スクリーンに映像を映す（映像は RoomInput.screen） */
@@ -159,6 +161,238 @@ export interface TrailSettings {
 /** スポットライトの点け方：auto = 太陽が沈むにつれて点く、on = いつも点ける、off = 消す */
 export type SpotMode = 'auto' | 'on' | 'off';
 export const SPOT_MODES: readonly SpotMode[] = ['auto', 'on', 'off'];
+/**
+ * プリズム（虹色の光）。3 つの出し方（pattern）から選ぶ。
+ * - streaks：日差しの当たる所（日だまり）に、虹色の筋を模様として描く（演出寄り。日が差していれば必ず見える）
+ * - hung：窓の内側にガラスのプリズムを何個か吊る。プリズムに当たった日差しが曲がって虹に分かれ、壁・床・天井に落ちる（本物寄り）
+ * - panel：窓（天窓・壁の窓）をプリズムの板で覆う。窓から入る日差しがすべて曲がって虹に分かれる。日だまりそのものがずれて、縁が虹色になる
+ * 水の光の揺らぎ（水盤・窓の外の水面）があれば、どの出し方でも、その縁を虹色ににじませる
+ */
+/** 出し方。none = A〜D を出さない（E の波のプリズムだけにするとき） */
+export type PrismPattern = 'streaks' | 'hung' | 'panel' | 'beams' | 'none';
+export const PRISM_PATTERNS: readonly PrismPattern[] = ['streaks', 'hung', 'panel', 'beams', 'none'];
+/**
+ * プリズムの動き方（B と D）。spin = 吊り糸のまわりに一方向に回り続ける、sway = 左右にねじれては戻る（糸のねじれ振り子）、
+ * wind = sway の揺れを風の強さ（雲を流す風速）で大きく・速くする、still = 止まったまま
+ */
+export type PrismMotion = 'spin' | 'sway' | 'wind' | 'still';
+export const PRISM_MOTIONS: readonly PrismMotion[] = ['spin', 'sway', 'wind', 'still'];
+
+export interface PrismSettings {
+  on: boolean;
+  pattern: PrismPattern;
+  /** 日なたに落ちた虹の色を際立たせる割合（0〜1。streaks と hung）。虹の範囲では、白い日差しをこの割合だけ虹の色に置き換える（明るさはほぼそのまま）。0 で足すだけ（明るい日だまりでは、本物と同じく色がほとんど見えない） */
+  vividness: number;
+  /** 動く速さ（streaks は筋の揺れ、hung・beams はプリズムが回る・揺れる速さ。0 で止まる） */
+  speed: number;
+  /** プリズムの動き方（hung・beams） */
+  motion: PrismMotion;
+  /** sway・wind の揺れの大きさ（度、片側） */
+  swayDeg: number;
+  /** 水の光の揺らぎの虹色のにじみの幅（m、0 でにじませない） */
+  causticSpreadM: number;
+  streaks: PrismStreaks;
+  hung: PrismHung;
+  panel: PrismPanel;
+  beams: PrismBeams;
+  waves: PrismWaves;
+  organic: PrismOrganic;
+  blobs: PrismBlobs;
+  shimmer: PrismShimmer;
+}
+
+/** 日だまりの中の虹色の筋（演出寄り） */
+export interface PrismStreaks {
+  /** 筋の明るさ（1 で、筋の中心の白い日差しを虹色に置き換え切る） */
+  strength: number;
+  /** 筋の多さ（0〜1） */
+  amount: number;
+  /** 筋の長さ（m、日差しに垂直な面で測る。斜めに当たる面では日差しの向きにもっと伸びる） */
+  lengthM: number;
+  /** 筋の向き（度） */
+  angleDeg: number;
+}
+
+/** 窓に吊るプリズム（本物寄り） */
+export interface PrismHung {
+  /** 吊るプリズムの数（1〜MAX_PRISMS） */
+  count: number;
+  /** 1 つのプリズムから出る虹の数（カットされた面の数、1〜4）。面ごとに違う向きへ虹が飛ぶ */
+  facets: number;
+  /** 虹の明るさの倍率（1 で、プリズムが受けた日差しをそのまま虹に分ける） */
+  strength: number;
+  /** プリズムの大きさ（m）。虹の幅になる */
+  sizeM: number;
+  /** 光が曲がる角度（度）。ガラスの三角柱で 40° くらい */
+  deviationDeg: number;
+  /** 赤と紫の曲がり方の差（度）。虹の広がり。本物のガラスは 1〜2°、大きくすると虹が長く伸びる */
+  dispersionDeg: number;
+  /** 吊る位置：窓の上の端（天窓は天井）から下へ（m、平均。プリズムごとにばらつく） */
+  dropM: number;
+}
+
+/** 窓を覆うプリズムの板 */
+export interface PrismPanel {
+  /** 板を通った日差しの明るさの割合（ガラスで少し減る） */
+  strength: number;
+  /** 光が曲がる角度（度） */
+  deviationDeg: number;
+  /** 赤と紫の曲がり方の差（度）。日だまりの縁の虹の幅になる */
+  dispersionDeg: number;
+  /** 板のプリズムの稜の向き（度）。光が曲がる向きが変わる（0 で、壁の窓は上下・天窓は奥行きの向きに曲がる） */
+  ridgeAngleDeg: number;
+}
+
+/**
+ * 窓ガラスに付けた小さなプリズムから出る、細い光の束（日差しの先の虹の筋）。
+ * 束は日差しの向きから少し曲がって進み、当たった面に虹色の筋を作る。斜めに当たる面では、日差しの向きに長く伸びた筋になる
+ */
+export interface PrismBeams {
+  /** 光の束の数（1〜MAX_PRISMS） */
+  count: number;
+  /** 虹の明るさの倍率（1 で、束が受けた日差しをそのまま虹に分ける） */
+  strength: number;
+  /** 束の太さ（m、窓の所で）。プリズムの大きさ */
+  widthM: number;
+  /** 進むにつれて束が太くなる割合（m/m）。大きいほど遠くの筋がぼける */
+  blur: number;
+  /** 光が曲がる角度（度） */
+  deviationDeg: number;
+  /** 赤と紫の曲がり方の差（度）。筋の中の虹の幅 */
+  dispersionDeg: number;
+  /** プリズムの稜の向き（度）。虹の色が並ぶ向きが変わる（0 で、壁の窓は稜が縦・天窓は奥行きの向き） */
+  ridgeAngleDeg: number;
+}
+
+/**
+ * E・F・G 共通の、有機的な縁の見え方。縁の中は白い日差し（または光）、縁で色が分かれて虹色の帯になり、外へは淡い色の光が広がって消える。
+ * 長さの単位は E・F は m、G は光のしみの半径に対する割合
+ */
+export interface OrganicLook {
+  /** 縁の色の帯の幅（色ごとに縁の位置をずらす幅。負にすると色の並びが逆になる） */
+  fringe: number;
+  /** 縁のぼかしの幅 */
+  soft: number;
+  /** 外へ広がる光の明るさ（0 で広げない） */
+  halo: number;
+  /** 外へ広がる光が消えるまでの幅 */
+  haloWidth: number;
+  /** 外へ広がる光の色合い（0〜1：赤 → 黄 → 緑 → 水色 → 青 → 紫） */
+  haloHue: number;
+  /** 色の濃さ（1 でそのまま、大きいほど鮮やか） */
+  saturation: number;
+}
+
+/**
+ * E：波のプリズム（A〜D のどれとも重ねられる）。水盤の日だまりの縁が、ゆっくり進む波に合わせて揺れ、縁が虹色の帯になる（F を水面の波で揺らしたもの）。
+ * 色は縁から影の側へ広がりながら薄れていく。長さは m
+ */
+export interface PrismWaves extends OrganicLook {
+  /** 重ねるか */
+  on: boolean;
+  /** 波で縁が揺れる大きさ（m） */
+  wobbleM: number;
+  /** 波の長さ（m） */
+  waveLengthM: number;
+  /** 波の進む速さ（m/s） */
+  speed: number;
+}
+
+/**
+ * F：有機的な日だまりの縁（A〜D と重ねられる）。窓に波打ったガラスがはまっているように、日だまりの縁が水彩のにじみのように揺れ、
+ * 縁が虹色の帯になる。内側は淡い色がゆっくり移ろう。長さは m（窓の面の上で測る）
+ */
+export interface PrismOrganic extends OrganicLook {
+  on: boolean;
+  /** 縁が揺れる大きさ（m） */
+  wobbleM: number;
+  /** 揺らぎの模様の大きさ（m） */
+  scaleM: number;
+  /** 形が変わる速さ */
+  speed: number;
+  /** 内側の淡い色の濃さ（0〜1） */
+  pastel: number;
+}
+
+/**
+ * G：虹のしみ（A〜D と重ねられる）。窓辺の見えない物（溶けたガラスや水の入った瓶のようなもの）を通った日差しが、
+ * 壁や床に丸みのある不定形の光のしみを作る。しみの縁は色の輪で縁取られ、形は液体のようにゆっくり変わる。
+ * fringe・soft・haloWidth はしみの半径に対する割合
+ */
+export interface PrismBlobs extends OrganicLook {
+  on: boolean;
+  /** しみの数（1〜MAX_BLOBS） */
+  count: number;
+  /** 明るさの倍率 */
+  strength: number;
+  /** しみの大きさ（m、窓の所で。直径） */
+  sizeM: number;
+  /** 進むにつれてしみが大きくなる割合（m/m） */
+  grow: number;
+  /** 光が曲がる角度（度） */
+  deviationDeg: number;
+  /** 形の崩れ方（半径に対する割合） */
+  wobble: number;
+  /** 形が変わる速さ */
+  speed: number;
+  /** 内側の淡い色の濃さ（0〜1） */
+  pastel: number;
+}
+
+/**
+ * H：水のきらめき（A〜G と重ねられる）。日なたの中に、水底に映る光のような網目の線を重ねる。線の縁は虹色にずれ、
+ * 線のまわりには薄い膜のような虹色がにじむ。網目はゆっくり形を変える。長さは窓の面の上で測る
+ */
+export interface PrismShimmer {
+  on: boolean;
+  /** 重ねる強さ（0 = 日なたそのまま、1 = 網目の明暗をそのまま） */
+  amount: number;
+  /** 網目の 1 つ分の大きさ（m） */
+  scaleM: number;
+  /** 線の太さ（網目の 1 つ分に対する割合） */
+  lineWidth: number;
+  /** 網目のゆがみ（0 = 角ばった網目、大きいほど丸く流れる） */
+  warp: number;
+  /** 形が変わる速さ */
+  speed: number;
+  /** 線のない所の明るさ（日なたの明るさに対する割合） */
+  base: number;
+  /** 線の明るさ */
+  gain: number;
+  /** 線の縁の虹のずれ（網目の 1 つ分に対する割合） */
+  dispersion: number;
+  /** 線のまわりの薄い膜のような虹色の濃さ（0〜1） */
+  iridescence: number;
+  /** 色の決め方（spectrum = 虹の色の範囲から、palette = 選んだ色を並べる） */
+  colorMode: ShimmerColorMode;
+  /** 線の縁に並べる色の数（3〜MAX_SHIM_COLORS。多いほど縁がなめらかな虹になる） */
+  colorCount: number;
+  /** 虹の色の範囲の始めと終わり（赤 0 → 黄 → 緑 → 水色 → 青 → 紫 1。spectrum のとき） */
+  hueStart: number;
+  hueEnd: number;
+  /** 選んだ色（#rrggbb、MAX_SHIM_PALETTE 個。palette のとき、先頭から paletteCount 個を使う） */
+  palette: string[];
+  paletteCount: number;
+  /** 線の色と、線のない所（地）の色（#rrggbb。明るさは「線の明るさ」「線のない所の明るさ」で決め、ここでは色合いだけ） */
+  lineColor: string;
+  baseColor: string;
+  /** 色の濃さ（0 = 白黒、1 = そのまま、2 = 濃く） */
+  saturation: number;
+}
+
+/** H の色の決め方 */
+export const SHIMMER_COLOR_MODES = ['spectrum', 'palette'] as const;
+export type ShimmerColorMode = (typeof SHIMMER_COLOR_MODES)[number];
+/** H の線の縁に並べる色の最大の数と、選べる色の最大の数（シェーダーの配列の大きさ） */
+export const MAX_SHIM_COLORS = 7;
+export const MAX_SHIM_PALETTE = 5;
+
+/** G の光のしみの最大の数（シェーダーの配列の大きさ） */
+export const MAX_BLOBS = 8;
+
+/** 吊るプリズムの最大の数（シェーダーの配列の大きさ） */
+export const MAX_PRISMS = 12;
+
 /** 照明の種類：spot = 鑑賞者の頭上のスポットライト（床に丸い光）、ambient = 全体照明（天井全体がむらなく光る。大型施設の天井照明のように、部屋全体を均一に照らす） */
 export type LightKind = 'spot' | 'ambient';
 export const LIGHT_KINDS: readonly LightKind[] = ['spot', 'ambient'];
@@ -247,13 +481,15 @@ export function spotPose(light: SpotLight, room: RoomGeometry): { pos: THREE.Vec
 /**
  * 現地に合わせた視点（パース合わせ）。映像が映る面（投影面）と、見る人の目の位置を実寸で決めると、
  * 目から投影面を覗いた見え方（軸外し投影）になる。投影面は部屋の座標の中に置く（部屋の手前の端 = 0、奥へ正）。
- * 投影面の高さは、幅と出す画面の縦横比（3840×1080 なら 32:9）から決まる
+ * 投影面の高さは planeHeightM（実寸）。0 なら、幅と出す画面の縦横比（3840×1080 なら 32:9）から決める
  */
 export interface ViewCalibration {
   /** free = マウスで自由に動かす、fixed = この値で決めた視点 */
   mode: 'free' | 'fixed';
   /** 投影面の幅（m）・下端の高さ（床から m）・位置（部屋の手前の端から奥へ m）・左右のずれ（m、右が正） */
   planeWidthM: number;
+  /** 投影面の高さ（m）。0 なら、幅と出す画面の縦横比から決める。実寸を入れると、出す画面の縦横比が違っても（映像を引き伸ばして映す場合も）パースが合う */
+  planeHeightM: number;
   planeBottomM: number;
   planeDepthM: number;
   planeXM: number;
@@ -273,7 +509,7 @@ export function defaultCalibration(room: RoomGeometry): ViewCalibration {
   const planeWidthM = room.widthM;
   return {
     mode: 'free',
-    planeWidthM, planeBottomM: Math.max(0, eyeHeightM - (planeWidthM * 9) / 32 / 2), planeDepthM: 0, planeXM: 0,
+    planeWidthM, planeHeightM: 0, planeBottomM: Math.max(0, eyeHeightM - (planeWidthM * 9) / 32 / 2), planeDepthM: 0, planeXM: 0,
     planeYawDeg: 0, planePitchDeg: 0, planeRollDeg: 0,
     eyeDistM: room.depthM * 0.4, eyeHeightM, eyeXM: 0,
   };
@@ -287,7 +523,7 @@ export function calibratedCamera(v: ViewCalibration, aspect: number, near: numbe
   position: THREE.Vector3; quaternion: THREE.Quaternion; left: number; right: number; bottom: number; top: number;
 } {
   const r = Math.PI / 180;
-  const w = Math.max(0.01, v.planeWidthM), h = w / Math.max(1e-3, aspect);
+  const w = Math.max(0.01, v.planeWidthM), h = v.planeHeightM > 0 ? v.planeHeightM : w / Math.max(1e-3, aspect);
   // 投影面の中心と、面の右・上・手前（目の側）の向き
   const center = new THREE.Vector3(v.planeXM, v.planeBottomM + h / 2, -v.planeDepthM);
   const rot = new THREE.Quaternion().setFromEuler(new THREE.Euler(-v.planePitchDeg * r, -v.planeYawDeg * r, -v.planeRollDeg * r, 'YXZ'));

@@ -1,9 +1,10 @@
 // room モードの UI：時刻操作・窓の位置と大きさの切り替えパネルと、太陽・lit の状態表示
 import GUI from 'lil-gui';
 import type { Clock } from '../clock.ts';
+import { mountCalibMode } from './calib-mode.ts';
 import { WINDOW_SIDES, WINDOW_SIDE_LABEL, type WindowSide } from '../config.ts';
 import { PALETTE_KELVIN_ALTS, PALETTE_SKY_ALTS, type PaletteTable, defaultPalette, kelvinAt, setPalette } from '../palette.ts';
-import { EXHIBIT_SIZE, type GuideOptions, LIGHT_KINDS, type LightKind, MAX_SPOTS, type MoonSettings, SPOT_MODES, TRAIL_COLOR_MODES, type TrailSettings, type RoomGeometry, type RoomOutput, type RoomRenderSettings, type RoomResolution, type SpotLight, type SpotMode, type SpotSettings, type ViewCalibration, type WindowGeometry, defaultCalibration } from '../room/scene.ts';
+import { EXHIBIT_SIZE, type GuideOptions, LIGHT_KINDS, type LightKind, MAX_BLOBS, MAX_SHIM_COLORS, MAX_SHIM_PALETTE, MAX_SPOTS, MAX_PRISMS, type MoonSettings, type OrganicLook, PRISM_MOTIONS, PRISM_PATTERNS, SHIMMER_COLOR_MODES, type PrismMotion, type PrismPattern, type PrismSettings, SPOT_MODES, TRAIL_COLOR_MODES, type TrailSettings, type RoomGeometry, type RoomOutput, type RoomRenderSettings, type RoomResolution, type SpotLight, type SpotMode, type SpotSettings, type ViewCalibration, type WindowGeometry, defaultCalibration } from '../room/scene.ts';
 import { SCENES, findScene } from '../scenes/index.ts';
 import type { SceneDef } from '../scenes/types.ts';
 import type { SolarState } from '../solar.ts';
@@ -43,6 +44,47 @@ export const TRAIL_DEFAULTS: TrailSettings = {
   radiusM: 1.2, centerHeightM: 1.6, centerFromFrontM: 0, brightness: 1,
   colorMode: 'scene', color: '#66ccff', hueSpread: 1,
 };
+/** プリズムの既定（既定では出さない。?prism=1（吊るプリズム）・?prism=streaks / hung / panel / beams / none か、パネルで出す。
+ * E・F・G は ?waves=1・?organic=1・?blobs=1 で重ね、?prism=waves / organic / blobs はそれだけ）。虹の広がりは、見えやすいように本物のガラスより大きくしている */
+export const PRISM_DEFAULTS: PrismSettings = {
+  on: false, pattern: 'hung', vividness: 0.7, speed: 0.15, motion: 'spin', swayDeg: 35, causticSpreadM: 0.04,
+  streaks: { strength: 1, amount: 0.8, lengthM: 1.2, angleDeg: 20 },
+  hung: { count: 10, facets: 3, strength: 2.5, sizeM: 0.2, deviationDeg: 30, dispersionDeg: 12, dropM: 0.6 },
+  panel: { strength: 0.9, deviationDeg: 15, dispersionDeg: 8, ridgeAngleDeg: 0 },
+  waves: {
+    on: false, wobbleM: 0.12, waveLengthM: 1.2, speed: 0.15,
+    fringe: 0.3, soft: 0.05, halo: 0.4, haloWidth: 0.6, haloHue: 0.62, saturation: 1.6,
+  },
+  organic: {
+    on: false, wobbleM: 0.08, scaleM: 0.25, speed: 0.15, pastel: 0.12,
+    fringe: 0.12, soft: 0.02, halo: 0.35, haloWidth: 0.3, haloHue: 0.83, saturation: 1.6,
+  },
+  blobs: {
+    on: false, count: 5, strength: 8, sizeM: 0.4, grow: 0.12, deviationDeg: 12, wobble: 0.3, speed: 0.15, pastel: 0.5,
+    fringe: 0.35, soft: 0.08, halo: 0.5, haloWidth: 0.6, haloHue: 1, saturation: 1.6,
+  },
+  shimmer: {
+    on: false, amount: 1, scaleM: 0.6, lineWidth: 0.05, warp: 1.2, speed: 0.3, base: 0.6, gain: 2, dispersion: 0.04, iridescence: 0.6,
+    colorMode: 'spectrum', colorCount: 3, hueStart: 0, hueEnd: 1,
+    // 選んだ色の既定は、参考の水底の写真の色（水色・ラベンダー・ピンク・淡い黄・白）
+    palette: ['#7fe3ff', '#c9a8ff', '#ff9ad5', '#fff1a8', '#ffffff'], paletteCount: 4,
+    lineColor: '#ffffff', baseColor: '#ffffff', saturation: 1,
+  },
+  beams: { count: 8, strength: 2.5, widthM: 0.3, blur: 0.06, deviationDeg: 10, dispersionDeg: 8, ridgeAngleDeg: 0 },
+};
+const PRISM_PATTERN_LABEL: Record<PrismPattern, string> = {
+  streaks: 'A：日だまりの中に虹の筋（演出寄り）',
+  hung: 'B：窓に吊るプリズム（本物寄り）',
+  panel: 'C：窓をプリズムの板で覆う',
+  beams: 'D：日差しの先に虹の筋（窓ガラスのプリズム）',
+  none: '出さない（E〜H だけにするとき）',
+};
+const PRISM_MOTION_LABEL: Record<PrismMotion, string> = {
+  spin: '一方向に回り続ける',
+  sway: '左右にねじれては戻る',
+  wind: '風の強さで揺れる',
+  still: '止まったまま',
+};
 /** 月明かりの既定（南の空、高度 50° の月。太陽が 0° を切ると点き始め、−8° で最大） */
 export const MOON_DEFAULTS: MoonSettings = {
   on: true, strength: 0.5, skyStrength: 0.7, color: '#a9bfff', azimuthDeg: 180, altitudeDeg: 50, onAltDeg: 0, fullAltDeg: -8,
@@ -66,6 +108,16 @@ export interface RoomUiHooks {
   onGuides(g: GuideOptions): void;
   /** 部屋の設定を保存する（config/room.json） */
   save(file: RoomSettingsFile): Promise<void>;
+  /** 「会場の値を入れる」で入れる値（非公開の会場のデータがあるときだけ。src/main.ts） */
+  venuePreset?: VenuePreset | null;
+}
+
+/** 現地（会場）に合わせた部屋の寸法と視点。パース調整の出発点にする */
+export interface VenuePreset {
+  label: string;
+  room: { widthM: number; heightM: number };
+  calibration: ViewCalibration;
+  windowSide?: WindowSide;
 }
 
 /**
@@ -93,7 +145,7 @@ export function mountRoomUi(
 
   // 保存（パネルのいちばん上）。現地で合わせた値を config/room.json に書き、次に開いたときに読む
   const saveState = { text: saved ? '保存した設定（config/room.json）を読み込んだ' : '保存した設定はない（既定の値）' };
-  gui.add({ run: async () => {
+  const doSave = async (): Promise<string> => {
     saveState.text = '保存中…';
     try {
       await hooks.save(collect());
@@ -101,7 +153,9 @@ export function mountRoomUi(
     } catch (err) {
       saveState.text = `保存できなかった：${err instanceof Error ? err.message : String(err)}`;
     }
-  } }, 'run').name('部屋の設定を保存（config/room.json）');
+    return saveState.text;
+  };
+  gui.add({ run: doSave }, 'run').name('部屋の設定を保存（config/room.json）');
   gui.add(saveState, 'text').name('保存').disable().listen();
 
   // 窓の位置の切り替えスイッチ。?window=right などで、最初に表示する窓の位置を指定できる（指定がなければ保存した位置、既定は天窓）
@@ -137,6 +191,13 @@ export function mountRoomUi(
     screen: q.has('screen') ? q.get('screen') !== '0' : r0.screen,
     // ?moon=0 で月明かりを消して開く
     moon: { ...r0.moon, on: on('moon', r0.moon.on) },
+    // プリズム：保存した値の出し方・動き方が選択肢になければ既定にする
+    prism: {
+      ...r0.prism,
+      pattern: oneOf(r0.prism.pattern, PRISM_PATTERNS, PRISM_DEFAULTS.pattern),
+      motion: oneOf(r0.prism.motion, PRISM_MOTIONS, PRISM_DEFAULTS.motion),
+      shimmer: { ...r0.prism.shimmer, colorMode: oneOf(r0.prism.shimmer.colorMode, SHIMMER_COLOR_MODES, PRISM_DEFAULTS.shimmer.colorMode) },
+    },
     // ?trails=1 で光の軌跡を出して開く（既定は出さない）
     trails: { ...r0.trails, on: on('trails', r0.trails.on), colorMode: oneOf(r0.trails.colorMode, TRAIL_COLOR_MODES, 'scene') },
     // ?spot=on / off / auto でスポットライトの点け方、?spotCount=2 で台数を指定できる
@@ -266,9 +327,24 @@ export function mountRoomUi(
   const calib: ViewCalibration = { ...base.calibration, mode: oneOf(q.get('view') ?? base.calibration.mode, ['free', 'fixed'] as const, 'free') };
   const calibChanged = (): void => hooks.onCalibration({ ...calib });
   const fp = gui.addFolder('視点・パース合わせ');
+  // パース調整モード：現地で投影を見ながら合わせる画面（src/ui/calib-mode.ts）。?calib=1 で最初から入る
+  let calibMode: ReturnType<typeof mountCalibMode> | null = null;
+  fp.add({ run: () => calibMode?.toggle() }, 'run').name('パース調整モード（入る・終わる。キー C で終わる）');
+  const preset = hooks.venuePreset;
+  if (preset) {
+    fp.add({ run: () => {
+      Object.assign(room, preset.room);
+      Object.assign(calib, { ...preset.calibration, mode: 'fixed' });
+      if (preset.windowSide && preset.windowSide !== state.side) { state.side = preset.windowSide; onWindowSide(state.side); }
+      gui.controllersRecursive().forEach((c) => c.updateDisplay());
+      roomChanged();
+      calibChanged();
+    } }, 'run').name(`会場の値を入れる（${preset.label}）`);
+  }
   fp.add(calib, 'mode', { 'マウスで自由に動かす': 'free', '現地に合わせた視点（固定）': 'fixed' }).name('視点').onChange(calibChanged);
   const calibCtl = [
     fp.add(calib, 'planeWidthM', 0.5, 40, 0.01).name('投影面：幅（m）'),
+    fp.add(calib, 'planeHeightM', 0, 20, 0.01).name('投影面：高さ（m、0 で画面の縦横比から）'),
     fp.add(calib, 'planeBottomM', -3, 10, 0.01).name('投影面：下端の高さ（床から m）'),
     fp.add(calib, 'planeDepthM', -10, 40, 0.01).name('投影面：位置（部屋の手前の端から奥へ m）'),
     fp.add(calib, 'planeXM', -20, 20, 0.01).name('投影面：左右のずれ（m、右が正）'),
@@ -333,6 +409,150 @@ export function mountRoomUi(
   fs.add(settings, 'screen').name('スクリーンに映像を映す');
   fs.add(screen, 'id', Object.fromEntries(SCENES.map((d) => [d.label, d.id]))).name('映す映像');
   fs.add(settings, 'screenGain', 0, 3, 0.01).name('プロジェクターの明るさ');
+
+  // プリズム：窓に吊ったプリズムが日差しを虹に分ける。水の光の揺らぎの縁も虹色ににじむ（?prism=1 で最初からオン）
+  const pr = settings.prism;
+  const prismParam = q.get('prism');
+  if (prismParam !== null) {
+    pr.on = prismParam !== '0';
+    if ((PRISM_PATTERNS as readonly string[]).includes(prismParam)) pr.pattern = prismParam as PrismPattern;
+    if (prismParam === 'waves' || prismParam === 'organic' || prismParam === 'blobs' || prismParam === 'shimmer') { pr.pattern = 'none'; pr[prismParam].on = true; }
+  }
+  for (const k of ['waves', 'organic', 'blobs', 'shimmer'] as const) {
+    const v = q.get(k);
+    if (v === null) continue;
+    pr[k].on = v !== '0';
+    if (pr[k].on) pr.on = true;
+  }
+  const fpz = gui.addFolder('プリズム（虹色の光）');
+  fpz.add(pr, 'on').name('虹を出す');
+  fpz.add(pr, 'pattern', Object.fromEntries(PRISM_PATTERNS.map((k) => [PRISM_PATTERN_LABEL[k], k]))).name('出し方').onChange(() => showPrism());
+  const pzA = fpz.addFolder('A：日だまりの中に虹の筋');
+  pzA.add(pr.streaks, 'strength', 0, 3, 0.01).name('明るさ');
+  pzA.add(pr.streaks, 'amount', 0, 1, 0.01).name('筋の多さ');
+  pzA.add(pr.streaks, 'lengthM', 0.1, 3, 0.05).name('筋の長さ（m）');
+  pzA.add(pr.streaks, 'angleDeg', -180, 180, 1).name('筋の向き（度）');
+  const pzB = fpz.addFolder('B：窓に吊るプリズム');
+  pzB.add(pr.hung, 'count', 1, MAX_PRISMS, 1).name('プリズムの数');
+  pzB.add(pr.hung, 'facets', 1, 4, 1).name('1 つのプリズムから出る虹の数（面の数）');
+  pzB.add(pr.hung, 'strength', 0, 5, 0.01).name('虹の明るさ');
+  pzB.add(pr.hung, 'sizeM', 0.02, 0.4, 0.005).name('プリズムの大きさ（m）');
+  pzB.add(pr.hung, 'deviationDeg', 5, 70, 0.5).name('光が曲がる角度（度）');
+  pzB.add(pr.hung, 'dispersionDeg', 0.5, 30, 0.1).name('虹の広がり（赤と紫の差、度）');
+  pzB.add(pr.hung, 'dropM', 0, 3, 0.05).name('吊る位置：窓の上の端から下へ（m）');
+  const pzC = fpz.addFolder('C：窓をプリズムの板で覆う');
+  pzC.add(pr.panel, 'strength', 0, 2, 0.01).name('明るさ（板を通る割合）');
+  pzC.add(pr.panel, 'deviationDeg', 0, 45, 0.5).name('光が曲がる角度（度）');
+  pzC.add(pr.panel, 'dispersionDeg', 0.5, 30, 0.1).name('虹の広がり（赤と紫の差、度）');
+  pzC.add(pr.panel, 'ridgeAngleDeg', -180, 180, 1).name('曲がる向き（板の稜の向き、度）');
+  const pzD = fpz.addFolder('D：日差しの先に虹の筋');
+  pzD.add(pr.beams, 'count', 1, MAX_PRISMS, 1).name('光の束の数');
+  pzD.add(pr.beams, 'strength', 0, 5, 0.01).name('虹の明るさ');
+  pzD.add(pr.beams, 'widthM', 0.02, 0.4, 0.005).name('束の太さ（m）');
+  pzD.add(pr.beams, 'blur', 0, 0.15, 0.001).name('進むにつれてぼける割合');
+  pzD.add(pr.beams, 'deviationDeg', 0, 45, 0.5).name('光が曲がる角度（度）');
+  pzD.add(pr.beams, 'dispersionDeg', 0.5, 20, 0.1).name('虹の広がり（赤と紫の差、度）');
+  pzD.add(pr.beams, 'ridgeAngleDeg', -180, 180, 1).name('虹の色が並ぶ向き（稜の向き、度）');
+  // E・F・G 共通の、縁の見え方の項目（unit は長さの単位の書き方、max は長さの上限）
+  const addLook = (f: GUI, o: OrganicLook, unit: string, max: number): void => {
+    f.add(o, 'fringe', -max / 2, max / 2, max / 400).name(`縁の色の帯の幅（${unit}、負で色の並びが逆）`);
+    f.add(o, 'soft', 0.001, max / 4, max / 1000).name(`縁のぼかし（${unit}）`);
+    f.add(o, 'saturation', 0, 3, 0.01).name('色の濃さ');
+    f.add(o, 'halo', 0, 2, 0.01).name('外へ広がる光の明るさ');
+    f.add(o, 'haloWidth', 0.01, max * 2, max / 200).name(`外へ広がる幅（${unit}）`);
+    f.add(o, 'haloHue', 0, 1, 0.01).name('外へ広がる光の色合い（赤 0 → 黄 → 緑 → 水色 → 青 → 紫 1）');
+  };
+  const pzE = fpz.addFolder('E：波のプリズム（水盤の日だまりの縁が波で揺れる。A〜D と重ねられる）');
+  pzE.add(pr.waves, 'on').name('波のプリズムを重ねる');
+  pzE.add(pr.waves, 'wobbleM', 0, 0.5, 0.005).name('波で縁が揺れる大きさ（m）');
+  pzE.add(pr.waves, 'waveLengthM', 0.2, 4, 0.05).name('波の長さ（m）');
+  pzE.add(pr.waves, 'speed', 0, 1, 0.01).name('波の進む速さ（m/秒）');
+  addLook(pzE, pr.waves, 'm', 0.6);
+  const pzF = fpz.addFolder('F：有機的な日だまりの縁（A〜D と重ねられる）');
+  pzF.add(pr.organic, 'on').name('有機的な縁を重ねる');
+  pzF.add(pr.organic, 'wobbleM', 0, 0.3, 0.005).name('縁が揺れる大きさ（m）');
+  pzF.add(pr.organic, 'scaleM', 0.03, 1.5, 0.01).name('揺らぎの模様の大きさ（m）');
+  pzF.add(pr.organic, 'speed', 0, 1, 0.01).name('形が変わる速さ');
+  pzF.add(pr.organic, 'pastel', 0, 1, 0.01).name('内側の淡い色');
+  addLook(pzF, pr.organic, 'm', 0.4);
+  const pzG = fpz.addFolder('G：虹のしみ（A〜D と重ねられる）');
+  pzG.add(pr.blobs, 'on').name('虹のしみを重ねる');
+  pzG.add(pr.blobs, 'count', 1, MAX_BLOBS, 1).name('しみの数');
+  pzG.add(pr.blobs, 'strength', 0, 10, 0.05).name('明るさ');
+  pzG.add(pr.blobs, 'sizeM', 0.05, 1, 0.01).name('しみの大きさ（m、窓の所で）');
+  pzG.add(pr.blobs, 'grow', 0, 0.4, 0.005).name('進むにつれて大きくなる割合');
+  pzG.add(pr.blobs, 'deviationDeg', 0, 45, 0.5).name('光が曲がる角度（度）');
+  pzG.add(pr.blobs, 'wobble', 0, 0.8, 0.01).name('形の崩れ方');
+  pzG.add(pr.blobs, 'speed', 0, 1, 0.01).name('形が変わる速さ');
+  pzG.add(pr.blobs, 'pastel', 0, 1, 0.01).name('内側の淡い色');
+  addLook(pzG, pr.blobs, '半径に対する割合', 1);
+  const pzH = fpz.addFolder('H：水のきらめき（日なたに水底のような光の網目。A〜G と重ねられる）');
+  pzH.add(pr.shimmer, 'on').name('水のきらめきを重ねる');
+  pzH.add(pr.shimmer, 'amount', 0, 1, 0.01).name('重ねる強さ');
+  pzH.add(pr.shimmer, 'scaleM', 0.05, 1.5, 0.01).name('網目の大きさ（m）');
+  pzH.add(pr.shimmer, 'lineWidth', 0.01, 0.3, 0.005).name('線の太さ（網目に対する割合）');
+  pzH.add(pr.shimmer, 'warp', 0, 2, 0.01).name('網目のゆがみ（大きいほど丸く流れる）');
+  pzH.add(pr.shimmer, 'speed', 0, 2, 0.01).name('形が変わる速さ');
+  pzH.add(pr.shimmer, 'base', 0, 1.5, 0.01).name('線のない所の明るさ');
+  pzH.add(pr.shimmer, 'gain', 0, 6, 0.05).name('線の明るさ');
+  pzH.add(pr.shimmer, 'dispersion', -0.2, 0.2, 0.002).name('線の縁の虹のずれ（網目に対する割合）');
+  pzH.add(pr.shimmer, 'iridescence', 0, 1, 0.01).name('線のまわりの膜のような虹色');
+  // 色：虹の色の範囲から取るか、選んだ色を並べるか。線の縁の色の数、線と地の色合い、色の濃さ
+  pzH.add(pr.shimmer, 'colorMode', { '虹の色の範囲から': 'spectrum', '選んだ色を並べる': 'palette' }).name('色の決め方').onChange(() => showShimColor());
+  pzH.add(pr.shimmer, 'colorCount', 3, MAX_SHIM_COLORS, 1).name('線の縁に並べる色の数');
+  const cHue0 = pzH.add(pr.shimmer, 'hueStart', 0, 1, 0.01).name('虹の色の範囲：始め（赤 0 → 黄 → 緑 → 水色 → 青 → 紫 1）');
+  const cHue1 = pzH.add(pr.shimmer, 'hueEnd', 0, 1, 0.01).name('虹の色の範囲：終わり');
+  const cPalN = pzH.add(pr.shimmer, 'paletteCount', 2, MAX_SHIM_PALETTE, 1).name('使う色の数').onChange(() => showShimColor());
+  const cPal = Array.from({ length: MAX_SHIM_PALETTE }, (_, i) => pzH.addColor(pr.shimmer.palette, i).name(`色 ${i + 1}`));
+  pzH.addColor(pr.shimmer, 'lineColor').name('線の色合い');
+  pzH.addColor(pr.shimmer, 'baseColor').name('線のない所の色合い');
+  pzH.add(pr.shimmer, 'saturation', 0, 2, 0.01).name('色の濃さ（0 で白黒）');
+  const showShimColor = (): void => {
+    const pal = pr.shimmer.colorMode === 'palette';
+    cHue0.show(!pal);
+    cHue1.show(!pal);
+    cPalN.show(pal);
+    cPal.forEach((c, i) => c.show(pal && i < Math.round(pr.shimmer.paletteCount)));
+  };
+  showShimColor();
+  const cViv = fpz.add(pr, 'vividness', 0, 1, 0.01).name('日なたの虹の色を際立たせる（A・B・D）');
+  const cMotion = fpz.add(pr, 'motion', Object.fromEntries(PRISM_MOTIONS.map((k) => [PRISM_MOTION_LABEL[k], k]))).name('プリズムの動き方（B・D）').onChange(() => showPrism());
+  const cSway = fpz.add(pr, 'swayDeg', 0, 90, 1).name('揺れの大きさ（度）');
+  const cSpeed = fpz.add(pr, 'speed', 0, 1, 0.01).name('動く速さ（A：筋の揺れ、B・D：プリズムの動き）');
+  fpz.add(pr, 'causticSpreadM', 0, 0.2, 0.005).name('水の光の揺らぎのにじみ（m）');
+  const showPrism = (): void => {
+    pzA.show(pr.pattern === 'streaks');
+    pzB.show(pr.pattern === 'hung');
+    pzC.show(pr.pattern === 'panel');
+    pzD.show(pr.pattern === 'beams');
+    cViv.show(pr.pattern !== 'panel' && pr.pattern !== 'none');
+    cSpeed.show(pr.pattern !== 'panel' && pr.pattern !== 'none');
+    const moving = pr.pattern === 'hung' || pr.pattern === 'beams';
+    cMotion.show(moving);
+    cSway.show(moving && (pr.motion === 'sway' || pr.motion === 'wind'));
+  };
+  showPrism();
+  fpz.add({ run: () => {
+    // 中の項目のまとまり（streaks など）は、パネルがつながっている同じものに値だけ写す
+    const { streaks, hung, panel, beams, waves, organic, blobs, shimmer } = pr;
+    Object.assign(pr, { ...PRISM_DEFAULTS, on: pr.on, pattern: pr.pattern, streaks, hung, panel, beams, waves, organic, blobs, shimmer });
+    Object.assign(streaks, PRISM_DEFAULTS.streaks);
+    Object.assign(hung, PRISM_DEFAULTS.hung);
+    Object.assign(panel, PRISM_DEFAULTS.panel);
+    Object.assign(beams, PRISM_DEFAULTS.beams);
+    Object.assign(waves, PRISM_DEFAULTS.waves);
+    Object.assign(organic, PRISM_DEFAULTS.organic);
+    Object.assign(blobs, PRISM_DEFAULTS.blobs);
+    const { palette } = shimmer;
+    Object.assign(shimmer, PRISM_DEFAULTS.shimmer, { palette });
+    palette.splice(0, palette.length, ...PRISM_DEFAULTS.shimmer.palette);
+    fpz.controllersRecursive().forEach((c) => c.updateDisplay());
+    showPrism();
+    showShimColor();
+  } }, 'run').name('プリズムの設定を既定に戻す（出し方はそのまま）');
+  // 保存はパネルのいちばん上の「部屋の設定を保存」と同じ（プリズムだけでなく、パネルの今の値をまとめて config/room.json に書く）
+  fpz.add({ run: doSave }, 'run').name('プリズムの設定を保存（部屋の設定と一緒に config/room.json へ）');
+  fpz.add(saveState, 'text').name('保存').disable().listen();
 
   // 光の軌跡：部屋の中央の空間を、たくさんの光の線が漂う（three-line-trails と同じ考え方の演出を書き直したもの）
   const tr = settings.trails;
@@ -450,6 +670,17 @@ export function mountRoomUi(
 
   // パネルの今の値を、同じブラウザ（アプリ）の他の画面と分け合う（site モードの「映すもの」がこの値で描く。src/room/live-share.ts）
   shareRoomSettings(collect);
+
+  // パース調整モード（パネルの「視点・パース合わせ」のボタン・キー C・?calib=1）
+  calibMode = mountCalibMode({
+    gui, keep: [fr, fp], view, calib, room, warp: warpPct, guides,
+    onCalibration: calibChanged,
+    onRoomSize: roomChanged,
+    onWarp: applyWarp,
+    onGuides: guidesChanged,
+    save: doSave,
+  });
+  if (q.get('calib') === '1') calibMode.enter();
 
   const statusEl = el('room-status', HTMLElement);
   const sameAsConfig = (): boolean =>
@@ -569,6 +800,7 @@ export function codeDefaults(room: RoomGeometry, configWindow: WindowGeometry) {
       clouds: false, cloudShadow: ROOM_DEFAULTS.cloudShadow as boolean, cloudAmount: 0.45, cloudOpacity: 0.8,
       cloudSizeM: 1500, cloudHeightM: 1500, windMS: 30, windFromDeg: 270,
       screenArea: false, screen: false, screenGain: 0.6,
+      prism: { ...PRISM_DEFAULTS, streaks: { ...PRISM_DEFAULTS.streaks }, hung: { ...PRISM_DEFAULTS.hung }, panel: { ...PRISM_DEFAULTS.panel }, beams: { ...PRISM_DEFAULTS.beams }, waves: { ...PRISM_DEFAULTS.waves }, organic: { ...PRISM_DEFAULTS.organic }, blobs: { ...PRISM_DEFAULTS.blobs }, shimmer: { ...PRISM_DEFAULTS.shimmer, palette: [...PRISM_DEFAULTS.shimmer.palette] } },
       trails: { ...TRAIL_DEFAULTS },
       moon: { ...MOON_DEFAULTS },
     },

@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { GLSL_SIMPLEX3, glPass } from '../scenes/shader.ts';
 import type { SceneInstance } from '../scenes/types.ts';
 import { CAUSTIC_FACES, CAUSTIC_SIZE, FLOOR_ALBEDO, POOL_ALBEDO, SCREEN_ALBEDO, SCREEN_IMAGE, WALL_ALBEDO, type RoomCore, type RoomFrame } from './core.ts';
-import { MAX_SPOTS, type RoomScreenImage } from './model.ts';
+import { MAX_BLOBS, MAX_PRISMS, MAX_SHIM_COLORS, MAX_SHIM_PALETTE, MAX_SPOTS, type RoomScreenImage } from './model.ts';
 import { WATER_ABSORPTION, WATER_GLSL, WATER_IOR } from './water.ts';
 
 const f3 = (n: number): string => n.toFixed(4);
@@ -51,6 +51,49 @@ uniform float uCloudScale;   // 1 / 雲のかたまりの大きさ（1/m）
 uniform float uCloudAmount, uCloudContrast, uCloudOpacity;
 uniform vec3 uCloudOffA, uCloudOffB;  // 雲の流れ（xy）と形の変化（z）。B は巻き戻した後の同じ動き
 uniform float uCloudBlend;
+const int MAX_PRISMS = ${MAX_PRISMS};
+uniform float uPrismOn;      // プリズム（虹色の光）
+uniform float uPrismPattern; // 出し方：0 = 日だまりの中に虹の筋、1 = 窓に吊るプリズム、2 = 窓をプリズムの板で覆う、3 = 日差しの先の虹の筋、4 = 波のプリズム
+uniform float uPrismPhase;   // 動き（筋の揺れ）の進み
+uniform float uStreakAmount, uStreakLen, uStreakAngle; // 虹の筋：多さ・長さ（m）・向き（ラジアン）
+uniform float uPanelRidge;   // プリズムの板の稜の向き（ラジアン）
+uniform float uPrismCount;   // 吊っているプリズムの数
+uniform vec3 uPrismPos[MAX_PRISMS];   // プリズムの位置
+uniform vec3 uPrismAxis[MAX_PRISMS];  // プリズムの稜の向き（水平）
+uniform float uPrismStrength, uPrismSize;
+uniform float uPrismDev, uPrismDisp;  // 光が曲がる角度・赤と紫の差（ラジアン）
+uniform float uPrismVivid;            // 日なたに落ちた虹の色を際立たせる割合（0〜1）
+uniform float uPrismFacets;           // 1 つのプリズムから出る虹の数（面の数、1〜4）
+uniform float uPrismFadeM;   // 日なたと影の境目・面の縁で、色のずれを消していく幅（m）
+// E・F・G の縁の見え方：Edge = (色の帯の幅, ぼかしの幅, 外へ広がる光の明るさ, 外へ広がる幅)、Look = (色の濃さ, 外へ広がる光の色合い)
+uniform float uWaveOn;       // E：波のプリズム
+uniform vec4 uWaveEdge;
+uniform vec2 uWaveLook;
+uniform vec3 uWaveShape;     // E：縁が揺れる大きさ（m）・波の長さ（m）・波の進み（ラジアン）
+uniform float uOrgOn;        // F：有機的な日だまりの縁
+uniform vec4 uOrgEdge;
+uniform vec2 uOrgLook;
+uniform vec4 uOrgShape;      // F：縁が揺れる大きさ（m）・模様の大きさ（m）・形の変化の進み・内側の淡い色
+uniform float uShimOn;       // H：水のきらめきを重ねる強さ（0 = 出さない）
+uniform vec4 uShimShape;     // H：網目の大きさ（m）・線の太さ・ゆがみ・形の変化の進み
+uniform vec4 uShimLook;      // H：線のない所の明るさ・線の明るさ・虹のずれ・膜の虹色の濃さ
+uniform vec4 uShimColor;     // H：線の縁の色の数・虹の色の範囲の始め・終わり・色の濃さ
+uniform float uShimPalN;     // H：選んだ色の数（0 = 虹の色の範囲を使う）
+const int MAX_SHIM_COLORS = ${MAX_SHIM_COLORS};
+const int MAX_SHIM_PALETTE = ${MAX_SHIM_PALETTE};
+uniform vec3 uShimPal[MAX_SHIM_PALETTE];
+uniform vec3 uShimLineCol;   // H：線の色合い（明るさ 1）
+uniform vec3 uShimBaseCol;   // H：線のない所の色合い（明るさ 1）
+const int MAX_BLOBS = ${MAX_BLOBS};
+uniform float uBlobCount;    // G：虹のしみの数（0 = 出さない）
+uniform vec3 uBlobPos[MAX_BLOBS];
+uniform vec3 uBlobAxis[MAX_BLOBS];
+uniform vec4 uBlobEdge;
+uniform vec2 uBlobLook;
+uniform vec4 uBlobShape;     // G：形の崩れ方・形の変化の進み・内側の淡い色
+uniform vec4 uBlobBeam;      // G：半径（m、窓の所）・大きくなる割合・曲がる角度（ラジアン）・明るさ
+uniform float uBeamBlur;     // D：光の束が進むにつれて太くなる割合（m/m）
+uniform float uPrismCaus;    // 水の光の揺らぎの虹色のにじみの幅（m、0 = にじませない）
 uniform int uScreenOn;       // スクリーンに映像を映す
 uniform sampler2D uScreenTex;
 uniform float uScreenGain;
@@ -601,6 +644,407 @@ in vec2 vUv;
 out vec4 fragColor;
 
 // 太陽の円盤の決まった 12 点から、窓を通って届く直射日光（影の縁のぼけは円盤の大きさで決まる）
+// ---- プリズム（画面に出す段階で足す光。照り返しの計算には入れない）----
+// 虹の色（t = 0 で赤 → 1 で紫）。少し白を混ぜて淡くする
+vec3 spectrum(float t) {
+  vec3 c = clamp(abs(fract(t * 0.8 + vec3(0.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0) - 1.0, 0.0, 1.0);
+  return mix(c, vec3(0.6), 0.3);
+}
+// プリズムで日差しが変わる分（放射照度の差）。
+// 虹：プリズム i に日が当たっていれば、日差しの進む向き d を、稜 A のまわりに「曲がる角度」〜「＋赤と紫の差」だけ曲げた扇の中に光が出る。
+//   点 p がその扇の中にあれば、扇の中の角度で色が決まる。扇の幅はプリズムの大きさ。扇が広がる分だけ淡くなる（遠いほど淡い）
+// 影：本来まっすぐ進むはずだった日差しの、プリズムの後ろの所は暗くなる
+vec3 hungLight(vec3 p, vec3 n) {
+  if (uSunE.x + uSunE.y + uSunE.z <= 0.0) return vec3(0.0);
+  vec3 d = -uSunDir; // 日差しの進む向き
+  float cl = dot(n, uSunDir);
+  bool lit = cl > 0.0 && seesOutside(p, uSunDir);
+  float half_ = 0.5 * uPrismSize;
+  vec3 sum = vec3(0.0);
+  float shade = 0.0, cover = 0.0;
+  vec3 hue = vec3(0.0); // 虹の色（扇の広がりで淡くしない）。日なたで、減らした白の代わりに足す
+  for (int i = 0; i < MAX_PRISMS; i++) {
+    if (float(i) >= uPrismCount) break;
+    vec3 P = uPrismPos[i];
+    if (!seesOutside(P, uSunDir)) continue; // プリズムに日が当たっていない
+    float sunP = cloudTrans(P);
+    vec3 v = p - P;
+    // 影：まっすぐ進む日差しの線からの距離
+    float s = dot(v, d);
+    if (lit && s > 0.0) { float r = length(v - d * s) / half_; shade += exp(-r * r) * sunP; }
+    // 虹
+    float D = length(v);
+    if (D < 0.05) continue;
+    vec3 u = v / D;
+    float c = dot(n, -u);
+    if (c <= 0.0) continue;
+    vec3 A0 = normalize(uPrismAxis[i] - d * dot(uPrismAxis[i], d));
+    vec3 B0 = cross(d, A0);
+    float b = half_ / D;                                       // プリズムの大きさによるぼけ（角度）
+    float spread = uPrismSize / (uPrismDisp * D + uPrismSize); // 扇が広がって淡くなる割合
+    // 面ごとに、稜を日差しのまわりに等しく回した向きで、虹の扇を出す（曲がる角度も面ごとに少し違う）
+    for (int f = 0; f < 4; f++) {
+      if (float(f) >= uPrismFacets) break;
+      float th = 6.2832 * float(f) / uPrismFacets;
+      vec3 A = A0 * cos(th) + B0 * sin(th);
+      vec3 e = cross(A, d);
+      float phi = atan(dot(u, e), dot(u, d)) - uPrismDev * (0.75 + 0.25 * float(f)); // 扇の始まり（赤）からの角度
+      float inFan = smoothstep(-b, b, phi) * (1.0 - smoothstep(-b, b, phi - uPrismDisp));
+      float w = dot(u, A) * D / half_;                     // 扇に垂直な向きのずれ（プリズムの大きさで割る）
+      float m = inFan * exp(-w * w);
+      if (m <= 1e-4) continue;
+      vec3 col = spectrum(clamp(phi / uPrismDisp, 0.0, 1.0));
+      sum += col * (2.0 * m * spread * c * sunP / uPrismFacets);
+      hue += col * (m * sunP);
+      cover += m * sunP;
+    }
+  }
+  sum *= uPrismStrength;
+  // 日なたに落ちた虹：そのままでは明るい日だまりに埋もれて色が見えないので、虹の範囲では白い日差しを uPrismVivid の割合だけ
+  // 虹の色に置き換える（明るさはほぼそのまま）。プリズムの影（まっすぐ進むはずだった日差し）は 35% 暗くする
+  if (!lit) return uSunE * sum;
+  float sunHere = cl * cloudTrans(p);
+  float k = uPrismVivid * min(cover, 1.0);
+  vec3 swap = hue / max(cover, 1e-4) * 1.6; // 虹の色（平均の明るさをおよそ白に合わせる）
+  return uSunE * (sum + sunHere * (k * (swap - vec3(1.0)) - vec3(min(shade, 1.0) * 0.35)));
+}
+// 水の光の揺らぎ。プリズムのときは、赤・緑・青を日差しの向きに少しずつずらして、縁を虹色ににじませる
+// ---- A：日だまりの中の虹色の筋（演出寄り）----
+vec2 prismHash(vec2 c) {
+  vec3 q = fract(c.xyx * vec3(0.1031, 0.1030, 0.0973));
+  q += dot(q, q.yzx + 33.33);
+  return fract((q.xx + q.yz) * q.zy);
+}
+// 日差しに垂直な面の上の模様（q は日差しに垂直な面での座標 m）。格子の各升に、確率 uStreakAmount で 1 本の虹色の筋を置く。
+// 模様は日差しの向きにはどこまでも同じなので、斜めに当たる面では日差しの向きに長く伸びた筋になる。rgb = 色 × 濃さ、a = 濃さ
+vec4 streakPattern(vec2 q) {
+  float s = uStreakLen, cell = s * 1.3;
+  vec2 gi = floor(q / cell);
+  vec4 sum = vec4(0.0);
+  for (int j = -1; j <= 1; j++) {
+    for (int i = -1; i <= 1; i++) {
+      vec2 c = gi + vec2(float(i), float(j));
+      vec2 h = prismHash(c), h2 = prismHash(c + 17.0);
+      if (h2.x > uStreakAmount) continue;
+      vec2 ctr = (c + 0.2 + 0.6 * h) * cell;
+      float ang = uStreakAngle + (h2.y - 0.5) * 0.6 + 0.25 * sin(uPrismPhase + 6.2832 * h.x);
+      vec2 e = vec2(cos(ang), sin(ang));
+      vec2 d = q - ctr;
+      float a = dot(d, e) / s + 0.5;                   // 筋の端から端へ 0〜1（虹の色の並び）
+      float w = dot(d, vec2(-e.y, e.x)) / (s * 0.25); // 筋の幅の向き
+      float m = smoothstep(0.0, 0.2, a) * (1.0 - smoothstep(0.8, 1.0, a)) * exp(-w * w * 3.0);
+      sum += vec4(spectrum(clamp(a, 0.0, 1.0)), 1.0) * m;
+    }
+  }
+  return sum;
+}
+// 筋の所では、白い日差しを虹色の光に置き換える（日が差している所だけ）
+vec3 streakLight(vec3 p, vec3 n) {
+  if (uSunE.x + uSunE.y + uSunE.z <= 0.0) return vec3(0.0);
+  float c = dot(n, uSunDir);
+  if (c <= 0.0 || !seesOutside(p, uSunDir)) return vec3(0.0);
+  vec3 t, b; basis(uSunDir, t, b);
+  vec4 pat = streakPattern(vec2(dot(p, t), dot(p, b)));
+  vec3 delta = pat.rgb * (2.0 * uPrismStrength) - vec3(min(pat.a, 1.0) * min(uPrismStrength, 1.0));
+  return uSunE * (c * cloudTrans(p)) * delta;
+}
+
+// ---- C：窓をプリズムの板で覆う ----
+// 窓から入る日差しは、すべて板で曲がる。色 t（赤 0 → 紫 1）ごとに、太陽の向きを板の稜のまわりに「曲がる角度 ＋ 虹の広がり × t」だけ回し、
+// 点 p からその向きに窓（同じ窓）が見えれば、その色の日差しが届く。日だまりは色ごとに少しずつずれて重なり、重なった所は白く、縁は虹色になる
+const int PANEL_SAMPLES = 16;
+vec3 spectrumPure(float t) {
+  return clamp(abs(fract(t * 0.8 + vec3(0.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0) - 1.0, 0.0, 1.0);
+}
+vec3 panelLight(vec3 p, vec3 n) {
+  if (uSunE.x + uSunE.y + uSunE.z <= 0.0) return vec3(0.0);
+  vec3 sum = vec3(0.0), wsum = vec3(0.0);
+  for (int j = 0; j < PANEL_SAMPLES; j++) wsum += spectrumPure((float(j) + 0.5) / float(PANEL_SAMPLES));
+  for (int k = 1; k <= 2; k++) {
+    if (k == 2 && uWin2On < 0.5) break;
+    if (dot(uSunDir, k == 2 ? vec3(0.0, 1.0, 0.0) : windowOutward()) <= 0.0) continue; // 太陽が、この窓の外側にない
+    int face = k == 2 ? 2 : uWinFace;
+    vec3 A = face == 2 ? vec3(cos(uPanelRidge), 0.0, sin(uPanelRidge)) : vec3(0.0, sin(uPanelRidge), cos(uPanelRidge));
+    vec3 axs = cross(A, uSunDir);
+    float ad = dot(A, uSunDir);
+    for (int j = 0; j < PANEL_SAMPLES; j++) {
+      float t = (float(j) + 0.5) / float(PANEL_SAMPLES);
+      float ang = uPrismDev + uPrismDisp * t;
+      vec3 L = uSunDir * cos(ang) + axs * sin(ang) + A * ad * (1.0 - cos(ang)); // 板を通った後に、この色の光がやって来る向き
+      float c = dot(n, L);
+      if (c <= 0.0) continue;
+      int f;
+      float tt = exitRoom(p, L, f);
+      vec3 q = p + L * tt;
+      if (k == 2 ? inWindow2(f, q) : inWindow1(f, q)) sum += spectrumPure(t) * c;
+    }
+  }
+  return uSunE * (cloudTrans(p) * uPrismStrength) * sum / wsum;
+}
+
+// ---- D：日差しの先の虹の筋（窓ガラスに付けた小さなプリズムから出る、細い光の束）----
+// 束 i は、ガラスの所 P で日を受け、日差しの向き d を稜 A のまわりに「曲がる角度 ＋ 虹の広がり × t」だけ曲げた向き L に進む（色 t ごとに少しずつ違う向き）。
+// 点 p が L の線から近ければ（太さは進んだ距離で太くなる）、その色の光が届く。線からの距離で測るので、斜めに当たる面では日差しの向きに長く伸びた筋になり、
+// 色は筋の幅の向きに並ぶ。束が太くなる分だけ淡くなる。日なたでは、B と同じく白い日差しを虹の色に置き換えて色を見せる
+const int BEAM_SAMPLES = 7;
+vec3 beamLight(vec3 p, vec3 n) {
+  if (uSunE.x + uSunE.y + uSunE.z <= 0.0) return vec3(0.0);
+  vec3 d = -uSunDir;
+  float cl = dot(n, uSunDir);
+  bool lit = cl > 0.0 && seesOutside(p, uSunDir);
+  float r0 = 0.5 * uPrismSize;
+  vec3 wsum = vec3(0.0);
+  for (int j = 0; j < BEAM_SAMPLES; j++) wsum += spectrumPure((float(j) + 0.5) / float(BEAM_SAMPLES));
+  vec3 sum = vec3(0.0), hue = vec3(0.0);
+  float cover = 0.0;
+  for (int i = 0; i < MAX_PRISMS; i++) {
+    if (float(i) >= uPrismCount) break;
+    vec3 P = uPrismPos[i];
+    if (!seesOutside(P, uSunDir)) continue; // ガラスのプリズムに日が当たっていない
+    vec3 A = uPrismAxis[i] - d * dot(uPrismAxis[i], d);
+    if (dot(A, A) < 1e-6) continue;
+    A = normalize(A);
+    vec3 e = cross(A, d);
+    vec3 v = p - P;
+    float sunP = cloudTrans(P);
+    float mMax = 0.0;
+    for (int j = 0; j < BEAM_SAMPLES; j++) {
+      float t = (float(j) + 0.5) / float(BEAM_SAMPLES);
+      float ang = uPrismDev + uPrismDisp * t;
+      vec3 L = d * cos(ang) + e * sin(ang); // この色の光が進む向き
+      float s = dot(v, L);
+      if (s <= 0.0) continue;
+      float c = dot(n, -L);
+      if (c <= 0.0) continue;
+      float R = r0 + uBeamBlur * s;
+      vec3 w = v - L * s;
+      float m = exp(-2.0 * dot(w, w) / (R * R));
+      if (m <= 1e-4) continue;
+      vec3 col = spectrumPure(t);
+      sum += col * (m * (r0 * r0) / (R * R) * c * sunP);
+      hue += col * (m * sunP);
+      mMax = max(mMax, m);
+    }
+    cover += mMax * sunP;
+  }
+  sum *= uPrismStrength / max(dot(wsum, vec3(1.0 / 3.0)), 1e-4); // 色を足し合わせると白（明るさ 1）になるように
+  if (!lit) return uSunE * sum;
+  float sunHere = cl * cloudTrans(p);
+  float k = uPrismVivid * min(cover, 1.0);
+  vec3 swap = hue / max(dot(hue, vec3(1.0 / 3.0)), 1e-4); // 虹の色（平均の明るさを白に合わせる）
+  return uSunE * (sum + sunHere * k * (swap - vec3(1.0)));
+}
+
+// プリズムで日差しが変わる分（A・B・D。C は日差しそのものを置き換えるので sunLight で扱う）
+vec3 patternLight(vec3 p, vec3 n) {
+  if (uPrismOn < 0.5) return vec3(0.0);
+  if (uPrismPattern < 0.5) return streakLight(p, n);
+  if (uPrismPattern < 1.5) return hungLight(p, n);
+  if (uPrismPattern > 2.5 && uPrismPattern < 3.5) return beamLight(p, n);
+  return vec3(0.0);
+}
+
+// ---- E・F・G 共通：有機的な縁 ----
+// ゆっくり形を変える、なめらかな揺らぎ（-1〜1 くらい）。座標を自分の揺らぎで少しゆがめて、丸みのある不規則な形にする
+float orgNoise(vec2 q, float t) {
+  vec2 w = q + 0.6 * vec2(sin(q.y * 1.7 + t * 0.9), sin(q.x * 1.3 - t * 0.7));
+  return 0.5 * sin(w.x * 2.1 + t) + 0.35 * sin(w.y * 2.7 - 1.3 * t + 1.1) + 0.15 * sin((w.x + w.y) * 4.3 + 0.7 * t);
+}
+// 内側の淡い色（明るさはそのまま、amt で濃さ）
+vec3 pastelTint(vec2 q, float t, float amt) {
+  vec3 h = spectrumPure(fract(0.5 + 0.6 * orgNoise(q, t)));
+  return vec3(1.0) + amt * 0.6 * (h / max(dot(h, vec3(1.0 / 3.0)), 1e-3) - vec3(1.0));
+}
+// 縁の光の割合（色ごと）。sd は縁からの符号つきの距離（中は負）。e = (色の帯の幅, ぼかしの幅, 外へ広がる光の明るさ, 外へ広がる幅)、
+// lk = (色の濃さ, 外へ広がる光の色合い)。中は 1（白）。縁は、色 t ごとに縁の位置を 帯の幅 × (t − 0.5) だけずらして重ねるので虹色の帯になる。
+// 外へは、縁の光が届かない分だけ淡い色の光を足し、外へ広がる幅で消えていく
+vec3 organicEdge(float sd, vec4 e, vec2 lk) {
+  vec3 sum = vec3(0.0), wsum = vec3(0.0);
+  for (int j = 0; j < 7; j++) {
+    float t = (float(j) + 0.5) / 7.0;
+    vec3 c = spectrumPure(t);
+    wsum += c;
+    sum += c * (1.0 - smoothstep(-e.y, e.y, sd + (t - 0.5) * e.x));
+  }
+  vec3 col = sum / wsum;
+  float l = dot(col, vec3(1.0 / 3.0));
+  col = max(vec3(l) + (col - vec3(l)) * lk.x, vec3(0.0));
+  float h = 1.0 - min(max(sd, 0.0) / e.w, 1.0);
+  return col + (e.z * h * h * (1.0 - min(l, 1.0))) * (vec3(0.3) + 0.7 * spectrumPure(lk.y));
+}
+
+// E・F：点 p から日差しの向きに窓の面まで進んだ所の、窓の縁までの符号つきの距離（窓の面の上で測る m、中は負）。q はその窓の面の上の位置。
+// 太陽が窓の外側になければ大きな値。天窓＋左の窓で 2 つが角でつながっているときは、つながっている辺は縁にしない（天井と壁の境目に色の帯が出ないように）
+float windowSd(vec3 p, out vec2 q) {
+  float best = 1e3;
+  q = vec2(0.0);
+  for (int k = 1; k <= 2; k++) {
+    if (k == 2 && uWin2On < 0.5) break;
+    if (dot(uSunDir, k == 2 ? vec3(0.0, 1.0, 0.0) : windowOutward()) <= 0.0) continue;
+    int face = k == 2 ? 2 : uWinFace;
+    float t = planeT(face, p, uSunDir);
+    if (t <= 0.0) continue;
+    vec3 h = p + uSunDir * t;
+    vec2 uv = face == 2 ? h.xz : h.zy;
+    vec4 r = k == 2 ? uWin2Rect : uWinRect;
+    if (uWin2On > 0.5 && uWin2Rect.x <= uRoomMin.x + 1e-3 && uWinRect.w >= uRoomMax.y - 1e-3) {
+      if (k == 1) r.w = 1e3; else r.x = -1e3;
+    }
+    vec2 dd = abs(uv - 0.5 * vec2(r.x + r.y, r.z + r.w)) - 0.5 * vec2(r.y - r.x, r.w - r.z);
+    float sd = length(max(dd, 0.0)) + min(max(dd.x, dd.y), 0.0);
+    if (sd < best) { best = sd; q = uv; }
+  }
+  return best;
+}
+// F：有機的な日だまりの縁。窓の面の上で縁を揺らぎでずらし、縁を虹色の帯にする（ふつうの直射日光の代わり）
+vec3 organicSun(vec3 p, vec3 n) {
+  float cl = dot(n, uSunDir);
+  if (cl <= 0.0 || uSunE.x + uSunE.y + uSunE.z <= 0.0) return vec3(0.0);
+  vec2 q;
+  float sd = windowSd(p, q);
+  if (sd > 1e2) return vec3(0.0);
+  vec2 qs = q / uOrgShape.y;
+  vec3 m = organicEdge(sd + uOrgShape.x * orgNoise(qs, uOrgShape.z), uOrgEdge, uOrgLook);
+  m *= pastelTint(qs * 0.3 + 3.1, uOrgShape.z * 0.5, uOrgShape.w);
+  return uSunE * (cl * cloudTrans(p)) * m;
+}
+
+// H：水のきらめき。窓の面の上の位置で、ゆっくり動く点で区切った網目を作り、網目の線を明るくする（水底に映る光のように）。
+// 赤・緑・青で網目を少しずつずらして読むので線の縁が虹色になり、線のまわりには薄い膜のような虹色をにじませる。日差しに掛ける倍率（色ごと）を返す
+vec2 shimHash(vec2 c) {
+  return fract(sin(vec2(dot(c, vec2(127.1, 311.7)), dot(c, vec2(269.5, 183.3)))) * 43758.5453);
+}
+// x のいちばん近い網目の線までの距離（網目の 1 つ分 = 1）
+float shimCell(vec2 x, float t) {
+  vec2 i = floor(x), f = fract(x);
+  float d1 = 8.0, d2 = 8.0;
+  for (int b = -1; b <= 1; b++) {
+    for (int a = -1; a <= 1; a++) {
+      vec2 g = vec2(float(a), float(b));
+      vec2 r = g + 0.5 + 0.4 * sin(t + 6.2832 * shimHash(i + g)) - f;
+      float d = dot(r, r);
+      if (d < d1) { d2 = d1; d1 = d; } else if (d < d2) d2 = d;
+    }
+  }
+  return sqrt(d2) - sqrt(d1);
+}
+// 線の明るさ（芯と、まわりの淡い光）
+float shimLine(float e, float w) {
+  return exp(-e * e / (w * w)) + 0.25 * exp(-e / (3.0 * w));
+}
+// 色の並び（0〜1）の位置 s の色。選んだ色があればその間をつなぎ、なければ虹の色の範囲から取る
+vec3 shimColorAt(float s) {
+  if (uShimPalN < 1.5) return spectrumPure(mix(uShimColor.y, uShimColor.z, s));
+  float k = clamp(s, 0.0, 1.0) * (uShimPalN - 1.0);
+  int i = int(min(floor(k), uShimPalN - 2.0));
+  return mix(uShimPal[i], uShimPal[i + 1], k - float(i));
+}
+// 色の濃さ（明るさはそのまま）
+vec3 shimSat(vec3 c) {
+  float l = dot(c, vec3(1.0 / 3.0));
+  return max(vec3(l) + (c - vec3(l)) * uShimColor.w, vec3(0.0));
+}
+vec3 shimmer(vec3 p) {
+  vec2 q;
+  if (windowSd(p, q) > 1e2) return vec3(1.0);
+  float t = uShimShape.w, w = uShimShape.y;
+  vec2 x = q / uShimShape.x;
+  x += uShimShape.z * vec2(orgNoise(x * 0.5, t), orgNoise(x * 0.5 + 7.3, 1.1 * t));
+  vec2 dd = uShimLook.z * vec2(0.6, 0.8);
+  float e = shimCell(x, t);
+  // 線の縁：色の数だけ網目をずらして読み、色ごとの線を重ねる（ぴったり重なった所は色の平均、ずれた所は色が分かれる）
+  float nc = uShimColor.x;
+  vec3 sum = vec3(0.0);
+  float wsum = 0.0;
+  for (int j = 0; j < MAX_SHIM_COLORS; j++) {
+    if (float(j) >= nc) break;
+    float s = float(j) / (nc - 1.0);
+    vec3 c = shimColorAt(s);
+    sum += c * shimLine(shimCell(x + (2.0 * s - 1.0) * dd, t), w);
+    wsum += dot(c, vec3(0.2126, 0.7152, 0.0722));
+  }
+  vec3 l = shimSat(sum / max(wsum, 1e-3));
+  // 膜の色：色の並びを行って戻る（端の色から反対の端の色へ飛ばない）
+  vec3 film = shimSat(shimColorAt(abs(2.0 * fract(0.5 * orgNoise(x * 0.4 + 2.7, 0.6 * t) + 2.0 * e) - 1.0)));
+  film /= max(dot(film, vec3(1.0 / 3.0)), 1e-3);
+  vec3 m = (uShimLook.x * uShimBaseCol + uShimLook.y * l * uShimLineCol) * mix(vec3(1.0), film, uShimLook.w * exp(-e / (4.0 * w)));
+  return mix(vec3(1.0), m, uShimOn);
+}
+
+// G：虹のしみ。窓辺の見えない物 i（位置 P）を通った日差しが、日差しの向き d から稜 A のまわりに曲がって進み（向き L）、当たった面にしみを作る。
+// 点 p を L に垂直な面で測った位置を、進んだ距離で広がる半径 R で割り、その向きごとに揺らぐ半径（丸みのある不定形）と比べて縁からの距離にする。
+// 光は広がる分だけ淡くなる。斜めに当たる面では、日差しの向きに伸びた形になる
+vec3 blobLight(vec3 p, vec3 n) {
+  if (uBlobCount < 0.5 || uSunE.x + uSunE.y + uSunE.z <= 0.0) return vec3(0.0);
+  vec3 d = -uSunDir;
+  float r0 = uBlobBeam.x;
+  float reach = 1.0 + uBlobShape.x + 0.5 * abs(uBlobEdge.x) + uBlobEdge.y + (uBlobEdge.z > 0.0 ? uBlobEdge.w : 0.0);
+  vec3 sum = vec3(0.0);
+  for (int i = 0; i < MAX_BLOBS; i++) {
+    if (float(i) >= uBlobCount) break;
+    vec3 P = uBlobPos[i];
+    if (!seesOutside(P, uSunDir)) continue;
+    vec3 A = uBlobAxis[i] - d * dot(uBlobAxis[i], d);
+    if (dot(A, A) < 1e-6) continue;
+    A = normalize(A);
+    vec3 L = d * cos(uBlobBeam.z) + cross(A, d) * sin(uBlobBeam.z);
+    vec3 v = p - P;
+    float s = dot(v, L);
+    if (s <= 0.0) continue;
+    float c = dot(n, -L);
+    if (c <= 0.0) continue;
+    float R = r0 + uBlobBeam.y * s;
+    vec3 w = v - L * s;
+    vec2 xy = vec2(dot(w, A), dot(w, cross(L, A))) / R;
+    float r = length(xy);
+    if (r > reach) continue;
+    float th = atan(xy.y, xy.x + 1e-6);
+    float ph = float(i) * 2.399, t = uBlobShape.y;
+    float rr = 1.0 + uBlobShape.x * (0.5 * sin(2.0 * th + ph + t) + 0.3 * sin(3.0 * th + 1.7 * ph - 0.8 * t) + 0.2 * sin(5.0 * th + 2.3 * ph + 1.3 * t));
+    vec3 m = organicEdge(r - rr, uBlobEdge, uBlobLook) * pastelTint(xy + ph, 0.5 * t, uBlobShape.z);
+    sum += m * ((r0 * r0) / (R * R) * c * cloudTrans(P));
+  }
+  return uSunE * (uBlobBeam.w * sum);
+}
+
+// プリズムで日差しに足す光（A・B・D と G。C と F は日差しそのものを置き換えるので sunLight で扱う）
+vec3 prismLight(vec3 p, vec3 n) {
+  return patternLight(p, n) + blobLight(p, n);
+}
+bool panelOn() { return uPrismOn > 0.5 && uPrismPattern > 1.5 && uPrismPattern < 2.5; }
+vec3 causticRGB(int f, vec3 p, vec3 n) {
+  float c = causticAt(f, p);
+  if (uPrismCaus <= 0.0) return vec3(c);
+  vec3 s = uSunDir - n * dot(uSunDir, n);
+  vec3 d = dot(s, s) > 1e-6 ? normalize(s) : (abs(n.y) > 0.5 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 1.0, 0.0));
+  // 面の縁（隣の面との境目）に近い所は、ずらして読む所が面の外にはみ出すので、色のずれを消していく
+  vec3 q = min(p - uRoomMin, uRoomMax - p) + abs(n) * 1e3;
+  float rim = smoothstep(0.0, max(uPrismFadeM, 0.1), min(q.x, min(q.y, q.z)));
+  return mix(vec3(c), vec3(causticAt(f, p + d * uPrismCaus), c, causticAt(f, p - d * uPrismCaus)), rim);
+}
+// 水盤の底の光の揺らぎ。プリズムのときは、赤・緑・青を日差しの向きに少しずつずらして読む。
+// 色のずれは fade（日なたの奥で 1、日なたと影の境目に近づくと 0）だけ効かせる
+vec3 causticBottomRGB(vec3 b, float fade) {
+  float c = causticBottom(b);
+  if (fade <= 0.0 || uPrismCaus <= 0.0) return vec3(c);
+  vec2 s = uSunDir.xz;
+  vec2 d = (dot(s, s) > 1e-6 ? normalize(s) : vec2(1.0, 0.0)) * uPrismCaus;
+  vec3 rgb = vec3(causticBottom(b + vec3(d.x, 0.0, d.y)), c, causticBottom(b - vec3(d.x, 0.0, d.y)));
+  return mix(vec3(c), rgb, fade);
+}
+// 水面の点 o が、日なたの奥にどれだけ入っているか（0〜1）。o のまわりの半径 uPrismFadeM の輪の 8 点と o で、窓を通して太陽が見えるかを数え、
+// 全部見えれば 1、半分（ちょうど境目）以下なら 0。境目から日なたへ uPrismFadeM くらいの幅で、なめらかに 0 → 1 になる（uPrismFadeM = 0 なら、o だけで決まる）
+float sunInterior(vec3 o) {
+  float v = seesOutside(o, uSunDir) ? 1.0 : 0.0;
+  for (int k = 0; k < 8; k++) {
+    float a = 0.7854 * float(k);
+    if (seesOutside(o + vec3(cos(a), 0.0, sin(a)) * uPrismFadeM, uSunDir)) v += 1.0;
+  }
+  // 水盤の縁（壁ぎわ）でも消す（色ごとにずらして読む所が、水盤の外にはみ出さないように）
+  float rim = min(min(o.x - uRoomMin.x, uRoomMax.x - o.x), min(o.z - uRoomMin.z, uRoomMax.z - o.z));
+  return smoothstep(0.5, 1.0, v / 9.0) * smoothstep(0.0, max(uPrismFadeM, 0.1), rim);
+}
+
 vec3 sunDirect(vec3 p, vec3 n) {
   if (uSunE.x + uSunE.y + uSunE.z <= 0.0) return vec3(0.0);
   float sum = 0.0;
@@ -611,6 +1055,13 @@ vec3 sunDirect(vec3 p, vec3 n) {
     if (c > 0.0 && seesOutside(p, l)) sum += c;
   }
   return sum > 0.0 ? uSunE * (sum / 12.0 * cloudTrans(p)) : vec3(0.0);
+}
+// 画面に出すときの直射日光（プリズムを含む。C のときは、板で曲がった日差しに置き換える）
+vec3 sunLight(vec3 p, vec3 n) {
+  if (panelOn()) return panelLight(p, n) + blobLight(p, n);
+  vec3 sun = uOrgOn > 0.5 ? organicSun(p, n) : sunDirect(p, n);
+  if (uShimOn > 0.0 && sun.x + sun.y + sun.z > 0.0) sun *= shimmer(p);
+  return sun + prismLight(p, n);
 }
 
 // 照り返しの成分を、同じ面の近くの画素どうしでならす
@@ -644,7 +1095,25 @@ vec3 surfaceRadiance(int f, vec3 q, vec3 fallback) {
     vec2 uv = c.xy / c.w * 0.5 + 0.5;
     if (all(greaterThan(uv, vec2(0.0))) && all(lessThan(uv, vec2(1.0)))) ind = texture(uAccum, uv).rgb;
   }
-  return a * ind + a / PI * (sunDirect(q + n * EPS, n) + uSunE * causticAt(f, q) + spotIrradiance(q + n * EPS, n)) + screenLight(f, q, 2.0) + ambientPanel(f, q);
+  return a * ind + a / PI * (sunLight(q + n * EPS, n) + uSunE * causticRGB(f, q, n) + spotIrradiance(q + n * EPS, n)) + screenLight(f, q, 2.0) + ambientPanel(f, q);
+}
+
+// 水盤の底に届く日差し。C（プリズムの板）のときは、板で曲がった日差し（水面の揺らぎは省く）
+// E：水盤の日だまりの縁をずらす、ゆっくり進む大きな波（-1〜1 くらい）。向きの違う 3 つの波を重ね、少しゆがめて丸みを出す
+float waveEdge(vec2 xz) {
+  float k = 6.2832 / uWaveShape.y, t = uWaveShape.z;
+  vec2 q = xz + 0.08 * uWaveShape.y * vec2(sin(xz.y * k * 0.7 + 0.3 * t), sin(xz.x * k * 0.6 - 0.4 * t));
+  return 0.5 * sin(dot(q, vec2(0.8, 0.6)) * k - t) + 0.3 * sin(dot(q, vec2(-0.5, 0.87)) * k * 1.37 - 1.21 * t + 1.3)
+    + 0.2 * sin(dot(q, vec2(0.96, -0.28)) * k * 2.11 - 1.6 * t + 0.4);
+}
+// E・F のときは、光の揺らぎ c を、縁の光の割合 edge（色ごと）で置き換える（日だまりの外へ広がった所は、平らな水面を通った日差しの量 flatSun）
+vec3 bottomSun(vec3 b, float fade, vec3 edge, float flatSun, float inner) {
+  vec3 top = vec3(b.x, EPS, b.z), up = vec3(0.0, 1.0, 0.0);
+  if (panelOn()) return panelLight(top, up) * 0.97 + blobLight(top, up);
+  vec3 c = causticBottomRGB(b, fade);
+  if (uWaveOn > 0.5 || uOrgOn > 0.5) c = mix(vec3(flatSun), c, inner) * edge;
+  if (uShimOn > 0.0 && c.x + c.y + c.z > 0.0) c *= shimmer(top);
+  return uSunE * c + prismLight(top, up);
 }
 
 // 水盤：水面で反射する光と、屈折して底から戻る光を、反射の割合（フレネル）で混ぜる
@@ -656,14 +1125,42 @@ vec3 poolRadiance(vec3 p, vec3 d, vec3 ind) {
   float tb = (-uPoolDepth - p.y) / min(rd.y, -1e-3);
   vec3 b = p + rd * tb;
   vec3 absorb = exp(-WATER_ABS * (tb + uPoolDepth));
-  vec3 lb = vec3(${POOL_ALBEDO.toFixed(3)}) / PI * ((uSunE * causticBottom(b) + PI * ind) * absorb + spotBottom(b) * exp(-WATER_ABS * tb));
+  // 光の揺らぎのにじみ（A〜D）は、日なたと影の境目・水盤の縁で消す。
+  // E：日差しが底の b へ届くときに水面を通った所で、日だまりの縁（窓の縁）からの距離を進む波でずらし、縁の光（虹色の帯と、外へ広がる光）を求める
+  float fade = 0.0, flatSun = 0.0, inner = 1.0;
+  vec3 edge = vec3(1.0);
+  if (uPrismOn > 0.5 && (uPrismCaus > 0.0 || uWaveOn > 0.5 || uOrgOn > 0.5) && uSunE.x + uSunE.y + uSunE.z > 0.0) {
+    vec3 ts = refract(-uSunDir, vec3(0.0, 1.0, 0.0), 1.0 / IOR);
+    vec3 entry = b - ts * (b.y / min(ts.y, -1e-3));
+    vec3 e0 = vec3(entry.x, EPS, entry.z);
+    if (uPrismCaus > 0.0) fade = sunInterior(e0);
+    if (uWaveOn > 0.5 || uOrgOn > 0.5) {
+      vec2 qw;
+      float pd = windowSd(e0, qw);
+      if (uWaveOn > 0.5) edge = organicEdge(pd + uWaveShape.x * waveEdge(entry.xz), uWaveEdge, uWaveLook);
+      else {
+        // F（E がオフのとき）：部屋の面と同じく、窓の面の上の揺らぎで縁をずらす
+        vec2 qs = qw / uOrgShape.y;
+        edge = organicEdge(pd + uOrgShape.x * orgNoise(qs, uOrgShape.z), uOrgEdge, uOrgLook) * pastelTint(qs * 0.3 + 3.1, uOrgShape.z * 0.5, uOrgShape.w);
+      }
+      flatSun = max(uSunDir.y, 0.0) * (1.0 - fresnelWater(uSunDir.y)) * cloudTrans(e0);
+      inner = smoothstep(0.0, -0.15, pd); // 日だまりの縁の近くは、光の揺らぎの画像の縁が見えないよう平らな水面の値に
+    }
+  }
+  vec3 lb = vec3(${POOL_ALBEDO.toFixed(3)}) / PI * ((bottomSun(b, fade, edge, flatSun, inner) + PI * ind) * absorb + spotBottom(b) * exp(-WATER_ABS * tb));
   // 反射：窓の外（空・海と、映り込んだ太陽のきらめき）か、部屋の面
   vec3 rr = reflect(d, n);
   vec3 o = vec3(p.x, EPS, p.z);
   int f2;
   float t2 = exitRoom(o, rr, f2);
   vec3 q = o + rr * t2;
-  vec3 lr = inWindow(f2, q) ? outsideRadiance(q, rr) + uSunE * sunLobe(rr) * cloudTrans(q) : surfaceRadiance(f2, q, ind);
+  vec3 lr;
+  if (inWindow(f2, q)) {
+    // 映り込んだ太陽のきらめき
+    lr = outsideRadiance(q, rr) + uSunE * (sunLobe(rr) * cloudTrans(q));
+  } else {
+    lr = surfaceRadiance(f2, q, ind);
+  }
   lr += spotLamp(o, rr, t2); // 水面に映るライトのきらめき
   return (1.0 - F) * lb + F * lr;
 }
@@ -693,9 +1190,9 @@ void main() {
     if (uPoolOn == 1 && f == 3) { col += poolRadiance(p, d, ind); continue; }
     vec3 n = inwardNormal(f);
     vec3 a = albedo(f, p);
-    col += a * ind + a / PI * (sunDirect(p + n * EPS, n) + uSunE * causticAt(f, p) + spotIrradiance(p + n * EPS, n)) + screenLight(f, p, -1.0) + ambientPanel(f, p);
+    col += a * ind + a / PI * (sunLight(p + n * EPS, n) + uSunE * causticRGB(f, p, n) + spotIrradiance(p + n * EPS, n)) + screenLight(f, p, -1.0) + ambientPanel(f, p);
   }
-  col *= 0.25 * uExposure;
+  col = max(col, vec3(0.0)) * (0.25 * uExposure); // プリズムで白を減らした所が負にならないように
   col = toSrgb(aces(col));
   float nz = fract(sin(dot(px, vec2(12.9898, 78.233))) * 43758.5453) - 0.5;
   fragColor = vec4(col + nz / 255.0, 1.0);

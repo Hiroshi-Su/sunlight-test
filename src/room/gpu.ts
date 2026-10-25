@@ -9,7 +9,7 @@ import { FULLSCREEN_VS, FullscreenPipeline, type Gpu, MipGenerator, configureCan
 import { WGSL_SIMPLEX3 } from '../scenes/shader.ts';
 import { CAUSTIC_FACES, CAUSTIC_SIZE, FLOOR_ALBEDO, POOL_ALBEDO, SCREEN_ALBEDO, SCREEN_IMAGE, WALL_ALBEDO, type CausticPass, type RoomCore, type RoomFrame } from './core.ts';
 import type { RoomRenderer } from './gl.ts';
-import { MAX_SPOTS, type RoomScreenImage } from './model.ts';
+import { MAX_BLOBS, MAX_PRISMS, MAX_SHIM_COLORS, MAX_SHIM_PALETTE, MAX_SPOTS, type RoomScreenImage } from './model.ts';
 import { WATER_ABSORPTION, WATER_IOR, WATER_WGSL } from './water.ts';
 
 const f3 = (n: number): string => n.toFixed(4);
@@ -25,6 +25,10 @@ const IOR = ${WATER_IOR.toFixed(3)};
 const WATER_ABS = vec3f(${WATER_ABSORPTION.map(f3).join(', ')});
 const OUTSIDE = vec3f(0.02); // 部屋の外（カメラが外にあり、部屋に当たらない方向）
 const MAX_SPOTS = ${MAX_SPOTS};
+const MAX_PRISMS = ${MAX_PRISMS};
+const MAX_BLOBS = ${MAX_BLOBS};
+const MAX_SHIM_COLORS = ${MAX_SHIM_COLORS};
+const MAX_SHIM_PALETTE = ${MAX_SHIM_PALETTE};
 
 ${WATER_WGSL}
 
@@ -582,6 +586,377 @@ fn accumAt(q: vec2f) -> vec3f {
 }
 
 // 太陽の円盤の決まった 12 点から、窓を通って届く直射日光（影の縁のぼけは円盤の大きさで決まる）
+// ---- プリズム（画面に出す段階で足す光。src/room/gl.ts と同じ）----
+fn spectrum(t: f32) -> vec3f {
+  let c = clamp(abs(fract(t * 0.8 + vec3f(0.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0) - 1.0, vec3f(0.0), vec3f(1.0));
+  return mix(c, vec3f(0.6), 0.3);
+}
+fn hungLight(p: vec3f, n: vec3f) -> vec3f {
+  if (u.uSunE.x + u.uSunE.y + u.uSunE.z <= 0.0) { return vec3f(0.0); }
+  let d = -u.uSunDir;
+  let cl = dot(n, u.uSunDir);
+  let lit = cl > 0.0 && seesOutside(p, u.uSunDir);
+  let hs = 0.5 * u.uPrismSize;
+  var sum = vec3f(0.0);
+  var shade = 0.0;
+  var cover = 0.0;
+  var hue = vec3f(0.0);
+  for (var i = 0; i < MAX_PRISMS; i++) {
+    if (f32(i) >= u.uPrismCount) { break; }
+    let P = u.uPrismPos[i];
+    if (!seesOutside(P, u.uSunDir)) { continue; }
+    let sunP = cloudTrans(P);
+    let v = p - P;
+    let s = dot(v, d);
+    if (lit && s > 0.0) { let r = length(v - d * s) / hs; shade += exp(-r * r) * sunP; }
+    let D = length(v);
+    if (D < 0.05) { continue; }
+    let uu = v / D;
+    let c = dot(n, -uu);
+    if (c <= 0.0) { continue; }
+    let A0 = normalize(u.uPrismAxis[i] - d * dot(u.uPrismAxis[i], d));
+    let B0 = cross(d, A0);
+    let b = hs / D;
+    let spread = u.uPrismSize / (u.uPrismDisp * D + u.uPrismSize);
+    for (var f = 0; f < 4; f++) {
+      if (f32(f) >= u.uPrismFacets) { break; }
+      let th = 6.2832 * f32(f) / u.uPrismFacets;
+      let A = A0 * cos(th) + B0 * sin(th);
+      let e = cross(A, d);
+      let phi = atan2(dot(uu, e), dot(uu, d)) - u.uPrismDev * (0.75 + 0.25 * f32(f));
+      let inFan = smoothstep(-b, b, phi) * (1.0 - smoothstep(-b, b, phi - u.uPrismDisp));
+      let w = dot(uu, A) * D / hs;
+      let m = inFan * exp(-w * w);
+      if (m <= 1e-4) { continue; }
+      let col = spectrum(clamp(phi / u.uPrismDisp, 0.0, 1.0));
+      sum += col * (2.0 * m * spread * c * sunP / u.uPrismFacets);
+      hue += col * (m * sunP);
+      cover += m * sunP;
+    }
+  }
+  sum *= u.uPrismStrength;
+  // 日なたに落ちた虹は、白い日差しを虹の色に置き換える（src/room/gl.ts と同じ）
+  if (!lit) { return u.uSunE * sum; }
+  let sunHere = cl * cloudTrans(p);
+  let k = u.uPrismVivid * min(cover, 1.0);
+  let swap = hue / max(cover, 1e-4) * 1.6;
+  return u.uSunE * (sum + sunHere * (k * (swap - vec3f(1.0)) - vec3f(min(shade, 1.0) * 0.35)));
+}
+// ---- A：日だまりの中の虹色の筋（src/room/gl.ts と同じ）----
+fn prismHash(c: vec2f) -> vec2f {
+  var q = fract(c.xyx * vec3f(0.1031, 0.1030, 0.0973));
+  q += dot(q, q.yzx + 33.33);
+  return fract((q.xx + q.yz) * q.zy);
+}
+fn streakPattern(q: vec2f) -> vec4f {
+  let s = u.uStreakLen;
+  let cell = s * 1.3;
+  let gi = floor(q / cell);
+  var sum = vec4f(0.0);
+  for (var j = -1; j <= 1; j++) {
+    for (var i = -1; i <= 1; i++) {
+      let c = gi + vec2f(f32(i), f32(j));
+      let h = prismHash(c);
+      let h2 = prismHash(c + 17.0);
+      if (h2.x > u.uStreakAmount) { continue; }
+      let ctr = (c + 0.2 + 0.6 * h) * cell;
+      let ang = u.uStreakAngle + (h2.y - 0.5) * 0.6 + 0.25 * sin(u.uPrismPhase + 6.2832 * h.x);
+      let e = vec2f(cos(ang), sin(ang));
+      let d = q - ctr;
+      let a = dot(d, e) / s + 0.5;
+      let w = dot(d, vec2f(-e.y, e.x)) / (s * 0.25);
+      let m = smoothstep(0.0, 0.2, a) * (1.0 - smoothstep(0.8, 1.0, a)) * exp(-w * w * 3.0);
+      sum += vec4f(spectrum(clamp(a, 0.0, 1.0)), 1.0) * m;
+    }
+  }
+  return sum;
+}
+fn streakLight(p: vec3f, n: vec3f) -> vec3f {
+  if (u.uSunE.x + u.uSunE.y + u.uSunE.z <= 0.0) { return vec3f(0.0); }
+  let c = dot(n, u.uSunDir);
+  if (c <= 0.0 || !seesOutside(p, u.uSunDir)) { return vec3f(0.0); }
+  let bs = basis(u.uSunDir);
+  let pat = streakPattern(vec2f(dot(p, bs.t), dot(p, bs.b)));
+  let delta = pat.rgb * (2.0 * u.uPrismStrength) - vec3f(min(pat.a, 1.0) * min(u.uPrismStrength, 1.0));
+  return u.uSunE * (c * cloudTrans(p)) * delta;
+}
+
+// ---- C：窓をプリズムの板で覆う（src/room/gl.ts と同じ）----
+const PANEL_SAMPLES = 16;
+fn spectrumPure(t: f32) -> vec3f {
+  return clamp(abs(fract(t * 0.8 + vec3f(0.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0) - 1.0, vec3f(0.0), vec3f(1.0));
+}
+fn panelLight(p: vec3f, n: vec3f) -> vec3f {
+  if (u.uSunE.x + u.uSunE.y + u.uSunE.z <= 0.0) { return vec3f(0.0); }
+  var sum = vec3f(0.0);
+  var wsum = vec3f(0.0);
+  for (var j = 0; j < PANEL_SAMPLES; j++) { wsum += spectrumPure((f32(j) + 0.5) / f32(PANEL_SAMPLES)); }
+  for (var k = 1; k <= 2; k++) {
+    if (k == 2 && u.uWin2On < 0.5) { break; }
+    if (dot(u.uSunDir, select(windowOutward(), vec3f(0.0, 1.0, 0.0), k == 2)) <= 0.0) { continue; }
+    let face = select(i32(u.uWinFace), 2, k == 2);
+    var A = vec3f(0.0, sin(u.uPanelRidge), cos(u.uPanelRidge));
+    if (face == 2) { A = vec3f(cos(u.uPanelRidge), 0.0, sin(u.uPanelRidge)); }
+    let axs = cross(A, u.uSunDir);
+    let ad = dot(A, u.uSunDir);
+    for (var j = 0; j < PANEL_SAMPLES; j++) {
+      let t = (f32(j) + 0.5) / f32(PANEL_SAMPLES);
+      let ang = u.uPrismDev + u.uPrismDisp * t;
+      let L = u.uSunDir * cos(ang) + axs * sin(ang) + A * ad * (1.0 - cos(ang));
+      let c = dot(n, L);
+      if (c <= 0.0) { continue; }
+      let e = exitRoom(p, L);
+      let q = p + L * e.t;
+      var hit = inWindow1(e.face, q);
+      if (k == 2) { hit = inWindow2(e.face, q); }
+      if (hit) { sum += spectrumPure(t) * c; }
+    }
+  }
+  return u.uSunE * (cloudTrans(p) * u.uPrismStrength) * sum / wsum;
+}
+
+// ---- D：日差しの先の虹の筋（窓ガラスのプリズムから出る細い光の束）----
+const BEAM_SAMPLES = 7;
+fn beamLight(p: vec3f, n: vec3f) -> vec3f {
+  if (u.uSunE.x + u.uSunE.y + u.uSunE.z <= 0.0) { return vec3f(0.0); }
+  let d = -u.uSunDir;
+  let cl = dot(n, u.uSunDir);
+  let lit = cl > 0.0 && seesOutside(p, u.uSunDir);
+  let r0 = 0.5 * u.uPrismSize;
+  var wsum = vec3f(0.0);
+  for (var j = 0; j < BEAM_SAMPLES; j++) { wsum += spectrumPure((f32(j) + 0.5) / f32(BEAM_SAMPLES)); }
+  var sum = vec3f(0.0);
+  var hue = vec3f(0.0);
+  var cover = 0.0;
+  for (var i = 0; i < MAX_PRISMS; i++) {
+    if (f32(i) >= u.uPrismCount) { break; }
+    let P = u.uPrismPos[i];
+    if (!seesOutside(P, u.uSunDir)) { continue; }
+    var A = u.uPrismAxis[i] - d * dot(u.uPrismAxis[i], d);
+    if (dot(A, A) < 1e-6) { continue; }
+    A = normalize(A);
+    let e = cross(A, d);
+    let v = p - P;
+    let sunP = cloudTrans(P);
+    var mMax = 0.0;
+    for (var j = 0; j < BEAM_SAMPLES; j++) {
+      let t = (f32(j) + 0.5) / f32(BEAM_SAMPLES);
+      let ang = u.uPrismDev + u.uPrismDisp * t;
+      let L = d * cos(ang) + e * sin(ang);
+      let s = dot(v, L);
+      if (s <= 0.0) { continue; }
+      let c = dot(n, -L);
+      if (c <= 0.0) { continue; }
+      let R = r0 + u.uBeamBlur * s;
+      let w = v - L * s;
+      let m = exp(-2.0 * dot(w, w) / (R * R));
+      if (m <= 1e-4) { continue; }
+      let col = spectrumPure(t);
+      sum += col * (m * (r0 * r0) / (R * R) * c * sunP);
+      hue += col * (m * sunP);
+      mMax = max(mMax, m);
+    }
+    cover += mMax * sunP;
+  }
+  sum *= u.uPrismStrength / max(dot(wsum, vec3f(1.0 / 3.0)), 1e-4);
+  if (!lit) { return u.uSunE * sum; }
+  let sunHere = cl * cloudTrans(p);
+  let k = u.uPrismVivid * min(cover, 1.0);
+  let swap = hue / max(dot(hue, vec3f(1.0 / 3.0)), 1e-4);
+  return u.uSunE * (sum + sunHere * k * (swap - vec3f(1.0)));
+}
+
+fn patternLight(p: vec3f, n: vec3f) -> vec3f {
+  if (u.uPrismOn < 0.5) { return vec3f(0.0); }
+  if (u.uPrismPattern < 0.5) { return streakLight(p, n); }
+  if (u.uPrismPattern < 1.5) { return hungLight(p, n); }
+  if (u.uPrismPattern > 2.5 && u.uPrismPattern < 3.5) { return beamLight(p, n); }
+  return vec3f(0.0);
+}
+
+// ---- E・F・G 共通：有機的な縁（src/room/gl.ts と同じ）----
+fn orgNoise(q: vec2f, t: f32) -> f32 {
+  let w = q + 0.6 * vec2f(sin(q.y * 1.7 + t * 0.9), sin(q.x * 1.3 - t * 0.7));
+  return 0.5 * sin(w.x * 2.1 + t) + 0.35 * sin(w.y * 2.7 - 1.3 * t + 1.1) + 0.15 * sin((w.x + w.y) * 4.3 + 0.7 * t);
+}
+fn pastelTint(q: vec2f, t: f32, amt: f32) -> vec3f {
+  let h = spectrumPure(fract(0.5 + 0.6 * orgNoise(q, t)));
+  return vec3f(1.0) + amt * 0.6 * (h / max(dot(h, vec3f(1.0 / 3.0)), 1e-3) - vec3f(1.0));
+}
+fn organicEdge(sd: f32, e: vec4f, lk: vec2f) -> vec3f {
+  var sum = vec3f(0.0);
+  var wsum = vec3f(0.0);
+  for (var j = 0; j < 7; j++) {
+    let t = (f32(j) + 0.5) / 7.0;
+    let c = spectrumPure(t);
+    wsum += c;
+    sum += c * (1.0 - smoothstep(-e.y, e.y, sd + (t - 0.5) * e.x));
+  }
+  var col = sum / wsum;
+  let l = dot(col, vec3f(1.0 / 3.0));
+  col = max(vec3f(l) + (col - vec3f(l)) * lk.x, vec3f(0.0));
+  let h = 1.0 - min(max(sd, 0.0) / e.w, 1.0);
+  return col + (e.z * h * h * (1.0 - min(l, 1.0))) * (vec3f(0.3) + 0.7 * spectrumPure(lk.y));
+}
+// F：窓の縁までの符号つきの距離（窓の面の上、中は負）と、窓の面の上の位置（xy = 位置、z = 距離）
+fn windowSd(p: vec3f) -> vec3f {
+  var best = vec3f(0.0, 0.0, 1e3);
+  for (var k = 1; k <= 2; k++) {
+    if (k == 2 && u.uWin2On < 0.5) { break; }
+    if (dot(u.uSunDir, select(windowOutward(), vec3f(0.0, 1.0, 0.0), k == 2)) <= 0.0) { continue; }
+    let face = select(i32(u.uWinFace), 2, k == 2);
+    let t = planeT(face, p, u.uSunDir);
+    if (t <= 0.0) { continue; }
+    let h = p + u.uSunDir * t;
+    let uv = select(h.zy, h.xz, face == 2);
+    var r = select(u.uWinRect, u.uWin2Rect, k == 2);
+    if (u.uWin2On > 0.5 && u.uWin2Rect.x <= u.uRoomMin.x + 1e-3 && u.uWinRect.w >= u.uRoomMax.y - 1e-3) {
+      if (k == 1) { r.w = 1e3; } else { r.x = -1e3; }
+    }
+    let dd = abs(uv - 0.5 * vec2f(r.x + r.y, r.z + r.w)) - 0.5 * vec2f(r.y - r.x, r.w - r.z);
+    let sd = length(max(dd, vec2f(0.0))) + min(max(dd.x, dd.y), 0.0);
+    if (sd < best.z) { best = vec3f(uv, sd); }
+  }
+  return best;
+}
+fn organicSun(p: vec3f, n: vec3f) -> vec3f {
+  let cl = dot(n, u.uSunDir);
+  if (cl <= 0.0 || u.uSunE.x + u.uSunE.y + u.uSunE.z <= 0.0) { return vec3f(0.0); }
+  let w = windowSd(p);
+  if (w.z > 1e2) { return vec3f(0.0); }
+  let qs = w.xy / u.uOrgShape.y;
+  var m = organicEdge(w.z + u.uOrgShape.x * orgNoise(qs, u.uOrgShape.z), u.uOrgEdge, u.uOrgLook);
+  m *= pastelTint(qs * 0.3 + 3.1, u.uOrgShape.z * 0.5, u.uOrgShape.w);
+  return u.uSunE * (cl * cloudTrans(p)) * m;
+}
+// H：水のきらめき（src/room/gl.ts と同じ）
+fn shimHash(c: vec2f) -> vec2f {
+  return fract(sin(vec2f(dot(c, vec2f(127.1, 311.7)), dot(c, vec2f(269.5, 183.3)))) * 43758.5453);
+}
+fn shimCell(x: vec2f, t: f32) -> f32 {
+  let i = floor(x);
+  let f = fract(x);
+  var d1 = 8.0;
+  var d2 = 8.0;
+  for (var b = -1; b <= 1; b++) {
+    for (var a = -1; a <= 1; a++) {
+      let g = vec2f(f32(a), f32(b));
+      let r = g + 0.5 + 0.4 * sin(t + 6.2832 * shimHash(i + g)) - f;
+      let d = dot(r, r);
+      if (d < d1) { d2 = d1; d1 = d; } else if (d < d2) { d2 = d; }
+    }
+  }
+  return sqrt(d2) - sqrt(d1);
+}
+fn shimLine(e: f32, w: f32) -> f32 {
+  return exp(-e * e / (w * w)) + 0.25 * exp(-e / (3.0 * w));
+}
+fn shimColorAt(s: f32) -> vec3f {
+  if (u.uShimPalN < 1.5) { return spectrumPure(mix(u.uShimColor.y, u.uShimColor.z, s)); }
+  let k = clamp(s, 0.0, 1.0) * (u.uShimPalN - 1.0);
+  let i = i32(min(floor(k), u.uShimPalN - 2.0));
+  return mix(u.uShimPal[i], u.uShimPal[i + 1], k - f32(i));
+}
+fn shimSat(c: vec3f) -> vec3f {
+  let l = dot(c, vec3f(1.0 / 3.0));
+  return max(vec3f(l) + (c - vec3f(l)) * u.uShimColor.w, vec3f(0.0));
+}
+fn shimmer(p: vec3f) -> vec3f {
+  let ws = windowSd(p);
+  if (ws.z > 1e2) { return vec3f(1.0); }
+  let t = u.uShimShape.w;
+  let w = u.uShimShape.y;
+  var x = ws.xy / u.uShimShape.x;
+  x += u.uShimShape.z * vec2f(orgNoise(x * 0.5, t), orgNoise(x * 0.5 + 7.3, 1.1 * t));
+  let dd = u.uShimLook.z * vec2f(0.6, 0.8);
+  let e = shimCell(x, t);
+  let nc = u.uShimColor.x;
+  var sum = vec3f(0.0);
+  var wsum = 0.0;
+  for (var j = 0; j < MAX_SHIM_COLORS; j++) {
+    if (f32(j) >= nc) { break; }
+    let s = f32(j) / (nc - 1.0);
+    let c = shimColorAt(s);
+    sum += c * shimLine(shimCell(x + (2.0 * s - 1.0) * dd, t), w);
+    wsum += dot(c, vec3f(0.2126, 0.7152, 0.0722));
+  }
+  let l = shimSat(sum / max(wsum, 1e-3));
+  var film = shimSat(shimColorAt(abs(2.0 * fract(0.5 * orgNoise(x * 0.4 + 2.7, 0.6 * t) + 2.0 * e) - 1.0)));
+  film /= max(dot(film, vec3f(1.0 / 3.0)), 1e-3);
+  let m = (u.uShimLook.x * u.uShimBaseCol + u.uShimLook.y * l * u.uShimLineCol) * mix(vec3f(1.0), film, u.uShimLook.w * exp(-e / (4.0 * w)));
+  return mix(vec3f(1.0), m, u.uShimOn);
+}
+// G：虹のしみ（src/room/gl.ts と同じ）
+fn blobLight(p: vec3f, n: vec3f) -> vec3f {
+  if (u.uBlobCount < 0.5 || u.uSunE.x + u.uSunE.y + u.uSunE.z <= 0.0) { return vec3f(0.0); }
+  let d = -u.uSunDir;
+  let r0 = u.uBlobBeam.x;
+  let reach = 1.0 + u.uBlobShape.x + 0.5 * abs(u.uBlobEdge.x) + u.uBlobEdge.y + select(0.0, u.uBlobEdge.w, u.uBlobEdge.z > 0.0);
+  var sum = vec3f(0.0);
+  for (var i = 0; i < MAX_BLOBS; i++) {
+    if (f32(i) >= u.uBlobCount) { break; }
+    let P = u.uBlobPos[i];
+    if (!seesOutside(P, u.uSunDir)) { continue; }
+    var A = u.uBlobAxis[i] - d * dot(u.uBlobAxis[i], d);
+    if (dot(A, A) < 1e-6) { continue; }
+    A = normalize(A);
+    let L = d * cos(u.uBlobBeam.z) + cross(A, d) * sin(u.uBlobBeam.z);
+    let v = p - P;
+    let s = dot(v, L);
+    if (s <= 0.0) { continue; }
+    let c = dot(n, -L);
+    if (c <= 0.0) { continue; }
+    let R = r0 + u.uBlobBeam.y * s;
+    let w = v - L * s;
+    let xy = vec2f(dot(w, A), dot(w, cross(L, A))) / R;
+    let r = length(xy);
+    if (r > reach) { continue; }
+    let th = atan2(xy.y, xy.x + 1e-6);
+    let ph = f32(i) * 2.399;
+    let t = u.uBlobShape.y;
+    let rr = 1.0 + u.uBlobShape.x * (0.5 * sin(2.0 * th + ph + t) + 0.3 * sin(3.0 * th + 1.7 * ph - 0.8 * t) + 0.2 * sin(5.0 * th + 2.3 * ph + 1.3 * t));
+    let m = organicEdge(r - rr, u.uBlobEdge, u.uBlobLook) * pastelTint(xy + ph, 0.5 * t, u.uBlobShape.z);
+    sum += m * ((r0 * r0) / (R * R) * c * cloudTrans(P));
+  }
+  return u.uSunE * (u.uBlobBeam.w * sum);
+}
+
+// プリズムで日差しに足す光（A・B・D と G。C と F は日差しそのものを置き換えるので sunLight で扱う）
+fn prismLight(p: vec3f, n: vec3f) -> vec3f {
+  return patternLight(p, n) + blobLight(p, n);
+}
+fn panelOn() -> bool { return u.uPrismOn > 0.5 && u.uPrismPattern > 1.5 && u.uPrismPattern < 2.5; }
+
+fn causticRGB(f: i32, p: vec3f, n: vec3f) -> vec3f {
+  let c = causticAt(f, p);
+  if (u.uPrismCaus <= 0.0) { return vec3f(c); }
+  let s = u.uSunDir - n * dot(u.uSunDir, n);
+  var d = select(vec3f(0.0, 1.0, 0.0), vec3f(1.0, 0.0, 0.0), abs(n.y) > 0.5);
+  if (dot(s, s) > 1e-6) { d = normalize(s); }
+  let q = min(p - u.uRoomMin, u.uRoomMax - p) + abs(n) * 1e3;
+  let rim = smoothstep(0.0, max(u.uPrismFadeM, 0.1), min(q.x, min(q.y, q.z)));
+  return mix(vec3f(c), vec3f(causticAt(f, p + d * u.uPrismCaus), c, causticAt(f, p - d * u.uPrismCaus)), rim);
+}
+fn causticBottomRGB(b: vec3f, fade: f32) -> vec3f {
+  let c = causticBottom(b);
+  if (fade <= 0.0 || u.uPrismCaus <= 0.0) { return vec3f(c); }
+  let s = u.uSunDir.xz;
+  var d = vec2f(1.0, 0.0);
+  if (dot(s, s) > 1e-6) { d = normalize(s); }
+  d *= u.uPrismCaus;
+  let rgb = vec3f(causticBottom(b + vec3f(d.x, 0.0, d.y)), c, causticBottom(b - vec3f(d.x, 0.0, d.y)));
+  return mix(vec3f(c), rgb, fade);
+}
+fn sunInterior(o: vec3f) -> f32 {
+  var v = select(0.0, 1.0, seesOutside(o, u.uSunDir));
+  for (var k = 0; k < 8; k++) {
+    let a = 0.7854 * f32(k);
+    if (seesOutside(o + vec3f(cos(a), 0.0, sin(a)) * u.uPrismFadeM, u.uSunDir)) { v += 1.0; }
+  }
+  let rim = min(min(o.x - u.uRoomMin.x, u.uRoomMax.x - o.x), min(o.z - u.uRoomMin.z, u.uRoomMax.z - o.z));
+  return smoothstep(0.5, 1.0, v / 9.0) * smoothstep(0.0, max(u.uPrismFadeM, 0.1), rim);
+}
+
 fn sunDirect(p: vec3f, n: vec3f) -> vec3f {
   if (u.uSunE.x + u.uSunE.y + u.uSunE.z <= 0.0) { return vec3f(0.0); }
   var sum = 0.0;
@@ -593,6 +968,14 @@ fn sunDirect(p: vec3f, n: vec3f) -> vec3f {
   }
   if (sum > 0.0) { return u.uSunE * (sum / 12.0 * cloudTrans(p)); }
   return vec3f(0.0);
+}
+// 画面に出すときの直射日光（プリズムを含む。C のときは、板で曲がった日差しに置き換える）
+fn sunLight(p: vec3f, n: vec3f) -> vec3f {
+  if (panelOn()) { return panelLight(p, n) + blobLight(p, n); }
+  var sun: vec3f;
+  if (u.uOrgOn > 0.5) { sun = organicSun(p, n); } else { sun = sunDirect(p, n); }
+  if (u.uShimOn > 0.0 && sun.x + sun.y + sun.z > 0.0) { sun *= shimmer(p); }
+  return sun + prismLight(p, n);
 }
 
 // 照り返しの成分を、同じ面の近くの画素どうしでならす
@@ -628,7 +1011,26 @@ fn surfaceRadiance(f: i32, q: vec3f, fallback: vec3f) -> vec3f {
     let uv = c.xy / c.w * 0.5 + 0.5;
     if (all(uv > vec2f(0.0)) && all(uv < vec2f(1.0))) { ind = accumAt(uv * u.uRes); }
   }
-  return a * ind + a / PI * (sunDirect(q + n * EPS, n) + u.uSunE * causticAt(f, q) + spotIrradiance(q + n * EPS, n)) + screenLight(f, q, 2.0) + ambientPanel(f, q);
+  return a * ind + a / PI * (sunLight(q + n * EPS, n) + u.uSunE * causticRGB(f, q, n) + spotIrradiance(q + n * EPS, n)) + screenLight(f, q, 2.0) + ambientPanel(f, q);
+}
+
+// 水盤の底に届く日差し。C（プリズムの板）のときは、板で曲がった日差し（水面の揺らぎは省く）
+// E：日だまりの縁をずらす、進む波（src/room/gl.ts と同じ）
+fn waveEdge(xz: vec2f) -> f32 {
+  let k = 6.2832 / u.uWaveShape.y;
+  let t = u.uWaveShape.z;
+  let q = xz + 0.08 * u.uWaveShape.y * vec2f(sin(xz.y * k * 0.7 + 0.3 * t), sin(xz.x * k * 0.6 - 0.4 * t));
+  return 0.5 * sin(dot(q, vec2f(0.8, 0.6)) * k - t) + 0.3 * sin(dot(q, vec2f(-0.5, 0.87)) * k * 1.37 - 1.21 * t + 1.3)
+    + 0.2 * sin(dot(q, vec2f(0.96, -0.28)) * k * 2.11 - 1.6 * t + 0.4);
+}
+fn bottomSun(b: vec3f, fade: f32, edge: vec3f, flatSun: f32, inner: f32) -> vec3f {
+  let top = vec3f(b.x, EPS, b.z);
+  let up = vec3f(0.0, 1.0, 0.0);
+  if (panelOn()) { return panelLight(top, up) * 0.97 + blobLight(top, up); }
+  var c = causticBottomRGB(b, fade);
+  if (u.uWaveOn > 0.5 || u.uOrgOn > 0.5) { c = mix(vec3f(flatSun), c, inner) * edge; }
+  if (u.uShimOn > 0.0 && c.x + c.y + c.z > 0.0) { c *= shimmer(top); }
+  return u.uSunE * c + prismLight(top, up);
 }
 
 // 水盤：水面で反射する光と、屈折して底から戻る光を、反射の割合（フレネル）で混ぜる
@@ -639,13 +1041,37 @@ fn poolRadiance(p: vec3f, d: vec3f, ind: vec3f) -> vec3f {
   let tb = (-u.uPoolDepth - p.y) / min(rd.y, -1e-3);
   let b = p + rd * tb;
   let absorb = exp(-WATER_ABS * (tb + u.uPoolDepth));
-  let lb = vec3f(${POOL_ALBEDO.toFixed(3)}) / PI * ((u.uSunE * causticBottom(b) + PI * ind) * absorb + spotBottom(b) * exp(-WATER_ABS * tb));
+  // 光の揺らぎのにじみ（A〜D）と、E の波で揺れる縁（src/room/gl.ts と同じ）
+  var fade = 0.0;
+  var flatSun = 0.0;
+  var inner = 1.0;
+  var edge = vec3f(1.0);
+  if (u.uPrismOn > 0.5 && (u.uPrismCaus > 0.0 || u.uWaveOn > 0.5 || u.uOrgOn > 0.5) && u.uSunE.x + u.uSunE.y + u.uSunE.z > 0.0) {
+    let ts = refract(-u.uSunDir, vec3f(0.0, 1.0, 0.0), 1.0 / IOR);
+    let entry = b - ts * (b.y / min(ts.y, -1e-3));
+    let e0 = vec3f(entry.x, EPS, entry.z);
+    if (u.uPrismCaus > 0.0) { fade = sunInterior(e0); }
+    if (u.uWaveOn > 0.5 || u.uOrgOn > 0.5) {
+      let w = windowSd(e0);
+      let pd = w.z;
+      if (u.uWaveOn > 0.5) { edge = organicEdge(pd + u.uWaveShape.x * waveEdge(entry.xz), u.uWaveEdge, u.uWaveLook); }
+      else {
+        let qs = w.xy / u.uOrgShape.y;
+        edge = organicEdge(pd + u.uOrgShape.x * orgNoise(qs, u.uOrgShape.z), u.uOrgEdge, u.uOrgLook) * pastelTint(qs * 0.3 + 3.1, u.uOrgShape.z * 0.5, u.uOrgShape.w);
+      }
+      flatSun = max(u.uSunDir.y, 0.0) * (1.0 - fresnelWater(u.uSunDir.y)) * cloudTrans(e0);
+      inner = smoothstep(0.0, -0.15, pd);
+    }
+  }
+  let lb = vec3f(${POOL_ALBEDO.toFixed(3)}) / PI * ((bottomSun(b, fade, edge, flatSun, inner) + PI * ind) * absorb + spotBottom(b) * exp(-WATER_ABS * tb));
   let rr = reflect(d, n);
   let o = vec3f(p.x, EPS, p.z);
   let e = exitRoom(o, rr);
   let q = o + rr * e.t;
   var lr: vec3f;
-  if (inWindow(e.face, q)) { lr = outsideRadiance(q, rr) + u.uSunE * sunLobe(rr) * cloudTrans(q); }
+  if (inWindow(e.face, q)) {
+    lr = outsideRadiance(q, rr) + u.uSunE * (sunLobe(rr) * cloudTrans(q));
+  }
   else { lr = surfaceRadiance(e.face, q, ind); }
   lr += spotLamp(o, rr, e.t); // 水面に映るライトのきらめき
   return (1.0 - F) * lb + F * lr;
@@ -681,9 +1107,9 @@ ${FULLSCREEN_VS}
     if (u.uPoolOn > 0.5 && h.face == 3) { col += poolRadiance(h.p, h.dir, ind); continue; }
     let n = inwardNormal(h.face);
     let a = albedo(h.face, h.p);
-    col += a * ind + a / PI * (sunDirect(h.p + n * EPS, n) + u.uSunE * causticAt(h.face, h.p) + spotIrradiance(h.p + n * EPS, n)) + screenLight(h.face, h.p, -1.0) + ambientPanel(h.face, h.p);
+    col += a * ind + a / PI * (sunLight(h.p + n * EPS, n) + u.uSunE * causticRGB(h.face, h.p, n) + spotIrradiance(h.p + n * EPS, n)) + screenLight(h.face, h.p, -1.0) + ambientPanel(h.face, h.p);
   }
-  col *= 0.25 * u.uExposure;
+  col = max(col, vec3f(0.0)) * (0.25 * u.uExposure); // プリズムで白を減らした所が負にならないように
   col = toSrgb(aces(col));
   let nz = fract(sin(dot(px, vec2f(12.9898, 78.233))) * 43758.5453) - 0.5;
   return vec4f(col + nz / 255.0, 1.0);

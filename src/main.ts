@@ -16,7 +16,7 @@ import { el } from './ui/dom.ts';
 import { mountVerify } from './ui/verify.ts';
 import { formatBench, formatPerf, gpuTotalMs } from './ui/perf.ts';
 import { mountModeSwitch } from './ui/mode-switch.ts';
-import { mountRoomUi } from './ui/room.ts';
+import { type VenuePreset, mountRoomUi } from './ui/room.ts';
 import { TrailLayer } from './room/trails.ts';
 import { mountVisuals } from './ui/visuals.ts';
 
@@ -149,6 +149,9 @@ const rebuildRoom = (): void => {
   room = buildRoom(view);
   if (roomUi) room.setGuides(roomUi.guides);
 };
+// 会場の値（パース合わせの出発点）。非公開の会場のデータ（src/private/site/）があるときだけ読む。ないときは「会場の値を入れる」を出さない
+const loadVenueFit = Object.values(import.meta.glob<{ venueRoomPreset: () => VenuePreset }>('./private/site/venue-fit.ts'))[0];
+const venuePreset = mode === 'room' && loadVenueFit ? (await loadVenueFit()).venueRoomPreset() : null;
 const roomUi = mode === 'room'
   ? mountRoomUi(clock, roomEntry.room, roomEntry.window, site.windowSide, bridge ? bridge.room : await loadRoomSettingsInBrowser(), {
     onWindowSide: (side) => { roomSite = withWindowSide(site, side); rebuildRoom(); },
@@ -158,6 +161,7 @@ const roomUi = mode === 'room'
     onCalibration: (c) => room?.setCalibration(c),
     onGuides: (g) => room?.setGuides(g),
     save: saveRoomSettings,
+    venuePreset,
   })
   : null;
 if (roomUi) roomSite = withWindowSide(site, roomUi.side);

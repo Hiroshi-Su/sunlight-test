@@ -6,7 +6,7 @@ import { type WindowSide, wallWindowSide } from '../config.ts';
 import { type RGB, kelvinToRgb } from '../palette.ts';
 import { DriftBlend } from '../scenes/shader.ts';
 import { SUN_ANGULAR_RADIUS_DEG, directSunFactor, skyBrightness } from './daylight.ts';
-import { MAX_SPOTS, type RoomGeometry, type RoomInput, type RoomRenderSettings, type RoomScreenImage, type SpotLight, cloudFlowDir, moonDirection, moonWeight, spotPose, spotWeight, toThree, windowRect } from './model.ts';
+import { MAX_BLOBS, MAX_PRISMS, MAX_SHIM_COLORS, MAX_SHIM_PALETTE, MAX_SPOTS, PRISM_PATTERNS, type OrganicLook, type PrismMotion, type RoomGeometry, type RoomInput, type RoomRenderSettings, type RoomScreenImage, type SpotLight, cloudFlowDir, moonDirection, moonWeight, spotPose, spotWeight, toThree, windowRect } from './model.ts';
 import { wavePhases } from './water.ts';
 
 // palette.ts の色は sRGB 表記の 0〜1。光の計算は線形の値で行う
@@ -44,6 +44,8 @@ export const SCREEN_IMAGE = { width: 3840, height: 1080 };
 const CLOUD_CONTRAST = 1.7;
 // 1 つ目の窓の面。天窓＋左の窓のときは、1 つ目が左の壁、2 つ目（uWin2Rect）が天窓
 const WINDOW_FACE: Record<WindowSide, number> = { right: 0, left: 1, ceiling: 2, 'ceiling-left': 1 };
+// 光の揺らぎのにじみ（と E の視線の屈折のずれ）を、日なたと影の境目・面の縁で消す幅（m）
+const PRISM_EDGE_FADE_M = 0.3;
 
 /** 水面の光の揺らぎを 1 回描く（水面の網目 1 枚 × 届く先の面 1 つ） */
 export interface CausticPass {
@@ -74,6 +76,12 @@ export function hexToRgb(hex: string): RGB {
   return [((v >> 16) & 255) / 255, ((v >> 8) & 255) / 255, (v & 255) / 255];
 }
 
+/** 色合いだけを残す（明るさ（輝度）を 1 にする。真っ黒なら白） */
+const unitLum = (c: THREE.Vector3): THREE.Vector3 => {
+  const lum = 0.2126 * c.x + 0.7152 * c.y + 0.0722 * c.z;
+  return lum > 1e-4 ? c.multiplyScalar(1 / lum) : new THREE.Vector3(1, 1, 1);
+};
+
 /** スポットライトの色（線形）。明るさの目盛りをそろえるため、色を変えても明るさ（輝度）は 1 にする */
 export function spotColor(light: SpotLight): THREE.Vector3 {
   const c = linear(light.colorMode === 'color' ? hexToRgb(light.color) : kelvinToRgb(light.kelvin));
@@ -90,6 +98,14 @@ export class RoomCore {
   readonly windowSide: WindowSide;
   readonly room: RoomGeometry;
   readonly spp = samplesPerPixel();
+  /** プリズムが回る角度の進み（ラジアン） */
+  private prismPhase = 0;
+  /** 風で揺れるときの揺れの進み（ラジアン。風が強いほど速く進む） */
+  private prismWindPhase = 0;
+  private wavePhase = 0;
+  private orgPhase = 0;
+  private blobPhase = 0;
+  private shimPhase = 0;
   /** 水面の網目の細かさ（網目の大きさは、光の揺らぎの画像の画素の 2 倍程度。小さすぎると描き漏れが出る） */
   readonly poolGridSegs: [number, number];
   readonly seaGridSegs: [number, number] = [220, 220];
@@ -183,6 +199,49 @@ export class RoomCore {
       uCloudOffA: { value: new THREE.Vector3() },
       uCloudOffB: { value: new THREE.Vector3() },
       uCloudBlend: { value: 0 },
+      uPrismOn: { value: 0 },
+      uPrismPattern: { value: 1 },
+      uPrismPhase: { value: 0 },
+      uStreakAmount: { value: 0.8 },
+      uStreakLen: { value: 1.2 },
+      uStreakAngle: { value: 0 },
+      uPanelRidge: { value: 0 },
+      uPrismCount: { value: 0 },
+      uPrismPos: { value: Array.from({ length: MAX_PRISMS }, () => new THREE.Vector3()) },
+      uPrismAxis: { value: Array.from({ length: MAX_PRISMS }, () => new THREE.Vector3(1, 0, 0)) },
+      uPrismStrength: { value: 1 },
+      uPrismSize: { value: 0.08 },
+      uPrismDev: { value: 0.5 },
+      uPrismDisp: { value: 0.1 },
+      uPrismVivid: { value: 1 },
+      uPrismFacets: { value: 3 },
+      uPrismCaus: { value: 0 },
+      uBeamBlur: { value: 0.02 },
+      uPrismFadeM: { value: 0.3 },
+      // E・F・G の縁の見え方：Edge = (色の帯の幅, ぼかしの幅, 外へ広がる光の明るさ, 外へ広がる幅)、Look = (色の濃さ, 外へ広がる光の色合い)
+      uWaveOn: { value: 0 },
+      uWaveEdge: { value: new THREE.Vector4(0.15, 0.04, 0.3, 0.5) },
+      uWaveLook: { value: new THREE.Vector2(1, 0.6) },
+      uWaveShape: { value: new THREE.Vector3(0.12, 1.2, 0) },   // 縁が揺れる大きさ（m）・波の長さ（m）・波の進み（ラジアン）
+      uOrgOn: { value: 0 },
+      uOrgEdge: { value: new THREE.Vector4(0.08, 0.02, 0.25, 0.3) },
+      uOrgLook: { value: new THREE.Vector2(1, 0.8) },
+      uOrgShape: { value: new THREE.Vector4(0.06, 0.25, 0, 0.2) }, // 縁が揺れる大きさ（m）・模様の大きさ（m）・形の変化の進み・内側の淡い色
+      uBlobCount: { value: 0 },
+      uBlobPos: { value: Array.from({ length: MAX_BLOBS }, () => new THREE.Vector3()) },
+      uBlobAxis: { value: Array.from({ length: MAX_BLOBS }, () => new THREE.Vector3(1, 0, 0)) },
+      uBlobEdge: { value: new THREE.Vector4(0.3, 0.08, 0.4, 0.6) },
+      uBlobLook: { value: new THREE.Vector2(1, 1) },
+      uBlobShape: { value: new THREE.Vector4(0.35, 0, 0.5, 0) },    // 形の崩れ方・形の変化の進み・内側の淡い色・（使わない）
+      uBlobBeam: { value: new THREE.Vector4(0.15, 0.12, 0.2, 1) },  // 半径（m、窓の所）・大きくなる割合・曲がる角度（ラジアン）・明るさ
+      uShimOn: { value: 0 },                                       // H：重ねる強さ（0 = 出さない）
+      uShimShape: { value: new THREE.Vector4(0.35, 0.06, 0.6, 0) }, // 網目の大きさ（m）・線の太さ・ゆがみ・形の変化の進み
+      uShimLook: { value: new THREE.Vector4(0.6, 2, 0.04, 0.6) },   // 線のない所の明るさ・線の明るさ・虹のずれ・膜の虹色の濃さ
+      uShimColor: { value: new THREE.Vector4(3, 0, 1, 1) },         // 色の数・虹の色の範囲の始め・終わり・色の濃さ
+      uShimPalN: { value: 0 },                                     // 選んだ色の数（0 = 虹の色の範囲を使う）
+      uShimPal: { value: Array.from({ length: MAX_SHIM_PALETTE }, () => new THREE.Vector3(1, 1, 1)) },
+      uShimLineCol: { value: new THREE.Vector3(1, 1, 1) },
+      uShimBaseCol: { value: new THREE.Vector3(1, 1, 1) },
       uScreenArea: { value: 0 },
       uScreenOn: { value: 0 },
       uScreenGain: { value: 0.6 },
@@ -200,6 +259,113 @@ export class RoomCore {
   }
 
   /** 描く大きさが変わったとき */
+  /**
+   * 窓に吊るプリズムの位置と向き（プリズムの稜の向き）を決める。位置はプリズムごとの決まった乱数で、窓の幅に沿って並べる。
+   * 壁の窓は、窓の上の端から dropM くらい下（窓の下端より上）で、窓から 12cm 内側。天窓は、天窓の範囲に格子に並べ、天井から dropM くらい下。
+   * 天窓＋左の窓は、左の壁の窓に吊る。稜は縦から斜めに傾いていて、吊り糸のまわりにゆっくり回る（傾き・向き・速さはプリズムごとに違う）
+   */
+  /**
+   * プリズム i の向きの、動きによる変わり分（ラジアン）。spin は一方向に回り続ける。sway は左右にねじれては戻る（周期はプリズムごとに 0.6〜1.4 倍）。
+   * wind は sway と同じ揺れを、風速（雲を流す風）に合わせて大きく・速くし、ときどき強まる揺れ（突風）を重ねる。still は動かない
+   */
+  private prismMotion(i: number, motion: PrismMotion, swayDeg: number, windMS: number): number {
+    const rnd = (k: number): number => { const x = Math.sin(i * 12.9898 + k * 78.233) * 43758.5453; return x - Math.floor(x); };
+    const k = 0.6 + 0.8 * rnd(5);
+    const ph = 6.2832 * rnd(8);
+    const amp = swayDeg * Math.PI / 180;
+    switch (motion) {
+      case 'spin': return (rnd(4) < 0.5 ? -1 : 1) * this.prismPhase * k;
+      case 'sway': return amp * Math.sin(this.prismPhase * 3 * k + ph);
+      case 'wind': {
+        const w = Math.min(1.5, 0.15 + windMS / 6);
+        const t = this.prismWindPhase * 3 * k;
+        return amp * w * (Math.sin(t + ph) * 0.8 + Math.sin(t * 2.3 + ph * 1.7) * 0.35 * Math.max(0, Math.sin(t * 0.21 + ph)));
+      }
+      case 'still': return 0;
+    }
+  }
+
+  private placePrisms(n: number, dropM: number, side: WindowSide, turn: (i: number) => number): void {
+    const s = this.shared;
+    const { widthM: W, heightM: H } = this.room;
+    const rnd = (i: number, k: number): number => { const x = Math.sin(i * 12.9898 + k * 78.233) * 43758.5453; return x - Math.floor(x); };
+    const r = this.winRect;
+    const face = WINDOW_FACE[side];
+    const cols = Math.ceil(Math.sqrt(Math.max(1, n)));
+    for (let i = 0; i < n; i++) {
+      const drop = Math.max(0, dropM) * (0.6 + 0.8 * rnd(i, 2));
+      const pos = s.uPrismPos.value[i]!;
+      if (face === 2) {
+        // 天窓：r = (x0, x1, z0, z1)
+        const col = i % cols, row = Math.floor(i / cols), rows = Math.ceil(n / cols);
+        pos.set(
+          r.x + (r.y - r.x) * (col + 0.5 + (rnd(i, 1) - 0.5) * 0.5) / cols,
+          Math.max(0.3, H - 0.05 - drop),
+          r.z + (r.w - r.z) * (row + 0.5 + (rnd(i, 6) - 0.5) * 0.5) / rows,
+        );
+      } else {
+        // 壁の窓：r = (z0, z1, y0, y1)。右の窓は x = W/2、左の窓は x = -W/2
+        const u = (i + 0.5 + (rnd(i, 1) - 0.5) * 0.6) / n;
+        pos.set(face === 0 ? W / 2 - 0.12 : -W / 2 + 0.12, Math.max(r.z + 0.1, Math.min(H - 0.05, r.w) - drop), r.x + (r.y - r.x) * u);
+      }
+      // 稜の向き：縦から 30〜75° 傾け（プリズムごとに違う）、吊り糸（縦）のまわりに回す
+      const a = rnd(i, 3) * Math.PI * 2 + turn(i);
+      const tilt = (30 + 45 * rnd(i, 7)) * Math.PI / 180;
+      s.uPrismAxis.value[i]!.set(Math.sin(tilt) * Math.cos(a), Math.cos(tilt), Math.sin(tilt) * Math.sin(a));
+    }
+  }
+
+  /**
+   * D：窓ガラスに付けた小さなプリズム（光の束の出る所）の位置と稜の向きを決める。位置はプリズムごとの決まった乱数で窓の中に散らす（ガラスから 2cm 内側）。
+   * 天窓＋左の窓は、偶数番を天窓・奇数番を左の窓に付ける。稜はガラスの面の中の向き（壁の窓は縦、天窓は奥行きの向きを 0°）を ridge だけ回し、
+   * プリズムごとに ±20° ばらつかせて、動きの分 turn を足す
+   */
+  private placeBeams(n: number, ridge: number, side: WindowSide, turn: (i: number) => number): void {
+    const s = this.shared;
+    const { widthM: W, heightM: H } = this.room;
+    const rnd = (i: number, k: number): number => { const x = Math.sin(i * 12.9898 + k * 78.233) * 43758.5453; return x - Math.floor(x); };
+    for (let i = 0; i < n; i++) {
+      const sky = side === 'ceiling' || (side === 'ceiling-left' && i % 2 === 0);
+      const r = sky && side === 'ceiling-left' ? this.win2Rect : this.winRect;
+      const u = 0.08 + 0.84 * rnd(i, 1), v = 0.08 + 0.84 * rnd(i, 6);
+      const pos = s.uPrismPos.value[i]!;
+      const a = ridge + (rnd(i, 3) - 0.5) * 0.7 + turn(i);
+      if (sky) {
+        // 天窓：r = (x0, x1, z0, z1)。稜は 0° で奥行き（z）の向き
+        pos.set(r.x + (r.y - r.x) * u, H - 0.02, r.z + (r.w - r.z) * v);
+        s.uPrismAxis.value[i]!.set(Math.sin(a), 0, Math.cos(a));
+      } else {
+        // 壁の窓：r = (z0, z1, y0, y1)。稜は 0° で縦
+        pos.set(wallWindowSide(side) === 'right' ? W / 2 - 0.02 : -W / 2 + 0.02, r.z + (r.w - r.z) * v, r.x + (r.y - r.x) * u);
+        s.uPrismAxis.value[i]!.set(0, Math.cos(a), Math.sin(a));
+      }
+    }
+  }
+
+  /**
+   * G：光のしみを作る見えない物の位置と向き。位置は窓の中に散らす（ガラスから 2cm 内側。天窓＋左の窓は、偶数番を天窓・奇数番を左の窓）。
+   * 向きは物ごとの決まった乱数で、形の変化に合わせてゆっくり振れる（しみがゆっくり動く）
+   */
+  private placeBlobs(n: number, side: WindowSide): void {
+    const s = this.shared;
+    const { widthM: W, heightM: H } = this.room;
+    const rnd = (i: number, k: number): number => { const x = Math.sin(i * 12.9898 + k * 78.233) * 43758.5453; return x - Math.floor(x); };
+    for (let i = 0; i < n; i++) {
+      const sky = side === 'ceiling' || (side === 'ceiling-left' && i % 2 === 0);
+      const r = sky && side === 'ceiling-left' ? this.win2Rect : this.winRect;
+      const u = 0.12 + 0.76 * rnd(i, 11), v = 0.12 + 0.76 * rnd(i, 16);
+      const a = rnd(i, 13) * Math.PI * 2 + 0.4 * Math.sin(this.blobPhase * 0.5 + i * 1.7);
+      const pos = s.uBlobPos.value[i]!;
+      if (sky) {
+        pos.set(r.x + (r.y - r.x) * u, H - 0.02, r.z + (r.w - r.z) * v);
+        s.uBlobAxis.value[i]!.set(Math.sin(a), 0, Math.cos(a));
+      } else {
+        pos.set(wallWindowSide(side) === 'right' ? W / 2 - 0.02 : -W / 2 + 0.02, r.z + (r.w - r.z) * v, r.x + (r.y - r.x) * u);
+        s.uBlobAxis.value[i]!.set(0, Math.cos(a), Math.sin(a));
+      }
+    }
+  }
+
   resize(w: number, h: number): void {
     this.shared.uRes.value.set(w, h);
     this.samples = 0;
@@ -259,6 +425,97 @@ export class RoomCore {
     // ノイズを読む位置をずらすと、模様はその逆へ動いて見える。流れは「m/s × 1/大きさ」、形の変化は大きさに関係なく少しずつ
     this.cloudVel.set(-flow.x * settings.windMS * scale, -flow.z * settings.windMS * scale, 0.02);
     this.cloudDrift.step(this.cloudVel, dt);
+
+    // プリズム：画面に出す段階で毎フレーム足す光なので、値を変えても重ね合わせはやり直さない
+    const pz = settings.prism;
+    const deg = Math.PI / 180;
+    this.prismPhase = (this.prismPhase + dt * pz.speed) % (Math.PI * 2000);
+    this.prismWindPhase = (this.prismWindPhase + dt * pz.speed * (0.3 + settings.windMS / 4)) % (Math.PI * 2000);
+    const turn = (i: number): number => this.prismMotion(i, pz.motion, pz.swayDeg, settings.windMS);
+    s.uPrismOn.value = pz.on ? 1 : 0;
+    s.uPrismPattern.value = PRISM_PATTERNS.indexOf(pz.pattern);
+    s.uPrismPhase.value = this.prismPhase;
+    s.uPrismVivid.value = Math.min(1, Math.max(0, pz.vividness));
+    // A：日だまりの中の虹色の筋
+    const st = pz.streaks;
+    if (pz.pattern === 'streaks') s.uPrismStrength.value = st.strength;
+    s.uStreakAmount.value = st.amount;
+    s.uStreakLen.value = Math.max(0.05, st.lengthM);
+    s.uStreakAngle.value = st.angleDeg * deg;
+    // B：窓に吊るプリズム
+    const hg = pz.hung;
+    const np = pz.on && pz.pattern === 'hung' ? Math.min(MAX_PRISMS, Math.max(1, Math.round(hg.count))) : 0;
+    if (pz.pattern !== 'beams') {
+      this.placePrisms(np, hg.dropM, windowSide, turn);
+      s.uPrismCount.value = np;
+      s.uPrismSize.value = Math.max(0.01, hg.sizeM);
+    }
+    s.uPrismFacets.value = Math.min(4, Math.max(1, Math.round(hg.facets)));
+    if (pz.pattern === 'hung') {
+      s.uPrismStrength.value = hg.strength;
+      s.uPrismDev.value = hg.deviationDeg * deg;
+      s.uPrismDisp.value = Math.max(0.1, hg.dispersionDeg) * deg;
+    }
+    // C：窓を覆うプリズムの板
+    const pn = pz.panel;
+    s.uPanelRidge.value = pn.ridgeAngleDeg * deg;
+    if (pz.pattern === 'panel') {
+      s.uPrismStrength.value = pn.strength;
+      s.uPrismDev.value = pn.deviationDeg * deg;
+      s.uPrismDisp.value = Math.max(0.1, pn.dispersionDeg) * deg;
+    }
+    // D：日差しの先の虹の筋（窓ガラスのプリズムから出る細い光の束）
+    const bm = pz.beams;
+    if (pz.pattern === 'beams') {
+      const nb = pz.on ? Math.min(MAX_PRISMS, Math.max(1, Math.round(bm.count))) : 0;
+      this.placeBeams(nb, bm.ridgeAngleDeg * deg, windowSide, turn);
+      s.uPrismCount.value = nb;
+      s.uPrismSize.value = Math.max(0.01, bm.widthM);
+      s.uBeamBlur.value = Math.max(0, bm.blur);
+      s.uPrismStrength.value = bm.strength;
+      s.uPrismDev.value = bm.deviationDeg * deg;
+      s.uPrismDisp.value = Math.max(0.1, bm.dispersionDeg) * deg;
+    }
+    s.uPrismCaus.value = pz.on ? Math.max(0, pz.causticSpreadM) : 0;
+    const look = (o: OrganicLook, edge: THREE.Vector4, lk: THREE.Vector2): void => {
+      edge.set(o.fringe, Math.max(1e-3, o.soft), Math.max(0, o.halo), Math.max(1e-3, o.haloWidth));
+      lk.set(Math.max(0, o.saturation), Math.min(1, Math.max(0, o.haloHue)));
+    };
+    // E：波のプリズム（水盤の日だまりの縁が、進む波で揺れて虹色になる）
+    const wv = pz.waves;
+    const waveLen = Math.max(0.05, wv.waveLengthM);
+    this.wavePhase = (this.wavePhase + dt * wv.speed * 2 * Math.PI / waveLen) % (Math.PI * 2000);
+    s.uWaveOn.value = pz.on && wv.on ? 1 : 0;
+    look(wv, s.uWaveEdge.value, s.uWaveLook.value);
+    s.uWaveShape.value.set(Math.max(0, wv.wobbleM), waveLen, this.wavePhase);
+    // F：有機的な日だまりの縁
+    const og = pz.organic;
+    this.orgPhase = (this.orgPhase + dt * og.speed) % (Math.PI * 2000);
+    s.uOrgOn.value = pz.on && og.on ? 1 : 0;
+    look(og, s.uOrgEdge.value, s.uOrgLook.value);
+    s.uOrgShape.value.set(Math.max(0, og.wobbleM), Math.max(0.02, og.scaleM), this.orgPhase, Math.min(1, Math.max(0, og.pastel)));
+    // G：虹のしみ
+    const bl = pz.blobs;
+    this.blobPhase = (this.blobPhase + dt * bl.speed) % (Math.PI * 2000);
+    const nBlob = pz.on && bl.on ? Math.min(MAX_BLOBS, Math.max(1, Math.round(bl.count))) : 0;
+    this.placeBlobs(nBlob, windowSide);
+    s.uBlobCount.value = nBlob;
+    look(bl, s.uBlobEdge.value, s.uBlobLook.value);
+    s.uBlobShape.value.set(Math.max(0, bl.wobble), this.blobPhase, Math.min(1, Math.max(0, bl.pastel)), 0);
+    s.uBlobBeam.value.set(Math.max(0.01, 0.5 * bl.sizeM), Math.max(0, bl.grow), bl.deviationDeg * deg, Math.max(0, bl.strength));
+    // H：水のきらめき
+    const sh = pz.shimmer;
+    this.shimPhase = (this.shimPhase + dt * sh.speed) % (Math.PI * 2000);
+    s.uShimOn.value = pz.on && sh.on ? Math.min(1, Math.max(0, sh.amount)) : 0;
+    s.uShimShape.value.set(Math.max(0.02, sh.scaleM), Math.max(0.005, sh.lineWidth), Math.max(0, sh.warp), this.shimPhase);
+    s.uShimLook.value.set(Math.max(0, sh.base), Math.max(0, sh.gain), sh.dispersion, Math.min(1, Math.max(0, sh.iridescence)));
+    s.uShimColor.value.set(Math.min(MAX_SHIM_COLORS, Math.max(3, Math.round(sh.colorCount))), sh.hueStart, sh.hueEnd, Math.max(0, sh.saturation));
+    const nPal = Math.min(MAX_SHIM_PALETTE, Math.max(2, Math.round(sh.paletteCount)));
+    s.uShimPalN.value = sh.colorMode === 'palette' ? nPal : 0;
+    for (let i = 0; i < MAX_SHIM_PALETTE; i++) s.uShimPal.value[i]!.copy(linear(hexToRgb(sh.palette[i] ?? '#ffffff')));
+    s.uShimLineCol.value.copy(unitLum(linear(hexToRgb(sh.lineColor))));
+    s.uShimBaseCol.value.copy(unitLum(linear(hexToRgb(sh.baseColor))));
+    s.uPrismFadeM.value = PRISM_EDGE_FADE_M;
     s.uCloudOn.value = cloudsOn ? 1 : 0;
     s.uCloudShadow.value = cloudsOn && settings.cloudShadow ? 1 : 0;
     s.uCloudY.value = settings.cloudHeightM;
