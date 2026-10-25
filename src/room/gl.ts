@@ -47,6 +47,8 @@ uniform float uPixAngle;     // 1 画素が見込む角度（ラジアン）
 uniform vec3 uSeaGlintDir;   // 海に映すきらめきの光の向き（昼は太陽、夜は海に映す月）
 uniform vec3 uSeaGlintE;     // その光の強さ
 uniform float uGlassMask;    // ガラスの壁の面（ビット：1 = +x 右、2 = −x 左、4 = 天井、16 = 手前、32 = 奥）
+uniform float uGlassSkyOn;   // ガラスの天窓（天井の一部）
+uniform vec4 uGlassSky;      // ガラスの天窓の範囲（x の範囲・z の範囲）
 uniform int uPoolOn;         // 床の水盤
 uniform float uPoolDepth;    // 水盤の深さ
 uniform int uCloudOn;        // 窓の外の空に雲
@@ -187,10 +189,14 @@ bool inWindow2(int face, vec3 p) {
 }
 
 // ガラスの壁（面ぜんたいが枠なしの一枚ガラス）。光と景色はそのまま通すので、計算の上では面ぜんたいが窓。画面に出す段階で、ガラスの映り込みを足す
-bool isGlass(int face) { return (int(uGlassMask + 0.5) & (1 << face)) != 0; }
+// ガラスの天窓：天井の一部（uGlassSky = x の範囲・z の範囲）だけがガラス
+bool isGlass(int face, vec3 p) {
+  if ((int(uGlassMask + 0.5) & (1 << face)) != 0) return true;
+  return uGlassSkyOn > 0.5 && face == 2 && p.x > uGlassSky.x && p.x < uGlassSky.y && p.z > uGlassSky.z && p.z < uGlassSky.w;
+}
 
 bool inWindow(int face, vec3 p) {
-  return inWindow1(face, p) || inWindow2(face, p) || isGlass(face);
+  return inWindow1(face, p) || inWindow2(face, p) || isGlass(face, p);
 }
 // 光線が抜けた所が、窓の点を選ぶ方法で選ばれうる窓か（1 = 窓、2 = 2 つ目の窓、0 = ガラスの壁だけ：その向きは窓の点を選ぶ方法では選ばれない）
 int windowIndex(int face, vec3 p) { return inWindow2(face, p) ? 2 : (inWindow1(face, p) ? 1 : 0); }
@@ -1231,7 +1237,7 @@ void main() {
     // ガラスの壁：透けた外の景色を足し、光線を反射させて、その先を下の処理で描く（反射の割合 w を掛ける）
     float w = 1.0;
     vec3 ind2 = ind;
-    if (isGlass(f)) {
+    if (isGlass(f, p)) {
       vec3 gn = inwardNormal(f);
       float c = clamp(dot(-d, gn), 0.0, 1.0);
       w = glassFresnel(c);

@@ -1,3 +1,4 @@
+import { type MoonPosition, moonPosition } from './moon.ts';
 import bundledSite from '../config/site.json';
 import type { Heartbeat } from './bridge.ts';
 import { Clock } from './clock.ts';
@@ -221,6 +222,8 @@ let last = performance.now();
 let uiAt = 0;
 let frames = 0;
 let beatAt = performance.now();
+// 本物の月の位置と満ち欠け（room モードで、毎フレーム求める）
+let moonNow: MoonPosition | null = null;
 let lit = 0;
 let fps = 60;
 
@@ -267,7 +270,8 @@ function frame(now: number): void {
     const screen = roomUi.settings.screen
       ? { def, params: roomScreenParams(def), input, outMin: visualsConfig.output.min, outMax: visualsConfig.output.max }
       : null;
-    room.render({ solar: s, lightColor, sky: input.sky, screen }, roomUi.settings);
+    moonNow = moonPosition(clock.date, roomSite.latitude, roomSite.longitude);
+    room.render({ solar: s, moon: moonNow, lightColor, sky: input.sky, screen }, roomUi.settings);
   } else {
     const { def, params: p, opts } = current(lit, lightColor);
     stage.setScene(def);
@@ -306,7 +310,7 @@ function frame(now: number): void {
     const perf = formatPerf(stage.gpu(), fps, stage.backend);
     verifyUi?.update(s, perf, verifyParams);
     visualsUi?.updateStatus(s, lit, perf);
-    if (room) roomUi?.updateStatus(s, lit, room.samples, room.backend, room.renderSize, room.spotOn, fps, fpsLimit(), room.moonOn);
+    if (room) roomUi?.updateStatus(s, lit, room.samples, room.backend, room.renderSize, room.spotOn, fps, fpsLimit(), room.moonOn, moonNow);
   }
   requestAnimationFrame(frame);
 }

@@ -95,10 +95,13 @@ fn inWindow2(face: i32, p: vec3f) -> bool {
 }
 
 // ガラスの壁（src/room/gl.ts と同じ）
-fn isGlass(face: i32) -> bool { return (u32(u.uGlassMask + 0.5) & (1u << u32(face))) != 0u; }
+fn isGlass(face: i32, p: vec3f) -> bool {
+  if ((u32(u.uGlassMask + 0.5) & (1u << u32(face))) != 0u) { return true; }
+  return u.uGlassSkyOn > 0.5 && face == 2 && p.x > u.uGlassSky.x && p.x < u.uGlassSky.y && p.z > u.uGlassSky.z && p.z < u.uGlassSky.w;
+}
 
 fn inWindow(face: i32, p: vec3f) -> bool {
-  return inWindow1(face, p) || inWindow2(face, p) || isGlass(face);
+  return inWindow1(face, p) || inWindow2(face, p) || isGlass(face, p);
 }
 fn windowIndex(face: i32, p: vec3f) -> i32 { return select(select(0, 1, inWindow1(face, p)), 2, inWindow2(face, p)); }
 
@@ -1163,7 +1166,7 @@ ${FULLSCREEN_VS}
     var d = h.dir;
     var w = 1.0;
     var ind2 = ind;
-    if (isGlass(f)) {
+    if (isGlass(f, p)) {
       let gn = inwardNormal(f);
       let c = clamp(dot(-d, gn), 0.0, 1.0);
       w = glassFresnel(c);

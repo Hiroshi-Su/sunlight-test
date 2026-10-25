@@ -193,6 +193,8 @@ export class RoomCore {
       uSeaGlintDir: { value: new THREE.Vector3(0, 1, 0) },        // 海に映すきらめきの光の向き（昼は太陽、夜は海に映す月）
       uSeaGlintE: { value: new THREE.Vector3() },                 // その光の強さ
       uGlassMask: { value: 0 },                                  // ガラスの壁の面（ビット）
+      uGlassSkyOn: { value: 0 },                                 // ガラスの天窓
+      uGlassSky: { value: new THREE.Vector4() },                 // ガラスの天窓の範囲（x の範囲・z の範囲）
       uSeaSplit: { value: 0 },                                   // 1 = 海の手前側（窓の奥行きの真ん中より手前）は正弦波の海（比べるとき）
       uOceanOn: { value: 0 },                                    // 1 = 海の波を FFT の画像から読む（WebGPU のときだけ使う）
       uOceanSize: { value: new THREE.Vector2(OCEAN_CASCADES[0].sizeM, OCEAN_CASCADES[1].sizeM) },
@@ -423,22 +425,30 @@ export class RoomCore {
     const moon = settings.moon;
     const moonW = moonWeight(moon, sun.altitude);
     const sunUp = sun.altitude > 0;
-    const useMoon = !sunUp && moonW > 0 && moon.altitudeDeg > 0;
+    // 本物の月：位置は日時と緯度経度から（input.moon）。real は満ち欠けで明るさを変える（半月で満月の約 1/10、新月でほぼ 0）
+    const real = (moon.mode === 'real' || moon.mode === 'realFull') && input.moon ? input.moon : null;
+    const moonAlt = real ? real.altitude : moon.altitudeDeg;
+    const phaseK = real && moon.mode === 'real' ? real.brightness : 1;
+    const useMoon = !sunUp && moonW > 0 && moonAlt > 0;
     const moonCol = linear(hexToRgb(moon.color));
     const moonLum = 0.2126 * moonCol.x + 0.7152 * moonCol.y + 0.0722 * moonCol.z;
     if (moonLum > 1e-4) moonCol.multiplyScalar(1 / moonLum);
     // 窓の真ん中の向きの低い月（A と、前の作り方の海）。天窓だけのときは使えない
     const lowMoon = windowSide !== 'ceiling' ? this.lowMoonDir(camera, moon.seaRoadAltDeg, moon.seaRoadOffsetDeg) : null;
     const sunDir = useMoon
-      ? (moon.mode === 'low' && lowMoon ? lowMoon.clone() : moonDirection(moon, this.facingAzimuth))
+      ? (moon.mode === 'low' && lowMoon
+        ? lowMoon.clone()
+        : moonDirection(real ? { ...moon, azimuthDeg: real.azimuth, altitudeDeg: real.altitude } : moon, this.facingAzimuth))
       : toThree(light).negate().normalize();
     const sunOn = sunUp || useMoon;
     const sunE = sunUp
       ? linear(input.lightColor).multiplyScalar(SUN_SCALE * directSunFactor(sun.altitude))
-      : moonCol.clone().multiplyScalar(useMoon ? MOON_SCALE * moon.strength * moonW : 0);
+      : moonCol.clone().multiplyScalar(useMoon ? MOON_SCALE * moon.strength * moonW * phaseK : 0);
     const skyL = SKY_SCALE * skyBrightness(sun.altitude);
     // 夜空：月明かりの点き具合に応じて、月の色の空の光を足す（上ほど明るく、地平線の近くは少し暗い）
-    const nightSky = moonCol.clone().multiplyScalar(MOON_SKY_SCALE * moon.skyStrength * moonW);
+    // 本物の月のときは、夜空の明るさも月の明るさに合わせる（月が出ていない・新月の夜でも、真っ暗にはせず 15% は残す）
+    const skyK = real ? Math.max(0.15, moonAlt > 0 ? phaseK : 0) : 1;
+    const nightSky = moonCol.clone().multiplyScalar(MOON_SKY_SCALE * moon.skyStrength * moonW * skyK);
     const top = linear(input.sky.top).multiplyScalar(skyL).add(nightSky);
     const bottom = linear(input.sky.bottom).multiplyScalar(skyL).addScaledVector(nightSky, 0.7);
     this.moonOn = useMoon ? moonW : 0;
@@ -607,7 +617,7 @@ export class RoomCore {
     // 重ね合わせのやり直し：視点や設定（窓の大きさを含む）が変わったら最初から
     const key = [
       sp.mode, sp.kind, JSON.stringify(sp.ambient), sp.count, JSON.stringify(sp.lights.slice(0, sp.count)),
-      moon.on, moon.strength, moon.skyStrength, moon.color, moon.azimuthDeg, moon.altitudeDeg, moon.mode, moon.seaRoadAltDeg, moon.seaRoadOffsetDeg, JSON.stringify(settings.glass),
+      moon.on, moon.strength, moon.skyStrength, moon.color, moon.azimuthDeg, moon.altitudeDeg, moon.mode, real ? Math.round(phaseK * 100) : 0, moon.seaRoadAltDeg, moon.seaRoadOffsetDeg, JSON.stringify(settings.glass), JSON.stringify(settings.glassSkylight),
       settings.bounces, settings.seaView, settings.seaRipples, settings.pool, settings.poolReflect, settings.waveAmp, settings.poolDepthM, settings.seaLevelM, this.winRect.toArray(),
       cloudsOn, settings.cloudShadow, settings.cloudAmount, settings.cloudOpacity, settings.cloudSizeM, settings.cloudHeightM,
       settings.screenArea, !!screen, screen?.def.id, settings.screenGain,
@@ -647,6 +657,9 @@ export class RoomCore {
     s.uWaveAmp.value = settings.waveAmp;
     // ガラスの壁：面ぜんたいが窓になる。壁がガラスなら、天窓だけのときも海が見える
     s.uGlassMask.value = GLASS_FACES.reduce((m, f) => m + (settings.glass[f] ? 1 << GLASS_FACE_INDEX[f] : 0), 0);
+    const gs = settings.glassSkylight;
+    s.uGlassSkyOn.value = gs.on ? 1 : 0;
+    s.uGlassSky.value.fromArray(windowRect('ceiling', this.room, { widthM: gs.widthM, heightM: gs.depthM, sillHeightM: 0 }));
     const glassWall = (s.uGlassMask.value & 0b110011) !== 0;
     s.uSeaOn.value = settings.seaView && (windowSide !== 'ceiling' || glassWall) ? 1 : 0;
     s.uSeaY.value = settings.seaLevelM;

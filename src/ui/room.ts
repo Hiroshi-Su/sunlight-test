@@ -1,4 +1,5 @@
 // room モードの UI：時刻操作・窓の位置と大きさの切り替えパネルと、太陽・lit の状態表示
+import type { MoonPosition } from '../moon.ts';
 import GUI from 'lil-gui';
 import type { Clock } from '../clock.ts';
 import { mountCalibMode } from './calib-mode.ts';
@@ -202,6 +203,7 @@ export function mountRoomUi(
     // ?moon=0 で月明かりを消して開く
     moon: { ...r0.moon, on: on('moon', r0.moon.on), mode: oneOf(q.get('moonMode') ?? r0.moon.mode, MOON_MODES, 'low') },
     // ?glass=right,back のように、ガラスの壁にする面を並べる（?glass=0 ですべて壁）
+    glassSkylight: { ...r0.glassSkylight, on: on('glassSky', r0.glassSkylight.on) },
     glass: Object.fromEntries(GLASS_FACES.map((f) => [f, q.has('glass') ? (q.get('glass') ?? '').split(',').includes(f) : !!r0.glass[f]])) as Record<GlassFace, boolean>,
     // プリズム：保存した値の出し方・動き方が選択肢になければ既定にする
     prism: {
@@ -413,6 +415,10 @@ export function mountRoomUi(
   const fgl = gui.addFolder('ガラスの壁（面ぜんたいを一枚ガラスに）');
   const GLASS_LABEL: Record<GlassFace, string> = { right: '右の壁', left: '左の壁', ceiling: '天井', front: '手前の壁（見る人の側）', back: '奥の壁（スクリーンの側）' };
   for (const f of GLASS_FACES) fgl.add(settings.glass, f).name(GLASS_LABEL[f]);
+  // ガラスの天窓：天井の中央の一部だけをガラスにする（?glassSky=1）
+  fgl.add(settings.glassSkylight, 'on').name('天窓（天井の一部をガラスに）');
+  fgl.add(settings.glassSkylight, 'widthM', 0.2, room.widthM, 0.05).name('ガラスの天窓の幅（左右、m）');
+  fgl.add(settings.glassSkylight, 'depthM', 0.2, room.depthM, 0.05).name('ガラスの天窓の奥行き（m）');
 
   // 水：3 つはそれぞれ独立に出し消しできる（窓の外の 2 つは、壁の窓のときだけ効く）
   const fw = gui.addFolder('水');
@@ -704,6 +710,8 @@ export function mountRoomUi(
     'A：部屋も海も、窓の真ん中の向きの低い月（向きがそろう）': 'low',
     'B：部屋も海も、方位・高度で決めた月（本物どおり）': 'set',
     '前の作り方：部屋は決めた月、海だけ低い月（向きがそろわない）': 'split',
+    '本物の月（日時から位置と満ち欠け。月が出ていない・新月の夜は暗い）': 'real',
+    '本物の月の位置で、いつも満月の明るさ': 'realFull',
   }).name('月の置き方');
   fm.add(mn, 'seaRoadStrength', 0, 20, 0.1).name('海に映す月の光の明るさ（0 で海に光の道を出さない）');
   fm.add(mn, 'seaRoadOffsetDeg', -80, 80, 1).name('低い月の向き：窓の真ん中から奥へ（度、A と前の作り方）');
@@ -763,7 +771,8 @@ export function mountRoomUi(
     /** 四隅の位置合わせ */
     get warp(): WarpCorners { return corners(); },
     /** @param fps 画面の更新の速さ（毎フレームの間隔をならしたもの。画面の上限、多くは 60 で頭打ちになる） */
-    updateStatus(s: SolarState, lit: number, samples: number, backend: Backend, size: { width: number; height: number }, spotOn: number, fps: number, fpsLimit: number, moonOn: number): void {
+    updateStatus(s: SolarState, lit: number, samples: number, backend: Backend, size: { width: number; height: number }, spotOn: number, fps: number, fpsLimit: number, moonOn: number, moonPos: MoonPosition | null = null): void {
+      const realMoon = mn.mode === 'real' || mn.mode === 'realFull';
       const { sun, light } = s;
       const windowText = state.side === 'ceiling' ? '天井（天窓）' : WINDOW_SIDE_LABEL[state.side];
       statusEl.textContent = [
@@ -778,7 +787,8 @@ export function mountRoomUi(
         ...(state.side === 'ceiling' && (settings.seaView || settings.seaRipples) ? ['※ 窓の外の海・水面の反射は、壁の窓のときだけ効く'] : []),
         ...(settings.screen ? [`スクリーン  ${findScene(screen.id).label}`] : []),
         `ライト  ${spot.mode === 'off' ? '消す' : spotOn <= 0 ? '消えている（太陽が出ている）' : `点いている ${Math.round(spotOn * 100)}%`}`,
-        `月明かり  ${!mn.on ? '消す' : moonOn <= 0 ? '消えている（太陽が出ている）' : `点いている ${Math.round(moonOn * 100)}%`}`,
+        `月明かり  ${!mn.on ? '消す' : moonOn > 0 ? `点いている ${Math.round(moonOn * 100)}%` : realMoon && moonPos && moonPos.altitude <= 0 && s.sun.altitude <= 0 ? '消えている（月が出ていない）' : '消えている（太陽が出ている）'}`,
+        ...(realMoon && moonPos ? [`本物の月  方位 ${moonPos.azimuth.toFixed(0)}°・高度 ${moonPos.altitude.toFixed(0)}°・照らされている割合 ${Math.round(moonPos.illumination * 100)}%（明るさ 満月の ${Math.round(moonPos.brightness * 100)}%${mn.mode === 'realFull' ? '。いつも満月の明るさで出す' : ''}）`] : []),
         `1 画素あたりの光線 ${samples} 本${samples < 256 ? '（止めておくと増えて、ざらつきが減る）' : ''}`,
         `計算 ${size.width}×${size.height}（${resolution.output === 'view' ? '画面の枠' : `展示の ${EXHIBIT_SIZE.width}×${EXHIBIT_SIZE.height}`} の ${Math.round(resolution.scale * 100)}%、画素数 ${Math.round(resolution.scale * resolution.scale * 100)}%）`,
         `描画 ${BACKEND_LABEL[backend]}  倍率 ${devicePixelRatio}`,
@@ -867,7 +877,8 @@ export function codeDefaults(room: RoomGeometry, configWindow: WindowGeometry) {
     render: {
       exposure: 2.5, bounces: 3, smooth: true,
       seaView: ROOM_DEFAULTS.seaView as boolean, seaRipples: false, pool: ROOM_DEFAULTS.pool as boolean, poolReflect: ROOM_DEFAULTS.poolReflect as boolean,
-      waveAmp: ROOM_DEFAULTS.waveAmp as number, poolDepthM: 0.3, seaLevelM: -1, seaWaves: 'fft' as SeaWaves, seaCompare: false, glass: { right: false, left: false, ceiling: false, front: false, back: false }, seaWindMS: 6, seaWaveScale: 1, seaRoughness: 0.004, seaScatter: 0.6,
+      waveAmp: ROOM_DEFAULTS.waveAmp as number, poolDepthM: 0.3, seaLevelM: -1, seaWaves: 'fft' as SeaWaves, seaCompare: false, glass: { right: false, left: false, ceiling: false, front: false, back: false },
+      glassSkylight: { on: false, widthM: Math.round(room.widthM * 0.4 * 20) / 20, depthM: Math.round(room.depthM * 0.5 * 20) / 20 }, seaWindMS: 6, seaWaveScale: 1, seaRoughness: 0.004, seaScatter: 0.6,
       clouds: false, cloudShadow: ROOM_DEFAULTS.cloudShadow as boolean, cloudAmount: 0.45, cloudOpacity: 0.8,
       cloudSizeM: 1500, cloudHeightM: 1500, windMS: 30, windFromDeg: 270,
       screenArea: false, screen: false, screenGain: 0.6,

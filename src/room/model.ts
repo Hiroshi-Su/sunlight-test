@@ -1,4 +1,5 @@
 // room モードの型と、描く方式によらない計算（部屋の座標・窓の範囲・雲の流れる向き）
+import type { MoonPosition } from '../moon.ts';
 import * as THREE from 'three';
 import type { ParamValues, WindowSide } from '../config.ts';
 import type { RGB } from '../palette.ts';
@@ -29,6 +30,8 @@ export interface RoomScreenImage {
 
 export interface RoomInput {
   solar: SolarState;
+  /** 本物の月の位置と満ち欠け（月の置き方が「本物の月」のときに使う。なければ決めた月） */
+  moon?: MoonPosition;
   lightColor: RGB;
   sky: { top: RGB; bottom: RGB };
   /** スクリーンに映す映像（映さないときは null） */
@@ -65,6 +68,8 @@ export interface RoomRenderSettings {
   seaWaveScale: number;
   /** ガラスの壁にする面（面ぜんたいが枠なしの一枚ガラス。外は空と海） */
   glass: Record<GlassFace, boolean>;
+  /** ガラスの天窓（天井の中央の一部だけをガラスにする。幅は左右、奥行きは奥行きの向き、m） */
+  glassSkylight: { on: boolean; widthM: number; depthM: number };
   /** 正弦波の海と FFT の海を並べて比べる（海を窓の奥行きの真ん中で分け、手前側：正弦波、奥側：FFT。WebGPU のとき） */
   seaCompare: boolean;
   /** 窓の外の海面の、描かない細かいさざ波の粗さ（傾きの 2 乗平均）。大きいほど太陽のきらめきが広い帯になる */
@@ -122,7 +127,9 @@ export interface MoonSettings {
   fullAltDeg: number;
   /** 月の置き方。low = 部屋を照らす月も海に映す月も、見ている所から窓の真ん中の向きの低い月（A。海の光の道と部屋の月明かりの向きがそろう）、
    *  set = どちらも、方位・高度で決めた月（B。本物どおり。月が低く窓の正面にあるときだけ海に光の道が見える）、
-   *  split = 部屋は方位・高度で決めた月、海だけ窓の真ん中の向きの低い月（前の作り方。向きがそろわない） */
+   *  split = 部屋は方位・高度で決めた月、海だけ窓の真ん中の向きの低い月（前の作り方。向きがそろわない）、
+   *  real = 本物の月（日時と緯度経度から位置と満ち欠けを計算。月が出ていない時間・新月の夜は月の光がない）、
+   *  realFull = 本物の月の位置で、明るさはいつも満月 */
   mode: MoonMode;
   /** 海に映す月の光の明るさの倍率（部屋を照らす月の光に対して。0 で海に光の道を出さない） */
   seaRoadStrength: number;
@@ -133,7 +140,7 @@ export interface MoonSettings {
 }
 
 /** 月の置き方 */
-export const MOON_MODES = ['low', 'set', 'split'] as const;
+export const MOON_MODES = ['low', 'set', 'split', 'real', 'realFull'] as const;
 export type MoonMode = (typeof MOON_MODES)[number];
 
 /** ガラスにできる面（面ぜんたいが枠なしの一枚ガラス。床は水盤なので除く） */

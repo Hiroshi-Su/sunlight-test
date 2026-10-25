@@ -1,0 +1,33 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { moonEcliptic, moonPosition } from '../src/moon.ts';
+
+test('月の黄経・黄緯・距離：Meeus 例題 47.a（1992 年 4 月 12 日 0 時）に 0.3° 以内', () => {
+  // 例題の答え：λ = 133.162655°、β = −3.229126°、距離 368409.7 km
+  const jd = 2448724.5;
+  const m = moonEcliptic(jd - 2451545.0);
+  assert.ok(Math.abs(m.lambda - 133.162655) < 0.3, `λ = ${m.lambda}`);
+  assert.ok(Math.abs(m.beta - -3.229126) < 0.3, `β = ${m.beta}`);
+  assert.ok(Math.abs(m.distanceKm - 368409.7) < 1500, `距離 = ${m.distanceKm}`);
+});
+
+test('月の満ち欠け：満月はほぼ 1、新月はほぼ 0、半月は明るさが満月の約 1/10', () => {
+  // 2024 年 1 月 25 日 17:54 UTC 満月、1 月 11 日 11:57 UTC 新月、1 月 18 日 03:53 UTC 上弦
+  const full = moonPosition(new Date(Date.UTC(2024, 0, 25, 17, 54)), 51.5, -0.1);
+  const nw = moonPosition(new Date(Date.UTC(2024, 0, 11, 11, 57)), 51.5, -0.1);
+  const half = moonPosition(new Date(Date.UTC(2024, 0, 18, 3, 53)), 51.5, -0.1);
+  assert.ok(full.illumination > 0.99, `満月 ${full.illumination}`);
+  assert.ok(nw.illumination < 0.01, `新月 ${nw.illumination}`);
+  assert.ok(Math.abs(half.illumination - 0.5) < 0.05, `上弦 ${half.illumination}`);
+  assert.ok(half.brightness > 0.05 && half.brightness < 0.15, `上弦の明るさ ${half.brightness}`);
+  assert.ok(Math.abs(full.brightness - 1) < 0.05);
+});
+
+test('月の位置：満月の真夜中は南の空に高く、満月の正午は地平線の下', () => {
+  // ロンドン（北緯 51.5°・西経 0.1°）、2024 年 1 月 26 日 0 時 UTC（満月の約 6 時間後）は、満月が南の空に近い
+  const night = moonPosition(new Date(Date.UTC(2024, 0, 26, 0, 0)), 51.5, -0.1);
+  assert.ok(night.altitude > 45, `高度 ${night.altitude}`);
+  assert.ok(Math.abs(night.azimuth - 180) < 25, `方位 ${night.azimuth}`);
+  const noon = moonPosition(new Date(Date.UTC(2024, 0, 26, 12, 0)), 51.5, -0.1);
+  assert.ok(noon.altitude < 0, `正午の高度 ${noon.altitude}`);
+});
