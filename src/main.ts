@@ -85,6 +85,8 @@ if (mode === 'site') {
       clock, visuals: visualsConfig, heartbeat: bridge ? (b: Heartbeat) => bridge.heartbeat(b) : undefined,
       // room モードの絵をスクリーンに映すときに使う（部屋の寸法・窓の大きさ・保存した room の設定）
       room: { geometry: entry.room, window: entry.window, saved: bridge ? bridge.room : await loadRoomSettingsInBrowser() },
+      // room モードの絵を room モードと同じ描き方（WebGPU。FFT の海など）で描く。?gpu=webgl なら WebGL2
+      gpu: params.get('gpu') === 'webgl' ? null : await initWebGpu(),
     });
   } else {
     const msg = document.createElement('p');

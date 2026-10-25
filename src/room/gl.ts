@@ -47,8 +47,10 @@ uniform float uPixAngle;     // 1 画素が見込む角度（ラジアン）
 uniform vec3 uSeaGlintDir;   // 海に映すきらめきの光の向き（昼は太陽、夜は海に映す月）
 uniform vec3 uSeaGlintE;     // その光の強さ
 uniform float uGlassMask;    // ガラスの壁の面（ビット：1 = +x 右、2 = −x 左、4 = 天井、16 = 手前、32 = 奥）
-uniform float uGlassSkyOn;   // ガラスの天窓（天井の一部）
-uniform vec4 uGlassSky;      // ガラスの天窓の範囲（x の範囲・z の範囲）
+uniform float uOpenMask;     // 窓（壁いっぱいの穴）にする面のうち、1 つ目・2 つ目の窓で表せないもの（ビットは uGlassMask と同じ。左右の壁を両方窓にしたときなど）
+uniform vec4 uGlassWave;     // ガラスの表面の形（0 平ら・1 波打ち・2 うねり・3 リブ）・模様の大きさ（m）・深さ（m）・虹の強さ（色ごとの屈折率の差の倍率。0 で虹なし）
+uniform vec3 uGlassTint;     // ガラスを真正面から通る光の割合（色ごと。ガラスの種類と色）
+uniform float uGlassFocus;   // 光が集まり切る距離 ×（n−1）の上限（表面の曲がり具合の最大から。これより遠くでは網目がそれ以上折り重ならない）
 uniform int uPoolOn;         // 床の水盤
 uniform float uPoolDepth;    // 水盤の深さ
 uniform int uCloudOn;        // 窓の外の空に雲
@@ -189,17 +191,83 @@ bool inWindow2(int face, vec3 p) {
 }
 
 // ガラスの壁（面ぜんたいが枠なしの一枚ガラス）。光と景色はそのまま通すので、計算の上では面ぜんたいが窓。画面に出す段階で、ガラスの映り込みを足す
-// ガラスの天窓：天井の一部（uGlassSky = x の範囲・z の範囲）だけがガラス
+// ガラスの面。窓（穴）の所は窓のまま（天窓のときに天井をガラスにすると、天窓のまわりの天井だけがガラスになる）
+// 壁いっぱいの窓（1 つ目・2 つ目の窓のほかに開ける面）
+bool isOpen(int face) { return (int(uOpenMask + 0.5) & (1 << face)) != 0; }
 bool isGlass(int face, vec3 p) {
-  if ((int(uGlassMask + 0.5) & (1 << face)) != 0) return true;
-  return uGlassSkyOn > 0.5 && face == 2 && p.x > uGlassSky.x && p.x < uGlassSky.y && p.z > uGlassSky.z && p.z < uGlassSky.w;
+  return (int(uGlassMask + 0.5) & (1 << face)) != 0 && !isOpen(face) && !inWindow1(face, p) && !inWindow2(face, p);
 }
 
 bool inWindow(int face, vec3 p) {
-  return inWindow1(face, p) || inWindow2(face, p) || isGlass(face, p);
+  return inWindow1(face, p) || inWindow2(face, p) || isOpen(face) || isGlass(face, p);
 }
 // 光線が抜けた所が、窓の点を選ぶ方法で選ばれうる窓か（1 = 窓、2 = 2 つ目の窓、0 = ガラスの壁だけ：その向きは窓の点を選ぶ方法では選ばれない）
 int windowIndex(int face, vec3 p) { return inWindow2(face, p) ? 2 : (inWindow1(face, p) ? 1 : 0); }
+
+// ---- ガラスの表面の形とプリズム ----
+// 表面の高さ h（ガラスの面の上の 2 次元の位置 q、m）を、向きと長さの違う正弦波の重ね合わせで表す（波打ち 6 本・うねり 3 本の長い波・リブ 1 本の縦の筋）。
+// 傾き g = ∇h と、曲がり具合 H = (hxx, hyy, hxy) を返す
+const vec3 GLASS_W[6] = vec3[6](vec3(0.3, 1.0, 0.0), vec3(1.4, 0.73, 1.7), vec3(2.5, 1.31, 3.1), vec3(3.6, 0.58, 4.4), vec3(4.7, 1.12, 0.9), vec3(5.6, 0.87, 2.6));
+vec2 glassUV(int f, vec3 p) { return f == 0 || f == 1 ? p.zy : (f == 2 ? p.xz : p.xy); }
+void glassAxes(int f, out vec3 tu, out vec3 tv) {
+  if (f == 0 || f == 1) { tu = vec3(0.0, 0.0, 1.0); tv = vec3(0.0, 1.0, 0.0); }
+  else if (f == 2) { tu = vec3(1.0, 0.0, 0.0); tv = vec3(0.0, 0.0, 1.0); }
+  else { tu = vec3(1.0, 0.0, 0.0); tv = vec3(0.0, 1.0, 0.0); }
+}
+void glassWaves(vec2 q, out vec2 g, out vec3 H) {
+  g = vec2(0.0);
+  H = vec3(0.0);
+  float kind = uGlassWave.x;
+  if (kind < 0.5) return;
+  float m = kind > 1.5 && kind < 2.5 ? 3.0 : 1.0; // うねり：3 倍長く、3 倍深い（傾きは同じくらい）
+  for (int i = 0; i < 6; i++) {
+    vec3 w = GLASS_W[i];
+    if (kind > 2.5) { if (i > 0) break; w = vec3(0.0, 1.0, 0.0); } // リブ：横の向きだけに並ぶ縦の筋
+    if (kind > 1.5 && kind < 2.5 && i > 2) break;
+    float k = 6.2832 / (uGlassWave.y * w.y * m);
+    vec2 kv = k * vec2(cos(w.x), sin(w.x));
+    float a = uGlassWave.z * m * (kind > 2.5 ? 1.0 : 0.45);
+    float ph = dot(kv, q) + w.z;
+    g += a * cos(ph) * kv;
+    H -= a * sin(ph) * vec3(kv.x * kv.x, kv.y * kv.y, kv.x * kv.y);
+  }
+}
+// 虹の色（0 = 赤 → 1 = 紫、白を混ぜない）
+vec3 glassHue(float s) { return clamp(abs(fract(s * 0.8 + vec3(0.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0) - 1.0, 0.0, 1.0); }
+// 点 p に向き l から届く日差しが、ガラスを通ってきたときの倍率（色ごと）。ガラスでなければ 1。
+// ガラスの色（uGlassTint）と、表面の形による光の網目：ガラスの表面の傾きで光は (n−1)·∇h だけ曲がる（薄いプリズム、n = 1.5）。
+// 距離 t 進むと、ガラスの上の位置 s を通った光が s + t·(n−1)·∇h(s) に届くので、点に届く光の明るさは 1 / |det(I + t·(n−1)·H)|（光が集まる所が明るい網目）。
+// 虹：色ごとに屈折率を少しずつ変えて（本物のガラスの差 0.012 × 虹の強さ）7 色で重ねると、網目の縁が虹色になる。caustic = false なら色だけ
+vec3 glassSunFactor(vec3 p, vec3 l, bool caustic) {
+  if (uGlassMask < 0.5) return vec3(1.0);
+  int f;
+  float t = exitRoom(p, l, f);
+  vec3 q = p + l * t;
+  if (!isGlass(f, q)) return vec3(1.0);
+  if (!caustic || uGlassWave.x < 0.5) return uGlassTint;
+  vec2 uv = glassUV(f, q);
+  int ns = uGlassWave.w > 0.0 ? 7 : 1;
+  vec3 sum = vec3(0.0), wsum = vec3(0.0);
+  for (int j = 0; j < 7; j++) {
+    if (j >= ns) break;
+    float s = ns == 1 ? 0.5 : (float(j) + 0.5) / 7.0;
+    float dn = 0.5 + 0.012 * uGlassWave.w * (s - 0.5);
+    vec2 g; vec3 H;
+    glassWaves(uv, g, H);
+    glassWaves(uv - t * dn * g, g, H); // その点に届く光が通ったガラスの位置（1 回だけ近づける）
+    // 光が集まり切る所（焦点）より遠くでは、網目は細かく折り重なるが、太陽の大きさ（0.53°）でぼけて見えなくなるので、焦点の手前で止める
+    float a = min(t, uGlassFocus / 0.5) * dn;
+    float det = (1.0 + a * H.x) * (1.0 + a * H.y) - a * a * H.z * H.z;
+    float I = min(1.0 / max(abs(det), 0.06), 8.0);
+    // 太陽の大きさのぼけ：進んだ距離 × 0.0093（太陽の見かけの直径）が模様の大きさに近づくほど、網目は薄れる
+    float blur = 3.1416 * t * 0.0093 / max(uGlassWave.y, 1e-3);
+    I = mix(1.0, I, exp(-blur * blur));
+    vec3 c = ns == 1 ? vec3(1.0) : glassHue(s);
+    sum += c * I;
+    wsum += c;
+  }
+  return uGlassTint * sum / wsum;
+}
 
 vec3 windowPoint(float r1, float r2) {
   float u = mix(uWinRect.x, uWinRect.y, r1), v = mix(uWinRect.z, uWinRect.w, r2);
@@ -618,7 +686,7 @@ vec3 sunIrradiance(vec3 p, vec3 n) {
   if (uSunE.x + uSunE.y + uSunE.z <= 0.0) return vec3(0.0);
   vec3 l = sunDirAt(vec2(rnd(), rnd()));
   float c = dot(n, l);
-  return c > 0.0 && seesOutside(p, l) ? uSunE * (c * cloudTrans(p)) : vec3(0.0);
+  return c > 0.0 && seesOutside(p, l) ? uSunE * glassSunFactor(p, l, false) * (c * cloudTrans(p)) : vec3(0.0);
 }
 
 vec3 indirect(vec3 p, vec3 n) {
@@ -1102,6 +1170,7 @@ vec3 sunDirect(vec3 p, vec3 n) {
 vec3 sunLight(vec3 p, vec3 n) {
   if (panelOn()) return panelLight(p, n) + blobLight(p, n);
   vec3 sun = uOrgOn > 0.5 ? organicSun(p, n) : sunDirect(p, n);
+  if (uGlassMask > 0.5 && sun.x + sun.y + sun.z > 0.0) sun *= glassSunFactor(p, uSunDir, true); // ガラスを通った日差し（色・光の網目・虹）
   if (uShimOn > 0.0 && sun.x + sun.y + sun.z > 0.0) sun *= shimmer(p, n);
   return sun + prismLight(p, n);
 }
@@ -1154,6 +1223,7 @@ vec3 bottomSun(vec3 b, float fade, vec3 edge, float flatSun, float inner) {
   if (panelOn()) return panelLight(top, up) * 0.97 + blobLight(top, up);
   vec3 c = causticBottomRGB(b, fade);
   if (uWaveOn > 0.5 || uOrgOn > 0.5) c = mix(vec3(flatSun), c, inner) * edge;
+  if (uGlassMask > 0.5 && c.x + c.y + c.z > 0.0) c *= glassSunFactor(top, uSunDir, true);
   if (uShimOn > 0.0 && c.x + c.y + c.z > 0.0) c *= shimmer(top, up);
   return uSunE * c + prismLight(top, up);
 }
@@ -1218,7 +1288,7 @@ vec3 toSrgb(vec3 c) {
 // 斜めに見るほどガラスの中を長く通るので、ガラスの色（わずかな緑）が濃くなる。
 // 映り込みは、画素の光線をガラスで反射させた先を、ふつうの画素と同じ処理で描いて、反射の割合を掛ける（水盤などの処理を 2 つ持たないため）
 float glassFresnel(float c) { return 0.04 + 0.96 * pow(1.0 - c, 5.0); }
-vec3 glassTint(float c) { return pow(vec3(0.94, 0.975, 0.965), vec3(1.0 / max(c, 0.2))); }
+vec3 glassTint(float c) { return pow(uGlassTint, vec3(1.0 / max(c, 0.2))); }
 
 void main() {
   vec2 px = gl_FragCoord.xy;
@@ -1238,10 +1308,21 @@ void main() {
     float w = 1.0;
     vec3 ind2 = ind;
     if (isGlass(f, p)) {
-      vec3 gn = inwardNormal(f);
+      // 表面の形：傾きで面の向きを傾け（映り込みがゆがむ）、透けて見える向きを (n−1)·∇h だけ曲げる（外の景色がゆがむ）。虹がオンなら色ごとに曲げ方を変える
+      vec2 gg; vec3 gH;
+      glassWaves(glassUV(f, p), gg, gH);
+      vec3 tu, tv;
+      glassAxes(f, tu, tv);
+      vec3 slope = gg.x * tu + gg.y * tv;
+      vec3 gn = normalize(inwardNormal(f) - slope);
       float c = clamp(dot(-d, gn), 0.0, 1.0);
       w = glassFresnel(c);
-      col += (1.0 - w) * outsideRadiance(p, d) * glassTint(c);
+      vec3 lt = outsideRadiance(p, normalize(d + 0.5 * slope));
+      if (uGlassWave.w > 0.0 && uGlassWave.x > 0.5) {
+        float dd = 0.012 * uGlassWave.w * 0.5;
+        lt = vec3(outsideRadiance(p, normalize(d + (0.5 - dd) * slope)).r, lt.g, outsideRadiance(p, normalize(d + (0.5 + dd) * slope)).b);
+      }
+      col += (1.0 - w) * lt * glassTint(c);
       vec3 o2 = p + gn * EPS;
       d = reflect(d, gn);
       float t2 = exitRoom(o2, d, f);

@@ -66,10 +66,12 @@ export interface RoomRenderSettings {
   seaWindMS: number;
   /** 窓の外の海の波の高さの倍率（FFT のとき。1 で、その風速で十分に発達した海の高さ） */
   seaWaveScale: number;
-  /** ガラスの壁にする面（面ぜんたいが枠なしの一枚ガラス。外は空と海） */
+  /** 窓にする所（左右の壁は壁いっぱい、天井はなし・天井いっぱい・天窓（天井の一部）のどれか）。いくつでも組み合わせられる */
+  openings: Openings;
+  /** ガラスの壁にする面（枠なしの一枚ガラス。外は空と海）。窓（穴）の所は窓のまま。天窓のときに天井をガラスにすると、天窓のまわりの天井がガラスになる */
   glass: Record<GlassFace, boolean>;
-  /** ガラスの天窓（天井の中央の一部だけをガラスにする。幅は左右、奥行きは奥行きの向き、m） */
-  glassSkylight: { on: boolean; widthM: number; depthM: number };
+  /** ガラスの仕様と表面の形（ガラスの面すべてに共通） */
+  glassSpec: GlassSpec;
   /** 正弦波の海と FFT の海を並べて比べる（海を窓の奥行きの真ん中で分け、手前側：正弦波、奥側：FFT。WebGPU のとき） */
   seaCompare: boolean;
   /** 窓の外の海面の、描かない細かいさざ波の粗さ（傾きの 2 乗平均）。大きいほど太陽のきらめきが広い帯になる */
@@ -146,6 +148,41 @@ export type MoonMode = (typeof MOON_MODES)[number];
 /** ガラスにできる面（面ぜんたいが枠なしの一枚ガラス。床は水盤なので除く） */
 export const GLASS_FACES = ['right', 'left', 'ceiling', 'front', 'back'] as const;
 export type GlassFace = (typeof GLASS_FACES)[number];
+/** 天井の窓：none = なし、full = 天井いっぱい、skylight = 天窓（天井の中央の一部） */
+export const WINDOW_TOPS = ['none', 'full', 'skylight'] as const;
+export type WindowTop = (typeof WINDOW_TOPS)[number];
+export interface Openings {
+  left: boolean;
+  right: boolean;
+  top: WindowTop;
+  /** 天窓の幅（左右、m）と奥行き（m） */
+  skyWidthM: number;
+  skyDepthM: number;
+}
+
+/** ガラスの種類：float = 普通の板ガラス（鉄分でわずかに緑）、lowIron = 高透過ガラス（ほぼ無色）、tinted = 色付きガラス（色を選ぶ） */
+export const GLASS_KINDS = ['float', 'lowIron', 'tinted'] as const;
+export type GlassKind = (typeof GLASS_KINDS)[number];
+/** ガラスの表面の形：flat = 平ら、wave = 波打ち（水面のような細かい波）、swell = うねり（大きくゆるやかな波）、reeded = リブ（縦の筋） */
+export const GLASS_SURFACES = ['flat', 'wave', 'swell', 'reeded'] as const;
+export type GlassSurface = (typeof GLASS_SURFACES)[number];
+export interface GlassSpec {
+  kind: GlassKind;
+  /** 色付きガラスの色（#rrggbb） */
+  color: string;
+  /** 透過率の倍率（1 で、その種類のガラスの透け方） */
+  transmission: number;
+  surface: GlassSurface;
+  /** 表面の模様の大きさ（m。波の長さの目安） */
+  scaleM: number;
+  /** 表面の深さ（mm。波の高さ。深いほど、景色のゆがみと光の網目が強い） */
+  depthMM: number;
+  /** ガラスを通る光を、色ごとに少しずつ違う向きに曲げる（光の網目と、透けた景色の縁が虹色になる） */
+  prism: boolean;
+  /** 虹の強さ（本物のガラスの色ごとの屈折率の差の何倍か。本物の 1 倍ではほとんど見えない） */
+  prismStrength: number;
+}
+
 /** シェーダーの面の番号（0 = +x 右、1 = −x 左、2 = 天井、4 = 手前、5 = 奥） */
 export const GLASS_FACE_INDEX: Record<GlassFace, number> = { right: 0, left: 1, ceiling: 2, front: 4, back: 5 };
 

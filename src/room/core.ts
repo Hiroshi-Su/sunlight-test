@@ -6,7 +6,7 @@ import { type WindowSide, wallWindowSide } from '../config.ts';
 import { type RGB, kelvinToRgb } from '../palette.ts';
 import { DriftBlend } from '../scenes/shader.ts';
 import { SUN_ANGULAR_RADIUS_DEG, directSunFactor, skyBrightness } from './daylight.ts';
-import { MAX_BLOBS, MAX_PRISMS, MAX_SHIM_COLORS, MAX_SHIM_PALETTE, MAX_SPOTS, GLASS_FACES, GLASS_FACE_INDEX, PRISM_PATTERNS, type OrganicLook, type PrismMotion, type RoomGeometry, type RoomInput, type RoomRenderSettings, type RoomScreenImage, type SpotLight, cloudFlowDir, moonDirection, moonWeight, spotPose, spotWeight, toThree, windowRect } from './model.ts';
+import { MAX_BLOBS, MAX_PRISMS, MAX_SHIM_COLORS, MAX_SHIM_PALETTE, MAX_SPOTS, GLASS_FACES, GLASS_FACE_INDEX, GLASS_SURFACES, PRISM_PATTERNS, type OrganicLook, type PrismMotion, type RoomGeometry, type RoomInput, type RoomRenderSettings, type RoomScreenImage, type SpotLight, cloudFlowDir, moonDirection, moonWeight, spotPose, spotWeight, toThree, windowRect } from './model.ts';
 import { OCEAN_CASCADES, OCEAN_LODS, type OceanSpectrum, buildOceanSpectrum } from './ocean.ts';
 import { wavePhases } from './water.ts';
 
@@ -193,8 +193,10 @@ export class RoomCore {
       uSeaGlintDir: { value: new THREE.Vector3(0, 1, 0) },        // 海に映すきらめきの光の向き（昼は太陽、夜は海に映す月）
       uSeaGlintE: { value: new THREE.Vector3() },                 // その光の強さ
       uGlassMask: { value: 0 },                                  // ガラスの壁の面（ビット）
-      uGlassSkyOn: { value: 0 },                                 // ガラスの天窓
-      uGlassSky: { value: new THREE.Vector4() },                 // ガラスの天窓の範囲（x の範囲・z の範囲）
+      uOpenMask: { value: 0 },                                   // 1 つ目・2 つ目の窓のほかに、壁いっぱいの窓にする面（ビット）
+      uGlassWave: { value: new THREE.Vector4() },                // ガラスの表面の形・模様の大きさ（m）・深さ（m）・虹の強さ
+      uGlassTint: { value: new THREE.Vector3(0.99, 0.995, 0.99) }, // ガラスを真正面から通る光の割合（色ごと）
+      uGlassFocus: { value: 1 },                                 // 光が集まり切る距離 ×（n−1）の上限
       uSeaSplit: { value: 0 },                                   // 1 = 海の手前側（窓の奥行きの真ん中より手前）は正弦波の海（比べるとき）
       uOceanOn: { value: 0 },                                    // 1 = 海の波を FFT の画像から読む（WebGPU のときだけ使う）
       uOceanSize: { value: new THREE.Vector2(OCEAN_CASCADES[0].sizeM, OCEAN_CASCADES[1].sizeM) },
@@ -457,10 +459,10 @@ export class RoomCore {
     const ground = horizSun.add(top.clone().add(bottom).multiplyScalar(0.5 * Math.PI)).multiplyScalar(GROUND_ALBEDO / Math.PI);
 
     if (windowSide === 'ceiling-left') {
-      // 天井＋左：どちらも枠なし。左の窓は左の壁いっぱい（奥行き全部・床から天井まで）、天井の窓は天井いっぱい。パネルの窓の大きさは使わない
-      const { widthM: W, depthM: D, heightM: H } = this.room;
+      // 天井＋左：左の窓は左の壁いっぱい（奥行き全部・床から天井まで、枠なし）、天井の窓はパネルの窓の大きさ（天井いっぱいか天窓）
+      const { depthM: D, heightM: H } = this.room;
       this.winRect.set(-D, 0, 0, H);
-      this.win2Rect.fromArray(windowRect('ceiling', this.room, { widthM: W, heightM: D, sillHeightM: 0 }));
+      this.win2Rect.fromArray(windowRect('ceiling', this.room, settings.window));
     } else {
       this.winRect.fromArray(windowRect(windowSide, this.room, settings.window));
     }
@@ -617,7 +619,7 @@ export class RoomCore {
     // 重ね合わせのやり直し：視点や設定（窓の大きさを含む）が変わったら最初から
     const key = [
       sp.mode, sp.kind, JSON.stringify(sp.ambient), sp.count, JSON.stringify(sp.lights.slice(0, sp.count)),
-      moon.on, moon.strength, moon.skyStrength, moon.color, moon.azimuthDeg, moon.altitudeDeg, moon.mode, real ? Math.round(phaseK * 100) : 0, moon.seaRoadAltDeg, moon.seaRoadOffsetDeg, JSON.stringify(settings.glass), JSON.stringify(settings.glassSkylight),
+      moon.on, moon.strength, moon.skyStrength, moon.color, moon.azimuthDeg, moon.altitudeDeg, moon.mode, real ? Math.round(phaseK * 100) : 0, moon.seaRoadAltDeg, moon.seaRoadOffsetDeg, JSON.stringify(settings.glass), JSON.stringify(settings.glassSpec), JSON.stringify(settings.openings),
       settings.bounces, settings.seaView, settings.seaRipples, settings.pool, settings.poolReflect, settings.waveAmp, settings.poolDepthM, settings.seaLevelM, this.winRect.toArray(),
       cloudsOn, settings.cloudShadow, settings.cloudAmount, settings.cloudOpacity, settings.cloudSizeM, settings.cloudHeightM,
       settings.screenArea, !!screen, screen?.def.id, settings.screenGain,
@@ -655,13 +657,30 @@ export class RoomCore {
     s.uSEAPh.value = ph.sea;
     s.uFINEPh.value = ph.fine;
     s.uWaveAmp.value = settings.waveAmp;
+    // 窓の組み合わせ：1 つ目の窓（左 > 右）と天井の窓（2 つ目）で表せない壁の窓は、面ぜんたいを開ける（右の壁、天井だけ＋右 など）
+    const op = settings.openings;
+    s.uOpenMask.value = (op.right && windowSide !== 'right' ? 1 : 0) + (op.left && windowSide !== 'left' && windowSide !== 'ceiling-left' ? 2 : 0);
     // ガラスの壁：面ぜんたいが窓になる。壁がガラスなら、天窓だけのときも海が見える
     s.uGlassMask.value = GLASS_FACES.reduce((m, f) => m + (settings.glass[f] ? 1 << GLASS_FACE_INDEX[f] : 0), 0);
-    const gs = settings.glassSkylight;
-    s.uGlassSkyOn.value = gs.on ? 1 : 0;
-    s.uGlassSky.value.fromArray(windowRect('ceiling', this.room, { widthM: gs.widthM, heightM: gs.depthM, sillHeightM: 0 }));
     const glassWall = (s.uGlassMask.value & 0b110011) !== 0;
-    s.uSeaOn.value = settings.seaView && (windowSide !== 'ceiling' || glassWall) ? 1 : 0;
+    // ガラスの仕様：種類ごとの色（真正面で通る光の割合）× 透過率。表面の形と虹
+    const gs = settings.glassSpec;
+    const tint = gs.kind === 'float' ? new THREE.Vector3(0.94, 0.975, 0.965)
+      : gs.kind === 'lowIron' ? new THREE.Vector3(0.99, 0.995, 0.99)
+      : linear(hexToRgb(gs.color));
+    s.uGlassTint.value.copy(tint.multiplyScalar(Math.max(0, gs.transmission)));
+    // 表面の曲がり具合の最大（正弦波ごとの 振幅 × 波数² の和の 6 割）から、光が集まり切る距離（×（n−1））を決める。シェーダーの正弦波と同じ並び
+    {
+      const L = Math.max(0.01, gs.scaleM), A = Math.max(0, gs.depthMM) / 1000;
+      // [波の長さの倍率, 深さと長さの倍率]
+      const waves: [number, number][] = gs.surface === 'reeded' ? [[1, 1]]
+        : gs.surface === 'swell' ? [[1, 3], [0.73, 3], [1.31, 3]]
+        : [[1, 1], [0.73, 1], [1.31, 1], [0.58, 1], [1.12, 1], [0.87, 1]];
+      const hmax = 0.6 * waves.reduce((sum, [w, m]) => sum + A * m * (gs.surface === 'reeded' ? 1 : 0.45) * (2 * Math.PI / (L * w * m)) ** 2, 0);
+      s.uGlassFocus.value = hmax > 0 ? 1 / hmax : 1e3;
+    }
+    s.uGlassWave.value.set(GLASS_SURFACES.indexOf(gs.surface), Math.max(0.01, gs.scaleM), Math.max(0, gs.depthMM) / 1000, gs.prism ? Math.max(0, gs.prismStrength) : 0);
+    s.uSeaOn.value = settings.seaView && (windowSide !== 'ceiling' || glassWall || s.uOpenMask.value > 0) ? 1 : 0;
     s.uSeaY.value = settings.seaLevelM;
     s.uSeaBody.value.set(0.12, 0.35, 0.42).multiplyScalar(skyL * 0.25);
     s.uSeaLook.value.set(Math.max(1e-4, settings.seaRoughness), Math.max(0, settings.seaScatter));

@@ -95,15 +95,68 @@ fn inWindow2(face: i32, p: vec3f) -> bool {
 }
 
 // ガラスの壁（src/room/gl.ts と同じ）
+fn isOpen(face: i32) -> bool { return (u32(u.uOpenMask + 0.5) & (1u << u32(face))) != 0u; }
 fn isGlass(face: i32, p: vec3f) -> bool {
-  if ((u32(u.uGlassMask + 0.5) & (1u << u32(face))) != 0u) { return true; }
-  return u.uGlassSkyOn > 0.5 && face == 2 && p.x > u.uGlassSky.x && p.x < u.uGlassSky.y && p.z > u.uGlassSky.z && p.z < u.uGlassSky.w;
+  return (u32(u.uGlassMask + 0.5) & (1u << u32(face))) != 0u && !isOpen(face) && !inWindow1(face, p) && !inWindow2(face, p);
 }
 
 fn inWindow(face: i32, p: vec3f) -> bool {
-  return inWindow1(face, p) || inWindow2(face, p) || isGlass(face, p);
+  return inWindow1(face, p) || inWindow2(face, p) || isOpen(face) || isGlass(face, p);
 }
 fn windowIndex(face: i32, p: vec3f) -> i32 { return select(select(0, 1, inWindow1(face, p)), 2, inWindow2(face, p)); }
+
+// ---- ガラスの表面の形とプリズム（src/room/gl.ts と同じ）----
+var<private> GLASS_W: array<vec3f, 6> = array<vec3f, 6>(vec3f(0.3, 1.0, 0.0), vec3f(1.4, 0.73, 1.7), vec3f(2.5, 1.31, 3.1), vec3f(3.6, 0.58, 4.4), vec3f(4.7, 1.12, 0.9), vec3f(5.6, 0.87, 2.6));
+fn glassUV(f: i32, p: vec3f) -> vec2f { return select(select(p.xy, p.xz, f == 2), p.zy, f == 0 || f == 1); }
+fn glassTu(f: i32) -> vec3f { return select(vec3f(1.0, 0.0, 0.0), vec3f(0.0, 0.0, 1.0), f == 0 || f == 1); }
+fn glassTv(f: i32) -> vec3f { return select(vec3f(0.0, 1.0, 0.0), vec3f(0.0, 0.0, 1.0), f == 2); }
+struct GlassWave { g: vec2f, H: vec3f }
+fn glassWaves(q: vec2f) -> GlassWave {
+  var r = GlassWave(vec2f(0.0), vec3f(0.0));
+  let kind = u.uGlassWave.x;
+  if (kind < 0.5) { return r; }
+  let swell = kind > 1.5 && kind < 2.5;
+  let m = select(1.0, 3.0, swell);
+  for (var i = 0; i < 6; i++) {
+    var w = GLASS_W[i];
+    if (kind > 2.5) { if (i > 0) { break; } w = vec3f(0.0, 1.0, 0.0); }
+    if (swell && i > 2) { break; }
+    let k = 6.2832 / (u.uGlassWave.y * w.y * m);
+    let kv = k * vec2f(cos(w.x), sin(w.x));
+    let a = u.uGlassWave.z * m * select(0.45, 1.0, kind > 2.5);
+    let ph = dot(kv, q) + w.z;
+    r.g += a * cos(ph) * kv;
+    r.H -= a * sin(ph) * vec3f(kv.x * kv.x, kv.y * kv.y, kv.x * kv.y);
+  }
+  return r;
+}
+fn glassHue(s: f32) -> vec3f { return clamp(abs(fract(s * 0.8 + vec3f(0.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0) - 1.0, vec3f(0.0), vec3f(1.0)); }
+fn glassSunFactor(p: vec3f, l: vec3f, caustic: bool) -> vec3f {
+  if (u.uGlassMask < 0.5) { return vec3f(1.0); }
+  let e = exitRoom(p, l);
+  let q = p + l * e.t;
+  if (!isGlass(e.face, q)) { return vec3f(1.0); }
+  if (!caustic || u.uGlassWave.x < 0.5) { return u.uGlassTint; }
+  let uv = glassUV(e.face, q);
+  let ns = select(1, 7, u.uGlassWave.w > 0.0);
+  var sum = vec3f(0.0);
+  var wsum = vec3f(0.0);
+  for (var j = 0; j < 7; j++) {
+    if (j >= ns) { break; }
+    let s = select((f32(j) + 0.5) / 7.0, 0.5, ns == 1);
+    let dn = 0.5 + 0.012 * u.uGlassWave.w * (s - 0.5);
+    let w0 = glassWaves(uv);
+    let w1 = glassWaves(uv - e.t * dn * w0.g);
+    let a = min(e.t, u.uGlassFocus / 0.5) * dn;
+    let det = (1.0 + a * w1.H.x) * (1.0 + a * w1.H.y) - a * a * w1.H.z * w1.H.z;
+    let blur = 3.1416 * e.t * 0.0093 / max(u.uGlassWave.y, 1e-3);
+    let I = mix(1.0, min(1.0 / max(abs(det), 0.06), 8.0), exp(-blur * blur));
+    let c = select(glassHue(s), vec3f(1.0), ns == 1);
+    sum += c * I;
+    wsum += c;
+  }
+  return u.uGlassTint * sum / wsum;
+}
 
 fn windowPoint(r1: f32, r2: f32) -> vec3f {
   let a = mix(u.uWinRect.x, u.uWinRect.y, r1);
@@ -560,7 +613,7 @@ fn sunIrradiance(p: vec3f, n: vec3f) -> vec3f {
   let r2 = rnd();
   let l = sunDirAt(vec2f(r1, r2));
   let c = dot(n, l);
-  if (c > 0.0 && seesOutside(p, l)) { return u.uSunE * (c * cloudTrans(p)); }
+  if (c > 0.0 && seesOutside(p, l)) { return u.uSunE * glassSunFactor(p, l, false) * (c * cloudTrans(p)); }
   return vec3f(0.0);
 }
 
@@ -1028,6 +1081,7 @@ fn sunLight(p: vec3f, n: vec3f) -> vec3f {
   if (panelOn()) { return panelLight(p, n) + blobLight(p, n); }
   var sun: vec3f;
   if (u.uOrgOn > 0.5) { sun = organicSun(p, n); } else { sun = sunDirect(p, n); }
+  if (u.uGlassMask > 0.5 && sun.x + sun.y + sun.z > 0.0) { sun *= glassSunFactor(p, u.uSunDir, true); }
   if (u.uShimOn > 0.0 && sun.x + sun.y + sun.z > 0.0) { sun *= shimmer(p, n); }
   return sun + prismLight(p, n);
 }
@@ -1083,6 +1137,7 @@ fn bottomSun(b: vec3f, fade: f32, edge: vec3f, flatSun: f32, inner: f32) -> vec3
   if (panelOn()) { return panelLight(top, up) * 0.97 + blobLight(top, up); }
   var c = causticBottomRGB(b, fade);
   if (u.uWaveOn > 0.5 || u.uOrgOn > 0.5) { c = mix(vec3f(flatSun), c, inner) * edge; }
+  if (u.uGlassMask > 0.5 && c.x + c.y + c.z > 0.0) { c *= glassSunFactor(top, u.uSunDir, true); }
   if (u.uShimOn > 0.0 && c.x + c.y + c.z > 0.0) { c *= shimmer(top, up); }
   return u.uSunE * c + prismLight(top, up);
 }
@@ -1133,7 +1188,7 @@ fn poolRadiance(p: vec3f, d: vec3f, ind: vec3f) -> vec3f {
 
 // ガラスの壁（src/room/gl.ts と同じ）
 fn glassFresnel(c: f32) -> f32 { return 0.04 + 0.96 * pow(1.0 - c, 5.0); }
-fn glassTint(c: f32) -> vec3f { return pow(vec3f(0.94, 0.975, 0.965), vec3f(1.0 / max(c, 0.2))); }
+fn glassTint(c: f32) -> vec3f { return pow(u.uGlassTint, vec3f(1.0 / max(c, 0.2))); }
 
 fn aces(x: vec3f) -> vec3f {
   return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), vec3f(0.0), vec3f(1.0));
@@ -1167,10 +1222,17 @@ ${FULLSCREEN_VS}
     var w = 1.0;
     var ind2 = ind;
     if (isGlass(f, p)) {
-      let gn = inwardNormal(f);
+      let gw = glassWaves(glassUV(f, p));
+      let slope = gw.g.x * glassTu(f) + gw.g.y * glassTv(f);
+      let gn = normalize(inwardNormal(f) - slope);
       let c = clamp(dot(-d, gn), 0.0, 1.0);
       w = glassFresnel(c);
-      col += (1.0 - w) * outsideRadiance(p, d) * glassTint(c);
+      var lt = outsideRadiance(p, normalize(d + 0.5 * slope));
+      if (u.uGlassWave.w > 0.0 && u.uGlassWave.x > 0.5) {
+        let dd = 0.012 * u.uGlassWave.w * 0.5;
+        lt = vec3f(outsideRadiance(p, normalize(d + (0.5 - dd) * slope)).r, lt.g, outsideRadiance(p, normalize(d + (0.5 + dd) * slope)).b);
+      }
+      col += (1.0 - w) * lt * glassTint(c);
       let o2 = p + gn * EPS;
       d = reflect(d, gn);
       let e2 = exitRoom(o2, d);
