@@ -36,6 +36,8 @@ const AMBIENT_SCALE = 0.045;
 // 倍率 1 で、月の光（光に垂直な面での放射照度）は晴れた日の直射日光の約 1/10、夜空の明るさは昼の空の約 1/8
 const MOON_SCALE = 0.25;
 const MOON_SKY_SCALE = SKY_SCALE * 0.12;
+/** 窓から見える月の円盤の明るさ（露出をかけた後の値。トーンマップで約 0.88 の白になり、表面の模様が見える） */
+const MOON_DISK_EXPOSED = 1.6;
 /** スポットライトの器具の大きさ（球の半径、m）。水面に映るライトのきらめきと、器具そのものの見え方に使う */
 export const SPOT_RADIUS = 0.06;
 export const CAUSTIC_SIZE = 512; // 光の揺らぎを記録する面ごとの画像の大きさ（画素）
@@ -218,6 +220,9 @@ export class RoomCore {
       uPixAngle: { value: 1e-3 },
       uSeaGlintDir: { value: new THREE.Vector3(0, 1, 0) },        // 海に映すきらめきの光の向き（昼は太陽、夜は海に映す月）
       uSeaGlintE: { value: new THREE.Vector3() },                 // その光の強さ
+      uMoonDisk: { value: new THREE.Vector3() },                  // 窓から見える月：描くか・見かけの半径の sin・満ち欠けの形を描くか
+      uMoonDiskL: { value: new THREE.Vector3() },                 // 月の円盤の明るさ
+      uMoonSunDir: { value: new THREE.Vector3(0, -1, 0) },        // 太陽のある方向（満ち欠けの形）
       uGlassMask: { value: 0 },                                  // ガラスの壁の面（ビット）
       uOpenMask: { value: 0 },                                   // 1 つ目・2 つ目の窓のほかに、壁いっぱいの窓にする面（ビット）
       // ガラスの仕様（面の番号ごと。0 = 右、1 = 左、2 = 天井、4 = 手前、5 = 奥）
@@ -506,8 +511,10 @@ export class RoomCore {
     const moon = settings.moon;
     const moonW = moonWeight(moon, sun.altitude);
     const sunUp = sun.altitude > 0;
-    // 本物の月：位置は日時と緯度経度から（input.moon）。real は満ち欠けで明るさを変える（半月で満月の約 1/10、新月でほぼ 0）
-    const real = (moon.mode === 'real' || moon.mode === 'realFull') && input.moon ? input.moon : null;
+    // 本物の月：位置は日時と緯度経度から（input.moon）。real は満ち欠けで明るさを変える（半月で満月の約 1/10、新月でほぼ 0）。
+    // realFull はいつも満月の明るさで、月が地平線の下にある間は、決めた方位・高度の月で同じ明るさの光を入れる（夜はいつも同じ明るさ）
+    const realPos = (moon.mode === 'real' || moon.mode === 'realFull') && input.moon ? input.moon : null;
+    const real = realPos && !(moon.mode === 'realFull' && realPos.altitude <= 0) ? realPos : null;
     const moonAlt = real ? real.altitude : moon.altitudeDeg;
     const phaseK = real && moon.mode === 'real' ? real.brightness : 1;
     const useMoon = !sunUp && moonW > 0 && moonAlt > 0;
@@ -528,11 +535,18 @@ export class RoomCore {
     const skyL = SKY_SCALE * skyBrightness(sun.altitude);
     // 夜空：月明かりの点き具合に応じて、月の色の空の光を足す（上ほど明るく、地平線の近くは少し暗い）
     // 本物の月のときは、夜空の明るさも月の明るさに合わせる（月が出ていない・新月の夜でも、真っ暗にはせず 15% は残す）
-    const skyK = real ? Math.max(0.15, moonAlt > 0 ? phaseK : 0) : 1;
+    const skyK = real && moon.mode === 'real' ? Math.max(0.15, moonAlt > 0 ? phaseK : 0) : 1;
     const nightSky = moonCol.clone().multiplyScalar(MOON_SKY_SCALE * moon.skyStrength * moonW * skyK);
     const top = linear(input.sky.top).multiplyScalar(skyL).add(nightSky);
     const bottom = linear(input.sky.bottom).multiplyScalar(skyL).addScaledVector(nightSky, 0.7);
     this.moonOn = useMoon ? moonW : 0;
+    // 窓から見える月の円盤：本物の見かけの大きさ（月までの距離から。決めた月のときは平均の 0.259°）× 倍率。
+    // 本物の月のときは、太陽の向き（夜は地平線の下）から満ち欠けの形を決める。明るさは、露出をかけた後に白く飛ばず、
+    // 表面の模様が見える値（本物どおりの明るさ（月の光 ÷ 円盤の大きさ）は数千倍明るく、真っ白になる）。色は月明かりの色を少しだけ
+    const moonR = Math.asin(Math.min(0.02, 1737.4 / (real?.distanceKm ?? 384400))) * Math.max(0, moon.diskScale);
+    s.uMoonDisk.value.set(useMoon && moonR > 0 ? 1 : 0, Math.sin(Math.max(moonR, 1e-5)), real ? 1 : 0);
+    s.uMoonDiskL.value.set(1, 1, 1).lerp(moonCol, 0.25).multiplyScalar((MOON_DISK_EXPOSED / (0.25 * Math.max(0.05, settings.exposure))) * moonW);
+    s.uMoonSunDir.value.copy(moonDirection({ ...moon, azimuthDeg: sun.azimuth, altitudeDeg: sun.altitude }, this.facingAzimuth));
     // 窓の外の地面：日差しと空の光を受けて、反射率ぶんだけ明るい
     const horizSun = sunE.clone().multiplyScalar(Math.max(0, Math.sin((sun.altitude * Math.PI) / 180)));
     const ground = horizSun.add(top.clone().add(bottom).multiplyScalar(0.5 * Math.PI)).multiplyScalar(GROUND_ALBEDO / Math.PI);

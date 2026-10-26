@@ -322,6 +322,31 @@ fn sunLobe(r: vec3f) -> f32 {
   return pow(max(dot(r, u.uSunDir), 0.0), 3000.0) * (3002.0 / (2.0 * PI));
 }
 
+// 窓から見える月（夜）。本物の見かけの大きさ（× 倍率）の円盤で、本物の月のときは太陽の向きから満ち欠けの形を決める
+// （月の球の、太陽を向いた半分が光る）。表面の暗い所（海）は月の球の上のノイズで薄く描き、影の側は地球照でかすかに見える。
+// 明るさは本物どおりだと白く飛ぶので、露出に合わせて模様が見える値にしている（core.ts）。雲がかかると隠れる
+fn moonDisk(o: vec3f, d: vec3f) -> vec3f {
+  if (u.uMoonDisk.x < 0.5) { return vec3f(0.0); }
+  let m = u.uSunDir;
+  let c = dot(d, m);
+  if (c <= 0.0) { return vec3f(0.0); }
+  let sr = u.uMoonDisk.y;
+  let q = (d - m * c) / sr; // 円盤の上の位置（縁が 1）
+  let r = length(q);
+  let aa = max(u.uPixAngle / sr, 0.03);
+  let edge = 1.0 - smoothstep(1.0 - aa, 1.0 + aa, r);
+  if (edge <= 0.0) { return vec3f(0.0); }
+  let n = q - m * sqrt(max(0.0, 1.0 - r * r)); // 月の球の、こちらを向いた面の向き
+  var lit = 1.0;
+  if (u.uMoonDisk.z > 0.5) { lit = smoothstep(-0.04, 0.04, dot(n, u.uMoonSunDir)); }
+  var up = vec3f(0.0, 1.0, 0.0) - m * m.y;
+  up = select(vec3f(0.0, 0.0, -1.0), normalize(up), dot(up, up) > 1e-6);
+  let s = vec3f(dot(n, cross(m, up)), dot(n, up), -dot(n, m)); // 月の球の上の座標（上 = 空の上の向き）
+  let mare = smoothstep(0.05, 0.45, snoise(s * 1.7 + vec3f(3.1, 1.7, 0.4)));
+  let tex = (1.0 - 0.4 * mare) * (0.93 + 0.07 * snoise(s * 9.0));
+  return u.uMoonDiskL * (edge * mix(0.002, tex, lit) * cloudTrans(o));
+}
+
 // 窓の外の海：点 o から向き d（下向き）で見た水面の明るさ
 @group(0) @binding(11) var ocean0: texture_2d<f32>;
 @group(0) @binding(12) var ocean1: texture_2d<f32>;
@@ -1322,19 +1347,19 @@ ${FULLSCREEN_VS}
         let dd = 0.012 * u.uGlassWaveB[f].x * 0.5;
         lt = vec3f(outsideRadiance(p, normalize(d + (0.5 - dd) * slope)).r, lt.g, outsideRadiance(p, normalize(d + (0.5 + dd) * slope)).b);
       }
-      col += (1.0 - w) * lt * glassTint(f, c);
+      col += (1.0 - w) * (lt + moonDisk(p, normalize(d + 0.5 * slope))) * glassTint(f, c);
       let o2 = p + gn * EPS;
       d = reflect(d, gn);
       let e2 = exitRoom(o2, d);
       f = e2.face;
       p = o2 + d * e2.t;
       col += w * spotLamp(o2, d, e2.t);
-      if (inWindow(f, p)) { col += w * (outsideRadiance(p, d) + u.uSunE * (sunLobe(d) * cloudTrans(p))); continue; }
+      if (inWindow(f, p)) { col += w * (outsideRadiance(p, d) + moonDisk(p, d) + u.uSunE * (sunLobe(d) * cloudTrans(p))); continue; }
       let cc = u.uViewProj * vec4f(p, 1.0);
       let uv = cc.xy / max(cc.w, 1e-6) * 0.5 + 0.5;
       if (cc.w > 0.0 && all(uv > vec2f(0.0)) && all(uv < vec2f(1.0))) { ind2 = accumAt(uv * u.uRes); }
     }
-    if (inWindow(f, p)) { col += outsideRadiance(p, d); continue; }
+    if (inWindow(f, p)) { col += outsideRadiance(p, d) + moonDisk(p, d); continue; }
     if (u.uPoolOn > 0.5 && f == 3) { col += w * poolRadiance(p, d, ind2); continue; }
     let n = inwardNormal(f);
     let a = albedo(f, p);

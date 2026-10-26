@@ -91,7 +91,7 @@ const PRISM_MOTION_LABEL: Record<PrismMotion, string> = {
 /** 月明かりの既定（南の空、高度 50° の月。太陽が 0° を切ると点き始め、−8° で最大） */
 export const MOON_DEFAULTS: MoonSettings = {
   on: true, strength: 0.5, skyStrength: 0.7, color: '#a9bfff', azimuthDeg: 180, altitudeDeg: 50, onAltDeg: 0, fullAltDeg: -8,
-  mode: 'realFull', seaRoadStrength: 1.5, seaRoadOffsetDeg: 0, seaRoadAltDeg: 6,
+  mode: 'realFull', seaRoadStrength: 1.5, seaRoadOffsetDeg: 0, seaRoadAltDeg: 6, diskScale: 1,
 };
 const SPOT_MODE_LABEL: Record<SpotMode, string> = { auto: '自動（太陽が沈むと点く）', on: '常に点ける', off: '消す' };
 const LIGHT_KIND_LABEL: Record<LightKind, string> = { spot: 'スポットライト（頭上から丸く照らす）', ambient: '全体照明（天井全体がやわらかく光る）' };
@@ -785,8 +785,9 @@ export function mountRoomUi(
     'B：部屋も海も、方位・高度で決めた月（本物どおり）': 'set',
     '前の作り方：部屋は決めた月、海だけ低い月（向きがそろわない）': 'split',
     '本物の月（日時から位置と満ち欠け。月が出ていない・新月の夜は暗い）': 'real',
-    '本物の月の位置で、いつも満月の明るさ': 'realFull',
+    '本物の月の位置で、いつも満月の明るさ（月が出ていない間は、決めた方位・高度から）': 'realFull',
   }).name('月の置き方');
+  fm.add(mn, 'diskScale', 0, 10, 0.1).name('窓から見える月の大きさ（本物の何倍か。0 で描かない）');
   fm.add(mn, 'seaRoadStrength', 0, 20, 0.1).name('海に映す月の光の明るさ（0 で海に光の道を出さない）');
   fm.add(mn, 'seaRoadOffsetDeg', -80, 80, 1).name('低い月の向き：窓の真ん中から奥へ（度、A と前の作り方）');
   fm.add(mn, 'seaRoadAltDeg', 1, 60, 0.5).name('低い月の高度（度。低いほど光の道が長く、部屋の奥まで差し込む）');
@@ -860,7 +861,7 @@ export function mountRoomUi(
         ...(settings.screen ? [`スクリーン  ${findScene(screen.id).label}`] : []),
         `ライト  ${spot.mode === 'off' ? '消す' : spotOn <= 0 ? '消えている（太陽が出ている）' : `点いている ${Math.round(spotOn * 100)}%`}`,
         `月明かり  ${!mn.on ? '消す' : moonOn > 0 ? `点いている ${Math.round(moonOn * 100)}%` : realMoon && moonPos && moonPos.altitude <= 0 && s.sun.altitude <= 0 ? '消えている（月が出ていない）' : '消えている（太陽が出ている）'}`,
-        ...(realMoon && moonPos ? [`本物の月  方位 ${moonPos.azimuth.toFixed(0)}°・高度 ${moonPos.altitude.toFixed(0)}°・照らされている割合 ${Math.round(moonPos.illumination * 100)}%（明るさ 満月の ${Math.round(moonPos.brightness * 100)}%${mn.mode === 'realFull' ? '。いつも満月の明るさで出す' : ''}）`] : []),
+        ...(realMoon && moonPos ? [`本物の月  方位 ${moonPos.azimuth.toFixed(0)}°・高度 ${moonPos.altitude.toFixed(0)}°・照らされている割合 ${Math.round(moonPos.illumination * 100)}%（明るさ 満月の ${Math.round(moonPos.brightness * 100)}%${mn.mode === 'realFull' ? (moonPos.altitude > 0 ? '。いつも満月の明るさで出す' : '。月が出ていないので、決めた方位・高度から満月の明るさで出す') : ''}）`] : []),
         `1 画素あたりの光線 ${samples} 本${samples < 256 ? '（止めておくと増えて、ざらつきが減る）' : ''}`,
         `計算 ${size.width}×${size.height}（${resolution.output === 'view' ? '画面の枠' : `展示の ${EXHIBIT_SIZE.width}×${EXHIBIT_SIZE.height}`} の ${Math.round(resolution.scale * 100)}%、画素数 ${Math.round(resolution.scale * resolution.scale * 100)}%）`,
         `描画 ${BACKEND_LABEL[backend]}  倍率 ${devicePixelRatio}`,

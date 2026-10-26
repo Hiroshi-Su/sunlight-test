@@ -48,6 +48,9 @@ uniform vec2 uSeaLook;       // 海面の細かい粗さ（傾きの 2 乗平均
 uniform float uPixAngle;     // 1 画素が見込む角度（ラジアン）
 uniform vec3 uSeaGlintDir;   // 海に映すきらめきの光の向き（昼は太陽、夜は海に映す月）
 uniform vec3 uSeaGlintE;     // その光の強さ
+uniform vec3 uMoonDisk;      // 窓から見える月：描くか（1 = 描く）・見かけの半径の sin・満ち欠けの形を描くか
+uniform vec3 uMoonDiskL;     // 月の円盤の明るさ（放射輝度）
+uniform vec3 uMoonSunDir;    // 太陽のある方向（月の満ち欠けの形を決める。夜は地平線の下）
 uniform float uGlassMask;    // ガラスの壁の面（ビット：1 = +x 右、2 = −x 左、4 = 天井、16 = 手前、32 = 奥）
 uniform float uOpenMask;     // 窓（壁いっぱいの穴）にする面のうち、1 つ目・2 つ目の窓で表せないもの（ビットは uGlassMask と同じ。左右の壁を両方窓にしたときなど）
 // ガラスの仕様は面ごと（面の番号で引く。0 = 右、1 = 左、2 = 天井、4 = 手前、5 = 奥。3（床）は使わない）
@@ -432,6 +435,30 @@ vec3 screenLight(int face, vec3 p, float lod) {
 // 太陽の円盤に向かう向きほど強い、鋭い山（水面に映る太陽のきらめき）。面積で割ってあるので、放射照度を掛けると放射輝度になる
 float sunLobe(vec3 r) {
   return pow(max(dot(r, uSunDir), 0.0), 3000.0) * (3002.0 / (2.0 * PI));
+}
+
+// 窓から見える月（夜）。本物の見かけの大きさ（× 倍率）の円盤で、本物の月のときは太陽の向きから満ち欠けの形を決める
+// （月の球の、太陽を向いた半分が光る）。表面の暗い所（海）は月の球の上のノイズで薄く描き、影の側は地球照でかすかに見える。
+// 明るさは本物どおりだと白く飛ぶので、露出に合わせて模様が見える値にしている（core.ts）。雲がかかると隠れる
+vec3 moonDisk(vec3 o, vec3 d) {
+  if (uMoonDisk.x < 0.5) return vec3(0.0);
+  vec3 m = uSunDir;
+  float c = dot(d, m);
+  if (c <= 0.0) return vec3(0.0);
+  float sr = uMoonDisk.y;
+  vec3 q = (d - m * c) / sr; // 円盤の上の位置（縁が 1）
+  float r = length(q);
+  float aa = max(uPixAngle / sr, 0.03);
+  float edge = 1.0 - smoothstep(1.0 - aa, 1.0 + aa, r);
+  if (edge <= 0.0) return vec3(0.0);
+  vec3 n = q - m * sqrt(max(0.0, 1.0 - r * r)); // 月の球の、こちらを向いた面の向き
+  float lit = uMoonDisk.z > 0.5 ? smoothstep(-0.04, 0.04, dot(n, uMoonSunDir)) : 1.0;
+  vec3 up = vec3(0.0, 1.0, 0.0) - m * m.y;
+  up = dot(up, up) > 1e-6 ? normalize(up) : vec3(0.0, 0.0, -1.0);
+  vec3 s = vec3(dot(n, cross(m, up)), dot(n, up), -dot(n, m)); // 月の球の上の座標（上 = 空の上の向き）
+  float mare = smoothstep(0.05, 0.45, snoise(s * 1.7 + vec3(3.1, 1.7, 0.4)));
+  float tex = (1.0 - 0.4 * mare) * (0.93 + 0.07 * snoise(s * 9.0));
+  return uMoonDiskL * (edge * mix(0.002, tex, lit) * cloudTrans(o));
 }
 
 // 窓の外の海：点 o から向き d（下向き）で見た水面の明るさ。空の映り込み・太陽のきらめき・水の色を、反射の割合で混ぜる
@@ -1407,19 +1434,19 @@ void main() {
         float dd = 0.012 * uGlassWaveB[f].x * 0.5;
         lt = vec3(outsideRadiance(p, normalize(d + (0.5 - dd) * slope)).r, lt.g, outsideRadiance(p, normalize(d + (0.5 + dd) * slope)).b);
       }
-      col += (1.0 - w) * lt * glassTint(f, c);
+      col += (1.0 - w) * (lt + moonDisk(p, normalize(d + 0.5 * slope))) * glassTint(f, c);
       vec3 o2 = p + gn * EPS;
       d = reflect(d, gn);
       float t2 = exitRoom(o2, d, f);
       p = o2 + d * t2;
       col += w * spotLamp(o2, d, t2);
-      if (inWindow(f, p)) { col += w * (outsideRadiance(p, d) + uSunE * (sunLobe(d) * cloudTrans(p))); continue; }
+      if (inWindow(f, p)) { col += w * (outsideRadiance(p, d) + moonDisk(p, d) + uSunE * (sunLobe(d) * cloudTrans(p))); continue; }
       // 映った所の照り返しは、その所が画面に映っていればその画素の値を使う
       vec4 cc = uViewProj * vec4(p, 1.0);
       vec2 uv = cc.xy / max(cc.w, 1e-6) * 0.5 + 0.5;
       if (cc.w > 0.0 && all(greaterThan(uv, vec2(0.0))) && all(lessThan(uv, vec2(1.0)))) ind2 = texture(uAccum, uv).rgb;
     }
-    if (inWindow(f, p)) { col += outsideRadiance(p, d); continue; }
+    if (inWindow(f, p)) { col += outsideRadiance(p, d) + moonDisk(p, d); continue; }
     if (uPoolOn == 1 && f == 3) { col += w * poolRadiance(p, d, ind2); continue; }
     vec3 n = inwardNormal(f);
     vec3 a = albedo(f, p);

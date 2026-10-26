@@ -145,6 +145,8 @@ export interface MoonSettings {
    *  見ている所から窓の真ん中の向きに置くので、視点を動かしても光の道は窓の中に見える */
   seaRoadOffsetDeg: number;
   seaRoadAltDeg: number;
+  /** 窓から見える月の円盤の大きさ（本物の見かけの大きさの何倍か。0 で描かない）。本物の月のときは、満ち欠けの形も描く */
+  diskScale: number;
 }
 
 /** 月の置き方 */
