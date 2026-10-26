@@ -903,7 +903,8 @@ export function openingsFromChoice(c: WindowChoice, base: Openings, win?: Window
 /** 保存した設定の窓の組み合わせ（窓の組み合わせを保存する前のファイルなら、保存した窓の位置と大きさから決める） */
 export function openingsOf(saved: unknown, base: ReturnType<typeof codeDefaults>): Openings {
   const has = !!(saved as { render?: { openings?: unknown } } | null)?.render?.openings;
-  if (has) return { ...base.render.openings, top: oneOf(base.render.openings.top, WINDOW_TOPS, 'none') };
+  // 保存した設定がないときは既定（窓なし）。窓の組み合わせを保存する前のファイルだけ、窓の位置から決める
+  if (has || !saved) return { ...base.render.openings, top: oneOf(base.render.openings.top, WINDOW_TOPS, 'none') };
   const side = oneOf(base.windowSide, WINDOW_SIDES, 'left');
   return openingsFromChoice(choiceOf(side, base.window, base.room), base.render.openings, base.window);
 }
@@ -925,7 +926,7 @@ export function defaultWindow(c: WindowChoice, room: RoomGeometry, configWindow:
 }
 
 /**
- * room モードのパネルの既定値（保存したファイルと同じ形）。開いたときの既定：窓は左で壁いっぱい（左の壁がない。天井はある）、
+ * room モードのパネルの既定値（保存したファイルと同じ形）。開いたときの既定：窓なし（左右の壁・天井とも白い壁）、
  * 水盤はオン（水盤で跳ね返った光はオフ）、波の強さ 0.3、雲の影はオフ（ROOM_DEFAULTS）
  */
 export function codeDefaults(room: RoomGeometry, configWindow: WindowGeometry) {
@@ -933,13 +934,13 @@ export function codeDefaults(room: RoomGeometry, configWindow: WindowGeometry) {
     version: 1 as const,
     windowSide: 'left' as string,
     room: { ...room },
-    // 既定は左の窓を壁いっぱい（左の壁がない）。天井はある
+    // 既定は窓なし（左右の壁・天井とも白い壁）。窓の位置と大きさは、窓を開けたときのためのもの
     window: defaultWindow('left', room, configWindow),
     render: {
       exposure: 2.5, bounces: 3, smooth: true,
       seaView: ROOM_DEFAULTS.seaView as boolean, seaRipples: false, pool: ROOM_DEFAULTS.pool as boolean, poolReflect: ROOM_DEFAULTS.poolReflect as boolean,
       waveAmp: ROOM_DEFAULTS.waveAmp as number, poolDepthM: 0.3, seaLevelM: -1, seaWaves: 'fft' as SeaWaves, seaCompare: false, location: 'venue',
-      openings: { left: true, right: false, top: 'none' as WindowTop, skyWidthM: Math.round(room.widthM * 0.4 * 20) / 20, skyDepthM: Math.round(room.depthM * 0.5 * 20) / 20 },
+      openings: { left: false, right: false, top: 'none' as WindowTop, skyWidthM: Math.round(room.widthM * 0.4 * 20) / 20, skyDepthM: Math.round(room.depthM * 0.5 * 20) / 20 },
       glass: { right: false, left: false, ceiling: false, front: false, back: false },
       glassSpecs: Object.fromEntries(GLASS_FACES.map((f) => [f, { ...GLASS_SPEC_DEFAULT }])) as Record<GlassFace, GlassSpec>, seaWindMS: 6, seaWaveScale: 1, seaRoughness: 0.004, seaScatter: 0.6,
       clouds: false, cloudShadow: ROOM_DEFAULTS.cloudShadow as boolean, cloudAmount: 0.45, cloudOpacity: 0.8,
