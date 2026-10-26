@@ -6,6 +6,7 @@ import type { SceneInstance } from '../scenes/types.ts';
 import { CAUSTIC_FACES, CAUSTIC_SIZE, FLOOR_ALBEDO, POOL_ALBEDO, SCREEN_ALBEDO, SCREEN_IMAGE, WALL_ALBEDO, type RoomCore, type RoomFrame } from './core.ts';
 import { MAX_BLOBS, MAX_PRISMS, MAX_SHIM_COLORS, MAX_SHIM_PALETTE, MAX_SPOTS, type RoomScreenImage } from './model.ts';
 import { MAX_ROOM_PRIMS } from './step.ts';
+import { TEX_SIZE } from './textures.ts';
 import { WATER_ABSORPTION, WATER_GLSL, WATER_IOR } from './water.ts';
 
 const f3 = (n: number): string => n.toFixed(4);
@@ -128,6 +129,11 @@ uniform vec3 uPrimU[MAX_ROOM_PRIMS];    // 面の 2 辺（平行四辺形。三�
 uniform vec3 uPrimV[MAX_ROOM_PRIMS];
 uniform vec3 uPrimInfo[MAX_ROOM_PRIMS]; // x = 面の番号（0〜5 = 外枠の面、8〜13 = 部屋の中の物（8 + 向き））、y = 1 なら三角形、z = 1 なら軸にそった長方形（uPrimO・uPrimU が両端の角）
 uniform vec3 uPrimBoxMin, uPrimBoxMax; // 面をまとめて囲む直方体
+// 面に貼る画像（面のまとまりごと：0〜5 = 面の向き、6 = 部屋の中の物）。src/room/textures.ts
+uniform float uTexOn;
+uniform vec3 uTexA[7];       // 画像の束の何枚目か（−1 = 貼らない）・1 / 画像の幅（m）・1 / 画像の高さ（m）
+uniform vec3 uTexB[7];       // 明るさの倍率
+uniform highp sampler2DArray uTexArr;
 
 const float PI = 3.14159265358979;
 const float EPS = 1e-4;
@@ -339,11 +345,31 @@ bool onScreen(int face, vec3 p) {
   return uScreenArea != 0 && face == 5 && p.x > uScreenRect.x && p.x < uScreenRect.y && p.y > uScreenRect.z && p.y < uScreenRect.w;
 }
 
-vec3 albedo(int face, vec3 p) {
-  if (face == 3) return vec3(${FLOOR_ALBEDO.toFixed(3)});
-  if (onScreen(face, p)) return vec3(${SCREEN_ALBEDO.toFixed(3)}) * vec3(0.92, 0.96, 1.05);
-  return vec3(${WALL_ALBEDO.toFixed(3)});
+// 面に貼った画像の色（光を返す割合）。貼っていない面は base。画像は部屋の中から見て正しい向き（上が上）になるように貼る。
+// lod < 0 なら、見ている所からの距離と面の傾きで縮小の段（ミップマップ）を決める（照り返しの計算では大きな値を渡して平均の色を使う）
+vec3 texAlbedo(int face, vec3 p, vec3 base, float lod) {
+  if (uTexOn < 0.5) return base;
+  int g = face >= 8 ? 6 : face;
+  vec3 a = uTexA[g];
+  if (a.x < 0.0) return base;
+  int d = dirOf(face);
+  vec2 uv = d == 0 ? vec2(p.z, -p.y) : d == 1 ? vec2(-p.z, -p.y) : d == 2 ? vec2(-p.x, p.z) : d == 3 ? vec2(p.x, p.z) : d == 4 ? vec2(-p.x, -p.y) : vec2(p.x, -p.y);
+  uv *= a.yz;
+  if (lod < 0.0) {
+    vec3 v = p - uCamPos;
+    float dist = max(length(v), 1e-4);
+    float c = max(abs(dot(v / dist, inwardNormal(face))), 0.15);
+    lod = log2(max(dist * uPixAngle / c * max(a.y, a.z) * ${TEX_SIZE}.0, 1e-6));
+  }
+  return min(textureLod(uTexArr, vec3(uv, a.x), lod).rgb * uTexB[g].x, vec3(0.95));
 }
+
+vec3 albedoLod(int face, vec3 p, float lod) {
+  if (face == 3) return texAlbedo(3, p, vec3(${FLOOR_ALBEDO.toFixed(3)}), lod);
+  if (onScreen(face, p)) return vec3(${SCREEN_ALBEDO.toFixed(3)}) * vec3(0.92, 0.96, 1.05);
+  return texAlbedo(face, p, vec3(${WALL_ALBEDO.toFixed(3)}), lod);
+}
+vec3 albedo(int face, vec3 p) { return albedoLod(face, p, -1.0); }
 
 vec3 skyRadiance(vec3 d) {
   return mix(uSkyBottom, uSkyTop, sqrt(max(d.y, 0.0)));
@@ -767,10 +793,10 @@ vec3 indirect(vec3 p, vec3 n) {
     if (uPoolOn == 1 && f == 3) {
       // 水盤の底：屈折して届いた日差し（光の揺らぎ）を、水に吸収されながら返す
       vec3 absorb = exp(-WATER_ABS * 2.0 * uPoolDepth);
-      a = vec3(${POOL_ALBEDO.toFixed(3)}) * absorb;
+      a = texAlbedo(3, q, vec3(${POOL_ALBEDO.toFixed(3)}), 20.0) * absorb;
       e = uSunE * causticBottom(q) + skyNee(q, n2) + spotIrradiance(q, n2) * 0.97;
     } else {
-      a = albedo(f, q);
+      a = albedoLod(f, q, 20.0); // 照り返しは、貼った画像の平均の色で返す
       e = sunIrradiance(q, n2) + uSunE * causticAt(f, q) + skyNee(q, n2) + spotIrradiance(q, n2);
     }
     acc += thr * a / PI * e;
@@ -1318,7 +1344,7 @@ vec3 poolRadiance(vec3 p, vec3 d, vec3 ind) {
       inner = smoothstep(0.0, -0.15, pd); // 日だまりの縁の近くは、光の揺らぎの画像の縁が見えないよう平らな水面の値に
     }
   }
-  vec3 lb = vec3(${POOL_ALBEDO.toFixed(3)}) / PI * ((bottomSun(b, fade, edge, flatSun, inner) + PI * ind) * absorb + spotBottom(b) * exp(-WATER_ABS * tb));
+  vec3 lb = texAlbedo(3, b, vec3(${POOL_ALBEDO.toFixed(3)}), -1.0) / PI * ((bottomSun(b, fade, edge, flatSun, inner) + PI * ind) * absorb + spotBottom(b) * exp(-WATER_ABS * tb));
   // 反射：窓の外（空・海と、映り込んだ太陽のきらめき）か、部屋の面
   vec3 rr = reflect(d, n);
   vec3 o = vec3(p.x, EPS, p.z);
@@ -1434,8 +1460,14 @@ export class GlRoomRenderer implements RoomRenderer {
   private readonly gridScene = new THREE.Scene();
   private readonly screenTarget: THREE.WebGLRenderTarget;
   private screenScene: { id: string; inst: SceneInstance; gl: ReturnType<typeof glPass> } | null = null;
+  private readonly core: RoomCore;
+  /** 面に貼る画像の束（どの材質からも同じ物を参照する）と、送った画像の組 */
+  private readonly texArr: { value: THREE.DataArrayTexture } = { value: new THREE.DataArrayTexture(new Uint8Array(4), 1, 1, 1) };
+  private texKey = '';
 
   constructor(core: RoomCore) {
+    this.core = core;
+    this.texArr.value.needsUpdate = true;
     this.renderer = new THREE.WebGLRenderer({ antialias: false, alpha: false });
     this.renderer.setPixelRatio(1); // 画素数がそのまま計算量になるので、高解像度ディスプレイでも 1 倍で計算する
     this.renderer.autoClear = false;
@@ -1463,7 +1495,7 @@ export class GlRoomRenderer implements RoomRenderer {
     });
 
     // 値はすべて core の同じ物を参照する（core が書き換えれば、そのまま描く値になる）
-    const shared = { ...core.shared, uScreenTex: { value: this.screenTarget.texture } };
+    const shared = { ...core.shared, uScreenTex: { value: this.screenTarget.texture }, uTexArr: this.texArr };
     const causticUniforms = {
       uCausOn: core.causOn,
       uCaus0: { value: causTex(0) },
@@ -1518,6 +1550,7 @@ export class GlRoomRenderer implements RoomRenderer {
 
   render(frame: RoomFrame): void {
     const renderer = this.renderer;
+    if (this.core.textures.key !== this.texKey) this.uploadTextures();
     if (frame.screen) this.renderScreenImage(frame.screen);
 
     // 段階 0：水面の光の揺らぎ
@@ -1559,6 +1592,26 @@ export class GlRoomRenderer implements RoomRenderer {
     gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(4)); // 読み出しは GPU の処理が終わるまで待つ
   }
 
+  // 面に貼る画像を、画像の束（2D 配列テクスチャ）にまとめて送る。縮小の段は GPU で作る
+  private uploadTextures(): void {
+    const set = this.core.textures;
+    this.texKey = set.key;
+    const n = Math.max(1, set.pixels.length);
+    const size = set.pixels.length ? TEX_SIZE : 1;
+    const data = new Uint8Array(size * size * 4 * n);
+    set.pixels.forEach((p, i) => data.set(p.levels[0]!, i * size * size * 4));
+    const tex = new THREE.DataArrayTexture(data, size, size, n);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.minFilter = THREE.LinearMipmapLinearFilter;
+    tex.magFilter = THREE.LinearFilter;
+    tex.generateMipmaps = set.pixels.length > 0;
+    tex.anisotropy = 4;
+    tex.needsUpdate = true;
+    this.texArr.value.dispose();
+    this.texArr.value = tex;
+  }
+
   private renderScreenImage(img: RoomScreenImage): void {
     if (this.screenScene?.id !== img.def.id) {
       this.screenScene?.inst.dispose();
@@ -1582,6 +1635,7 @@ export class GlRoomRenderer implements RoomRenderer {
     this.writeT.dispose();
     for (const rt of this.causticTargets.values()) rt.dispose();
     this.screenTarget.dispose();
+    this.texArr.value.dispose();
     this.screenScene?.inst.dispose();
     this.screenScene?.gl.dispose();
     this.renderer.dispose();

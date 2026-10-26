@@ -11,6 +11,7 @@ import { CAUSTIC_FACES, CAUSTIC_SIZE, FLOOR_ALBEDO, POOL_ALBEDO, SCREEN_ALBEDO, 
 import type { RoomRenderer } from './gl.ts';
 import { MAX_BLOBS, MAX_PRISMS, MAX_SHIM_COLORS, MAX_SHIM_PALETTE, MAX_SPOTS, type RoomScreenImage } from './model.ts';
 import { MAX_ROOM_PRIMS } from './step.ts';
+import { TEX_LEVELS, TEX_SIZE } from './textures.ts';
 import { GpuOcean, OCEAN_LODS, OCEAN_N } from './ocean.ts';
 import { WATER_ABSORPTION, WATER_IOR, WATER_WGSL } from './water.ts';
 
@@ -230,11 +231,43 @@ fn onScreen(face: i32, p: vec3f) -> bool {
   return u.uScreenArea > 0.5 && face == 5 && p.x > u.uScreenRect.x && p.x < u.uScreenRect.y && p.y > u.uScreenRect.z && p.y < u.uScreenRect.w;
 }
 
-fn albedo(face: i32, p: vec3f) -> vec3f {
-  if (face == 3) { return vec3f(${FLOOR_ALBEDO.toFixed(3)}); }
-  if (onScreen(face, p)) { return vec3f(${SCREEN_ALBEDO.toFixed(3)}) * vec3f(0.92, 0.96, 1.05); }
-  return vec3f(${WALL_ALBEDO.toFixed(3)});
+// 面に貼る画像の束（面のまとまりごと：0〜5 = 面の向き、6 = 部屋の中の物。src/room/textures.ts）
+@group(0) @binding(14) var texArr: texture_2d_array<f32>;
+@group(0) @binding(15) var texS: sampler;
+
+// 面に貼った画像の色（光を返す割合）。貼っていない面は base。画像は部屋の中から見て正しい向き（上が上）になるように貼る。
+// lod < 0 なら、見ている所からの距離と面の傾きで縮小の段（ミップマップ）を決める（照り返しの計算では大きな値を渡して平均の色を使う）
+fn texAlbedo(face: i32, p: vec3f, base: vec3f, lod0: f32) -> vec3f {
+  if (u.uTexOn < 0.5) { return base; }
+  let g = select(face, 6, face >= 8);
+  let a = u.uTexA[g];
+  if (a.x < 0.0) { return base; }
+  let d = dirOf(face);
+  var uv: vec2f;
+  if (d == 0) { uv = vec2f(p.z, -p.y); }
+  else if (d == 1) { uv = vec2f(-p.z, -p.y); }
+  else if (d == 2) { uv = vec2f(-p.x, p.z); }
+  else if (d == 3) { uv = vec2f(p.x, p.z); }
+  else if (d == 4) { uv = vec2f(-p.x, -p.y); }
+  else { uv = vec2f(p.x, -p.y); }
+  uv *= a.yz;
+  var lod = lod0;
+  if (lod < 0.0) {
+    let v = p - u.uCamPos;
+    let dist = max(length(v), 1e-4);
+    let c = max(abs(dot(v / dist, inwardNormal(face))), 0.15);
+    lod = log2(max(dist * u.uPixAngle / c * max(a.y, a.z) * ${TEX_SIZE}.0, 1e-6));
+  }
+  lod = clamp(lod, 0.0, ${TEX_LEVELS - 1}.0);
+  return min(textureSampleLevel(texArr, texS, uv, i32(a.x), lod).rgb * u.uTexB[g].x, vec3f(0.95));
 }
+
+fn albedoLod(face: i32, p: vec3f, lod: f32) -> vec3f {
+  if (face == 3) { return texAlbedo(3, p, vec3f(${FLOOR_ALBEDO.toFixed(3)}), lod); }
+  if (onScreen(face, p)) { return vec3f(${SCREEN_ALBEDO.toFixed(3)}) * vec3f(0.92, 0.96, 1.05); }
+  return texAlbedo(face, p, vec3f(${WALL_ALBEDO.toFixed(3)}), lod);
+}
+fn albedo(face: i32, p: vec3f) -> vec3f { return albedoLod(face, p, -1.0); }
 
 fn skyRadiance(d: vec3f) -> vec3f {
   return mix(u.uSkyBottom, u.uSkyTop, sqrt(max(d.y, 0.0)));
@@ -695,10 +728,10 @@ fn indirect(p0: vec3f, n0: vec3f) -> vec3f {
     if (u.uPoolOn > 0.5 && f == 3) {
       // 水盤の底：屈折して届いた日差し（光の揺らぎ）を、水に吸収されながら返す
       let absorb = exp(-WATER_ABS * 2.0 * u.uPoolDepth);
-      a = vec3f(${POOL_ALBEDO.toFixed(3)}) * absorb;
+      a = texAlbedo(3, q, vec3f(${POOL_ALBEDO.toFixed(3)}), 20.0) * absorb;
       em = u.uSunE * causticBottom(q) + skyNee(q, n2) + spotIrradiance(q, n2) * 0.97;
     } else {
-      a = albedo(f, q);
+      a = albedoLod(f, q, 20.0); // 照り返しは、貼った画像の平均の色で返す
       em = sunIrradiance(q, n2) + u.uSunE * causticAt(f, q) + skyNee(q, n2) + spotIrradiance(q, n2);
     }
     acc += thr * a / PI * em;
@@ -1229,7 +1262,7 @@ fn poolRadiance(p: vec3f, d: vec3f, ind: vec3f) -> vec3f {
       inner = smoothstep(0.0, -0.15, pd);
     }
   }
-  let lb = vec3f(${POOL_ALBEDO.toFixed(3)}) / PI * ((bottomSun(b, fade, edge, flatSun, inner) + PI * ind) * absorb + spotBottom(b) * exp(-WATER_ABS * tb));
+  let lb = texAlbedo(3, b, vec3f(${POOL_ALBEDO.toFixed(3)}), -1.0) / PI * ((bottomSun(b, fade, edge, flatSun, inner) + PI * ind) * absorb + spotBottom(b) * exp(-WATER_ABS * tb));
   let rr = reflect(d, n);
   let o = vec3f(p.x, EPS, p.z);
   let e = exitRoom(o, rr);
@@ -1351,6 +1384,10 @@ export class GpuRoomRenderer implements RoomRenderer {
   private displayBinds: GPUBindGroup[] = [];
   private current = 0; // 最後に書いた重ね合わせの画像（0 か 1）
   private screenScene: { id: string; inst: ReturnType<RoomScreenImage['def']['create']>; pipeline: FullscreenPipeline } | null = null;
+  /** 面に貼る画像の束と、送った画像の組 */
+  private texArr: GPUTexture;
+  private readonly texS: GPUSampler;
+  private texKey = '';
 
   constructor(gpu: Gpu, core: RoomCore) {
     this.gpu = gpu;
@@ -1360,6 +1397,8 @@ export class GpuRoomRenderer implements RoomRenderer {
     this.core = core;
     this.ocean = new GpuOcean(device);
     this.oceanS = device.createSampler({ magFilter: 'linear', minFilter: 'linear', mipmapFilter: 'linear', addressModeU: 'repeat', addressModeV: 'repeat' });
+    this.texS = device.createSampler({ magFilter: 'linear', minFilter: 'linear', mipmapFilter: 'linear', addressModeU: 'repeat', addressModeV: 'repeat', maxAnisotropy: 4 });
+    this.texArr = this.makeTextures();
 
     // 値はすべて core の同じ物を参照する（core が書き換えれば、そのまま描く値になる）
     this.uniforms = { ...core.shared, uCausOn: core.causOn, ...core.trace, ...core.display };
@@ -1396,6 +1435,8 @@ export class GpuRoomRenderer implements RoomRenderer {
         { binding: 10, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
         tex(11), tex(12),
         { binding: 13, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
+        { binding: 14, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float', viewDimension: '2d-array' } },
+        { binding: 15, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
       ],
     });
     const fullscreen = (code: string, format: GPUTextureFormat, label: string): GPURenderPipeline => {
@@ -1458,6 +1499,13 @@ export class GpuRoomRenderer implements RoomRenderer {
       size: [w, h], format: ACCUM, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING, label: `room-accum-${i}`,
     });
     this.accum = [make(0), make(1)];
+    this.rebind();
+  }
+
+  // 段階 1・2 の結び付け（重ね合わせの画像・面に貼る画像の束を作り直したとき）
+  private rebind(): void {
+    if (!this.accum) return;
+    const device = this.gpu.device;
     const bind = (accumView: GPUTextureView): GPUBindGroup => device.createBindGroup({
       layout: this.mainLayout,
       entries: [
@@ -1470,6 +1518,8 @@ export class GpuRoomRenderer implements RoomRenderer {
         { binding: 11, resource: this.ocean.textures[0].createView() },
         { binding: 12, resource: this.ocean.textures[1].createView() },
         { binding: 13, resource: this.oceanS },
+        { binding: 14, resource: this.texArr.createView({ dimension: '2d-array' }) },
+        { binding: 15, resource: this.texS },
       ],
     });
     // 段階 1 は前の結果（i）を読んで、もう片方に書く。段階 2 は書いたばかりの方を読む
@@ -1481,6 +1531,11 @@ export class GpuRoomRenderer implements RoomRenderer {
   render(frame: RoomFrame): void {
     if (!this.accum) return;
     const device = this.gpu.device;
+    if (this.core.textures.key !== this.texKey) {
+      this.texArr.destroy();
+      this.texArr = this.makeTextures();
+      this.rebind();
+    }
     writeLayout(this.layout, this.uniforms, this.data);
     device.queue.writeBuffer(this.buffer, 0, this.data);
     const encoder = device.createCommandEncoder();
@@ -1544,6 +1599,25 @@ export class GpuRoomRenderer implements RoomRenderer {
     return this.gpu.device.queue.onSubmittedWorkDone();
   }
 
+  // 面に貼る画像を、画像の束（2D 配列テクスチャ）にまとめて送る。縮小の段も、読み込んだときに作った画素を送る
+  private makeTextures(): GPUTexture {
+    const set = this.core.textures;
+    this.texKey = set.key;
+    const n = Math.max(1, set.pixels.length);
+    const size = set.pixels.length ? TEX_SIZE : 1;
+    const levels = set.pixels.length ? TEX_LEVELS : 1;
+    const tex = this.gpu.device.createTexture({
+      size: [size, size, n], format: 'rgba8unorm-srgb', mipLevelCount: levels,
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST, label: 'room-surface-textures',
+    });
+    if (!set.pixels.length) this.gpu.device.queue.writeTexture({ texture: tex }, new Uint8Array(4), { bytesPerRow: 4 }, [1, 1, 1]);
+    set.pixels.forEach((p, layer) => p.levels.forEach((data, level) => {
+      const s = TEX_SIZE >> level;
+      this.gpu.device.queue.writeTexture({ texture: tex, mipLevel: level, origin: [0, 0, layer] }, data, { bytesPerRow: s * 4, rowsPerImage: s }, [s, s, 1]);
+    }));
+    return tex;
+  }
+
   private renderScreenImage(img: RoomScreenImage, encoder: GPUCommandEncoder): void {
     if (this.screenScene?.id !== img.def.id) {
       this.screenScene?.inst.dispose();
@@ -1561,6 +1635,7 @@ export class GpuRoomRenderer implements RoomRenderer {
     this.accum?.forEach((t) => t.destroy());
     for (const t of this.causticTex.values()) t.destroy();
     this.screenTex.destroy();
+    this.texArr.destroy();
     this.buffer.destroy();
     this.passBuffer.destroy();
     for (const g of Object.values(this.grids)) { g.vertex.destroy(); g.index.destroy(); }

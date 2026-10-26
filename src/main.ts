@@ -7,6 +7,7 @@ import { drawGuides, drawLightArrow } from './diagram.ts';
 import { kelvinAt, kelvinToRgb, skyColors } from './palette.ts';
 import { type RoomView, createRoomScene } from './room/scene.ts';
 import { roomMesh } from './room/room-models.ts';
+import './room/texture-files.ts'; // 面に貼る画像の一覧（site モードでも、保存した画像を貼れるように）
 import { findScene } from './scenes/index.ts';
 import { lightDebug } from './scenes/light-debug.ts';
 import { type SceneDef, type SceneInput, mergeParams } from './scenes/types.ts';

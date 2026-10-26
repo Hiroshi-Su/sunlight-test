@@ -6,8 +6,9 @@ import { type WindowSide, wallWindowSide } from '../config.ts';
 import { type RGB, kelvinToRgb } from '../palette.ts';
 import { DriftBlend } from '../scenes/shader.ts';
 import { SUN_ANGULAR_RADIUS_DEG, directSunFactor, skyBrightness } from './daylight.ts';
-import { MAX_BLOBS, MAX_PRISMS, MAX_SHIM_COLORS, MAX_SHIM_PALETTE, MAX_SPOTS, GLASS_FACES, GLASS_FACE_INDEX, GLASS_SURFACES, type GlassSpec, PRISM_PATTERNS, type OrganicLook, type PrismMotion, type RoomGeometry, type RoomInput, type RoomRenderSettings, type RoomScreenImage, type SpotLight, cloudFlowDir, moonDirection, moonWeight, spotPose, spotWeight, toThree, windowRect } from './model.ts';
+import { MAX_BLOBS, MAX_PRISMS, MAX_SHIM_COLORS, MAX_SHIM_PALETTE, MAX_SPOTS, GLASS_FACES, GLASS_FACE_INDEX, GLASS_SURFACES, type GlassSpec, TEX_SURFACES, PRISM_PATTERNS, type OrganicLook, type PrismMotion, type RoomGeometry, type RoomInput, type RoomRenderSettings, type RoomScreenImage, type SpotLight, cloudFlowDir, moonDirection, moonWeight, spotPose, spotWeight, toThree, windowRect } from './model.ts';
 import { MAX_ROOM_PRIMS, type RoomMesh, type RoomPrim, type Vec3 } from './step.ts';
+import { MAX_TEXTURES, type TexturePixels, texturePixels } from './textures.ts';
 import { OCEAN_CASCADES, OCEAN_LODS, type OceanSpectrum, buildOceanSpectrum } from './ocean.ts';
 import { wavePhases } from './water.ts';
 
@@ -111,6 +112,13 @@ export function samplesPerPixel(): number {
   return Math.max(1, Math.min(8, Number(new URLSearchParams(location.search).get('spp') ?? 2) || 2));
 }
 
+/** 面に貼る画像の組（使う画像を並べたもの。i 番目の画像が、画像の束の i 枚目） */
+export interface TextureSet {
+  key: string;
+  ids: string[];
+  pixels: TexturePixels[];
+}
+
 export class RoomCore {
   readonly windowSide: WindowSide;
   readonly room: RoomGeometry;
@@ -144,6 +152,8 @@ export class RoomCore {
   };
   /** 光の揺らぎを使うか（段階 1・2） */
   readonly causOn = { value: 0 };
+  /** 今使う面の画像（描き方の側が、key が変わったら GPU に送り直す） */
+  textures: TextureSet = { key: '', ids: [], pixels: [] };
 
   private readonly facingAzimuth: number;
   private readonly winRect = new THREE.Vector4();
@@ -300,6 +310,10 @@ export class RoomCore {
       uPrimInfo: { value: Array.from({ length: MAX_ROOM_PRIMS }, () => new THREE.Vector3()) }, // 面の番号（0〜5 = 外枠の面、8〜13 = 部屋の中の物）・1 なら三角形・1 なら軸にそった長方形（O・U が両端の角）
       uPrimBoxMin: { value: new THREE.Vector3() },  // 面をまとめて囲む直方体（光線がここを通らなければ、面を 1 枚ずつ確かめない）
       uPrimBoxMax: { value: new THREE.Vector3() },
+      // 面に貼る画像（面のまとまりごと：0〜5 = 面の向き（右・左・天井・床・手前・奥）、6 = 部屋の中の物）
+      uTexOn: { value: 0 },                                                          // 1 = どこかの面に画像を貼っている
+      uTexA: { value: Array.from({ length: TEX_SURFACES.length }, () => new THREE.Vector3(-1, 1, 1)) }, // 画像の束の何枚目か（−1 = 貼らない）・1 / 画像の幅（m）・1 / 画像の高さ（m）
+      uTexB: { value: Array.from({ length: TEX_SURFACES.length }, () => new THREE.Vector3(1, 0, 0)) },  // 明るさの倍率
     };
   }
 
@@ -684,7 +698,7 @@ export class RoomCore {
     // 重ね合わせのやり直し：視点や設定（窓の大きさを含む）が変わったら最初から
     const key = [
       sp.mode, sp.kind, JSON.stringify(sp.ambient), sp.count, JSON.stringify(sp.lights.slice(0, sp.count)),
-      moon.on, moon.strength, moon.skyStrength, moon.color, moon.azimuthDeg, moon.altitudeDeg, moon.mode, real ? Math.round(phaseK * 100) : 0, moon.seaRoadAltDeg, moon.seaRoadOffsetDeg, JSON.stringify(settings.glass), JSON.stringify(settings.glassSpecs), JSON.stringify(settings.openings),
+      moon.on, moon.strength, moon.skyStrength, moon.color, moon.azimuthDeg, moon.altitudeDeg, moon.mode, real ? Math.round(phaseK * 100) : 0, moon.seaRoadAltDeg, moon.seaRoadOffsetDeg, JSON.stringify(settings.glass), JSON.stringify(settings.glassSpecs), JSON.stringify(settings.openings), JSON.stringify(settings.textures), this.textures.key,
       settings.bounces, settings.seaView, settings.seaRipples, settings.pool, settings.poolReflect, settings.waveAmp, settings.poolDepthM, settings.seaLevelM, this.winRect.toArray(),
       cloudsOn, settings.cloudShadow, settings.cloudAmount, settings.cloudOpacity, settings.cloudSizeM, settings.cloudHeightM,
       settings.screenArea, !!screen, screen?.def.id, settings.screenGain,
@@ -739,6 +753,7 @@ export class RoomCore {
       s.uGlassWaveA.value[i]!.set(GLASS_SURFACES.indexOf(gs.surface), Math.max(0.01, gs.scaleM), Math.max(0, gs.depthMM) / 1000);
       s.uGlassWaveB.value[i]!.set(gs.prism ? Math.max(0, gs.prismStrength) : 0, glassFocus(gs), 0);
     }
+    this.updateTextures(settings);
     s.uSeaOn.value = settings.seaView && (windowSide !== 'ceiling' || glassWall || s.uOpenMask.value > 0) ? 1 : 0;
     s.uSeaY.value = settings.seaLevelM;
     s.uSeaBody.value.set(0.12, 0.35, 0.42).multiplyScalar(skyL * 0.25);
@@ -793,6 +808,30 @@ export class RoomCore {
     this.display.uViewProj.value.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
 
     return { caustics: this.causticPasses(sunDir, sunOn, settings), screen };
+  }
+
+  /** 面に貼る画像：使う画像を読み込み（読み終えるまでは貼らない）、面のまとまりごとに画像の束の何枚目かを決める */
+  private updateTextures(settings: RoomRenderSettings): void {
+    const s = this.shared;
+    const ids: string[] = [];
+    const pixels: TexturePixels[] = [];
+    let on = 0;
+    TEX_SURFACES.forEach((g, i) => {
+      const t = settings.textures[g];
+      const px = t.image !== 'none' ? texturePixels(t.image) : null;
+      let layer = -1;
+      if (px) {
+        layer = ids.indexOf(t.image);
+        if (layer < 0 && ids.length < MAX_TEXTURES) { layer = ids.length; ids.push(t.image); pixels.push(px); }
+      }
+      const w = Math.max(0.01, t.sizeM);
+      s.uTexA.value[i]!.set(layer, 1 / w, 1 / (w * (px?.aspect ?? 1)));
+      s.uTexB.value[i]!.set(Math.max(0, t.gain), 0, 0);
+      if (layer >= 0) on = 1;
+    });
+    s.uTexOn.value = on;
+    const key = ids.join('|');
+    if (key !== this.textures.key) this.textures = { key, ids, pixels };
   }
 
   // 段階 0：水面の光の揺らぎを描く網目の一覧

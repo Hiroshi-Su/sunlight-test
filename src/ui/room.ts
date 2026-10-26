@@ -5,7 +5,7 @@ import type { Clock } from '../clock.ts';
 import { mountCalibMode } from './calib-mode.ts';
 import { WINDOW_SIDES, WINDOW_SIDE_LABEL, type WindowSide } from '../config.ts';
 import { PALETTE_KELVIN_ALTS, PALETTE_SKY_ALTS, type PaletteTable, defaultPalette, kelvinAt, setPalette } from '../palette.ts';
-import { EXHIBIT_SIZE, type GuideOptions, LIGHT_KINDS, type LightKind, MAX_BLOBS, MAX_SHIM_COLORS, MAX_SHIM_PALETTE, MAX_SPOTS, MAX_PRISMS, type MoonSettings, type OrganicLook, PRISM_MOTIONS, PRISM_PATTERNS, type Openings, WINDOW_TOPS, type WindowTop, GLASS_FACES, GLASS_KINDS, GLASS_SURFACES, type GlassFace, type GlassKind, type GlassSpec, type GlassSurface, MOON_MODES, SEA_WAVES, type SeaWaves, SHIMMER_ANCHORS, SHIMMER_COLOR_MODES, type PrismMotion, type PrismPattern, type PrismSettings, SPOT_MODES, TRAIL_COLOR_MODES, type TrailSettings, type RoomGeometry, type RoomOutput, type RoomRenderSettings, type RoomResolution, type SpotLight, type SpotMode, type SpotSettings, type ViewCalibration, type WindowGeometry, defaultCalibration } from '../room/scene.ts';
+import { EXHIBIT_SIZE, type GuideOptions, LIGHT_KINDS, type LightKind, MAX_BLOBS, MAX_SHIM_COLORS, MAX_SHIM_PALETTE, MAX_SPOTS, MAX_PRISMS, type MoonSettings, type OrganicLook, PRISM_MOTIONS, PRISM_PATTERNS, type Openings, WINDOW_TOPS, type WindowTop, GLASS_FACES, GLASS_KINDS, GLASS_SURFACES, type GlassFace, TEX_SURFACES, type TexSurface, type SurfaceTexture, type GlassKind, type GlassSpec, type GlassSurface, MOON_MODES, SEA_WAVES, type SeaWaves, SHIMMER_ANCHORS, SHIMMER_COLOR_MODES, type PrismMotion, type PrismPattern, type PrismSettings, SPOT_MODES, TRAIL_COLOR_MODES, type TrailSettings, type RoomGeometry, type RoomOutput, type RoomRenderSettings, type RoomResolution, type SpotLight, type SpotMode, type SpotSettings, type ViewCalibration, type WindowGeometry, defaultCalibration } from '../room/scene.ts';
 import { SCENES, findScene } from '../scenes/index.ts';
 import type { SceneDef } from '../scenes/types.ts';
 import type { SolarState } from '../solar.ts';
@@ -16,6 +16,7 @@ import { type WarpCorners, warpCss } from './warp.ts';
 import { type RoomSettingsFile, mergeKnown, oneOf } from '../room/settings-file.ts';
 import { shareRoomSettings } from '../room/live-share.ts';
 import { ROOM_MODELS, roomMesh } from '../room/room-models.ts';
+import { ROOM_TEXTURES } from '../room/texture-files.ts';
 import { mountTimeControls } from './time-controls.ts';
 
 /**
@@ -257,6 +258,11 @@ export function mountRoomUi(
         prism: q.has(`glassPrism.${f}`) ? q.get(`glassPrism.${f}`) === '1' : on('glassPrism', src.prism),
       }];
     })) as Record<GlassFace, GlassSpec>,
+    // 面に貼る画像：保存した画像がこの PC の src/private/textures/ にないときは「なし」
+    textures: Object.fromEntries(TEX_SURFACES.map((g) => {
+      const t = r0.textures[g];
+      return [g, { ...t, image: ROOM_TEXTURES.some((x) => x.id === t.image) ? t.image : 'none' }];
+    })) as Record<TexSurface, SurfaceTexture>,
     glass: Object.fromEntries(GLASS_FACES.map((f) => [f, q.has('glass') ? (q.get('glass') ?? '').split(',').includes(f) : !!r0.glass[f]])) as Record<GlassFace, boolean>,
     // プリズム：保存した値の出し方・動き方が選択肢になければ既定にする
     prism: {
@@ -466,6 +472,27 @@ export function mountRoomUi(
     if (!settings.glass[f]) gf.close();
     return { folder: gf, show };
   });
+
+  // 面に貼る画像（テクスチャ）：面のまとまりごとに、src/private/textures/ の画像を選ぶ（なし = 白い壁・床のまま）。
+  // 画像は幅 sizeM ごとに繰り返して貼り、画像の色 × 明るさの倍率が光を返す割合になる
+  const ftx = gui.addFolder('面の画像（テクスチャ）');
+  const TEX_LABEL: Record<TexSurface, string> = {
+    right: '右の壁', left: '左の壁', ceiling: '天井', floor: '床（水盤の底も）', front: '手前の壁（見る人の側）',
+    back: '奥の壁（スクリーンの目印の所は除く）', objects: '部屋の中の物（柱・縁など。読み込んだ部屋の形のとき）',
+  };
+  const texOptions: Record<string, string> = { 'なし': 'none', ...Object.fromEntries(ROOM_TEXTURES.map((t) => [t.id, t.id])) };
+  if (ROOM_TEXTURES.length === 0) ftx.add({ text: 'src/private/textures/ に画像（png・jpg・webp）を置くと選べます' }, 'text').name('画像').disable();
+  for (const g of TEX_SURFACES) {
+    const tf = ftx.addFolder(TEX_LABEL[g]);
+    const t = settings.textures[g];
+    const show = (): void => { cSize.show(t.image !== 'none'); cGain.show(t.image !== 'none'); };
+    tf.add(t, 'image', texOptions).name('画像').onChange(show);
+    const cSize = tf.add(t, 'sizeM', 0.05, 10, 0.05).name('画像 1 枚の幅（m。この幅ごとに繰り返す）');
+    const cGain = tf.add(t, 'gain', 0, 2, 0.01).name('明るさの倍率');
+    show();
+    if (t.image === 'none') tf.close();
+  }
+  ftx.close();
 
   // 水：3 つはそれぞれ独立に出し消しできる（窓の外の 2 つは、壁の窓のときだけ効く）
   const fw = gui.addFolder('水');
@@ -972,7 +999,10 @@ export function codeDefaults(room: RoomGeometry, configWindow: WindowGeometry) {
       waveAmp: ROOM_DEFAULTS.waveAmp as number, poolDepthM: 0.3, seaLevelM: -1, seaWaves: 'fft' as SeaWaves, seaCompare: false, location: 'venue', roomModel: 'box',
       openings: { left: false, right: false, top: 'none' as WindowTop, skyWidthM: Math.round(room.widthM * 0.4 * 20) / 20, skyDepthM: Math.round(room.depthM * 0.5 * 20) / 20 },
       glass: { right: false, left: false, ceiling: false, front: false, back: false },
-      glassSpecs: Object.fromEntries(GLASS_FACES.map((f) => [f, { ...GLASS_SPEC_DEFAULT }])) as Record<GlassFace, GlassSpec>, seaWindMS: 6, seaWaveScale: 1, seaRoughness: 0.004, seaScatter: 0.6,
+      glassSpecs: Object.fromEntries(GLASS_FACES.map((f) => [f, { ...GLASS_SPEC_DEFAULT }])) as Record<GlassFace, GlassSpec>,
+      // 面に貼る画像：既定はどの面も貼らない
+      textures: Object.fromEntries(TEX_SURFACES.map((g) => [g, { image: 'none', sizeM: 1, gain: 1 }])) as Record<TexSurface, SurfaceTexture>,
+      seaWindMS: 6, seaWaveScale: 1, seaRoughness: 0.004, seaScatter: 0.6,
       clouds: false, cloudShadow: ROOM_DEFAULTS.cloudShadow as boolean, cloudAmount: 0.45, cloudOpacity: 0.8,
       cloudSizeM: 1500, cloudHeightM: 1500, windMS: 30, windFromDeg: 270,
       screenArea: false, screen: false, screenGain: 0.6,

@@ -76,6 +76,8 @@ export interface RoomRenderSettings {
   glass: Record<GlassFace, boolean>;
   /** ガラスの仕様と表面の形（面ごと） */
   glassSpecs: Record<GlassFace, GlassSpec>;
+  /** 面に貼る画像（テクスチャ。面のまとまりごと。src/room/textures.ts） */
+  textures: Record<TexSurface, SurfaceTexture>;
   /** 正弦波の海と FFT の海を並べて比べる（海を窓の奥行きの真ん中で分け、手前側：正弦波、奥側：FFT。WebGPU のとき） */
   seaCompare: boolean;
   /** 窓の外の海面の、描かない細かいさざ波の粗さ（傾きの 2 乗平均）。大きいほど太陽のきらめきが広い帯になる */
@@ -185,6 +187,18 @@ export interface GlassSpec {
   prism: boolean;
   /** 虹の強さ（本物のガラスの色ごとの屈折率の差の何倍か。本物の 1 倍ではほとんど見えない） */
   prismStrength: number;
+}
+
+/** 画像を貼れる面のまとまり（読み込んだ部屋の形の面は、向きで右・左・天井・床・手前・奥に分け、柱などの部屋の中の物は objects） */
+export const TEX_SURFACES = ['right', 'left', 'ceiling', 'floor', 'front', 'back', 'objects'] as const;
+export type TexSurface = (typeof TEX_SURFACES)[number];
+export interface SurfaceTexture {
+  /** 画像のファイル名（src/private/textures/）。none = 貼らない（白い壁・床のまま） */
+  image: string;
+  /** 画像 1 枚ぶんの幅（m。この幅ごとに繰り返して貼る。高さは画像の縦横比で決まる） */
+  sizeM: number;
+  /** 明るさの倍率（画像の色 × 倍率が、光を返す割合になる） */
+  gain: number;
 }
 
 /** シェーダーの面の番号（0 = +x 右、1 = −x 左、2 = 天井、4 = 手前、5 = 奥） */
