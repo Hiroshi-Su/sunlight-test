@@ -7,6 +7,7 @@ import { type RGB, kelvinToRgb } from '../palette.ts';
 import { DriftBlend } from '../scenes/shader.ts';
 import { SUN_ANGULAR_RADIUS_DEG, directSunFactor, skyBrightness } from './daylight.ts';
 import { MAX_BLOBS, MAX_PRISMS, MAX_SHIM_COLORS, MAX_SHIM_PALETTE, MAX_SPOTS, GLASS_FACES, GLASS_FACE_INDEX, GLASS_SURFACES, type GlassSpec, PRISM_PATTERNS, type OrganicLook, type PrismMotion, type RoomGeometry, type RoomInput, type RoomRenderSettings, type RoomScreenImage, type SpotLight, cloudFlowDir, moonDirection, moonWeight, spotPose, spotWeight, toThree, windowRect } from './model.ts';
+import { MAX_ROOM_PRIMS, type RoomMesh, type RoomPrim, type Vec3 } from './step.ts';
 import { OCEAN_CASCADES, OCEAN_LODS, type OceanSpectrum, buildOceanSpectrum } from './ocean.ts';
 import { wavePhases } from './water.ts';
 
@@ -102,6 +103,8 @@ export function spotColor(light: SpotLight): THREE.Vector3 {
   const lum = 0.2126 * c.x + 0.7152 * c.y + 0.0722 * c.z;
   return lum > 1e-4 ? c.multiplyScalar(1 / lum) : new THREE.Vector3(1, 1, 1);
 }
+
+const add3 = (a: Vec3, b: Vec3): Vec3 => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
 
 /** 1 フレームで 1 画素あたり追う光線の本数（多いほど早くきれいになるが重い）。URL の ?spp= で変えられる */
 export function samplesPerPixel(): number {
@@ -289,7 +292,55 @@ export class RoomCore {
       uSpotLampOn: { value: 0 },
       uAmbL: { value: new THREE.Vector3() },
       uAmbRect: { value: new THREE.Vector4() },
+      // 読み込んだ部屋の形（STEP）の面。面の数が 0 なら四角い部屋（src/room/step.ts）
+      uPrimCount: { value: 0 },
+      uPrimO: { value: Array.from({ length: MAX_ROOM_PRIMS }, () => new THREE.Vector3()) },    // 面の角
+      uPrimU: { value: Array.from({ length: MAX_ROOM_PRIMS }, () => new THREE.Vector3()) },    // 面の 2 辺
+      uPrimV: { value: Array.from({ length: MAX_ROOM_PRIMS }, () => new THREE.Vector3()) },
+      uPrimInfo: { value: Array.from({ length: MAX_ROOM_PRIMS }, () => new THREE.Vector3()) }, // 面の番号（0〜5 = 外枠の面、8〜13 = 部屋の中の物）・1 なら三角形・1 なら軸にそった長方形（O・U が両端の角）
+      uPrimBoxMin: { value: new THREE.Vector3() },  // 面をまとめて囲む直方体（光線がここを通らなければ、面を 1 枚ずつ確かめない）
+      uPrimBoxMax: { value: new THREE.Vector3() },
     };
+  }
+
+  /** 部屋の形（STEP から読んだ面の一覧）を使う。null なら四角い部屋 */
+  setMesh(mesh: RoomMesh | null): void {
+    const s = this.shared;
+    // 外枠の平面にぴったり重なる外枠の面は、四角い部屋の計算（外枠の直方体）と同じ結果になるので、シェーダーには渡さない（軽くするため）
+    const lo = s.uRoomMin.value, hi = s.uRoomMax.value;
+    const planes = [hi.x, lo.x, hi.y, lo.y, hi.z, lo.z];
+    const onBox = (p: RoomPrim): boolean => {
+      if (p.face >= 8) return false;
+      const k = p.face >> 1;
+      const c = [p.o, add3(p.o, p.u), add3(p.o, p.v)];
+      return c.every((q) => Math.abs(q[k]! - planes[p.face]!) < 1e-6);
+    };
+    const prims = (mesh?.prims ?? []).filter((p) => !onBox(p)).slice(0, MAX_ROOM_PRIMS);
+    s.uPrimCount.value = prims.length;
+    const bmin = new THREE.Vector3(Infinity, Infinity, Infinity), bmax = new THREE.Vector3(-Infinity, -Infinity, -Infinity);
+    for (const p of prims) {
+      for (const q of [p.o, add3(p.o, p.u), add3(p.o, p.v), add3(p.o, add3(p.u, p.v))]) {
+        bmin.min(new THREE.Vector3(...q));
+        bmax.max(new THREE.Vector3(...q));
+      }
+    }
+    s.uPrimBoxMin.value.copy(bmin.subScalar(1e-3));
+    s.uPrimBoxMax.value.copy(bmax.addScalar(1e-3));
+    // 軸にそった長方形は、厚さ 0 の直方体（両端の角）として渡す（シェーダーで軽く確かめられる）。それ以外は角と 2 辺
+    const aligned = (v: Vec3): boolean => v.filter((c) => Math.abs(c) > 1e-9).length === 1;
+    prims.forEach((p, i) => {
+      if (!p.tri && aligned(p.u) && aligned(p.v)) {
+        const a = new THREE.Vector3(...p.o), b = new THREE.Vector3(...add3(p.o, add3(p.u, p.v)));
+        s.uPrimO.value[i]!.copy(a).min(b).subScalar(1e-6);
+        s.uPrimU.value[i]!.copy(a).max(b).addScalar(1e-6);
+        s.uPrimInfo.value[i]!.set(p.face, 0, 1);
+        return;
+      }
+      s.uPrimO.value[i]!.set(...p.o);
+      s.uPrimU.value[i]!.set(...p.u);
+      s.uPrimV.value[i]!.set(...p.v);
+      s.uPrimInfo.value[i]!.set(p.face, p.tri ? 1 : 0, 0);
+    });
   }
 
   /** 描く大きさが変わったとき */

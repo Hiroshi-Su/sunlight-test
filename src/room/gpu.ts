@@ -10,6 +10,7 @@ import { WGSL_SIMPLEX3 } from '../scenes/shader.ts';
 import { CAUSTIC_FACES, CAUSTIC_SIZE, FLOOR_ALBEDO, POOL_ALBEDO, SCREEN_ALBEDO, SCREEN_IMAGE, WALL_ALBEDO, type CausticPass, type RoomCore, type RoomFrame } from './core.ts';
 import type { RoomRenderer } from './gl.ts';
 import { MAX_BLOBS, MAX_PRISMS, MAX_SHIM_COLORS, MAX_SHIM_PALETTE, MAX_SPOTS, type RoomScreenImage } from './model.ts';
+import { MAX_ROOM_PRIMS } from './step.ts';
 import { GpuOcean, OCEAN_LODS, OCEAN_N } from './ocean.ts';
 import { WATER_ABSORPTION, WATER_IOR, WATER_WGSL } from './water.ts';
 
@@ -30,6 +31,7 @@ const MAX_PRISMS = ${MAX_PRISMS};
 const MAX_BLOBS = ${MAX_BLOBS};
 const MAX_SHIM_COLORS = ${MAX_SHIM_COLORS};
 const MAX_SHIM_PALETTE = ${MAX_SHIM_PALETTE};
+const MAX_ROOM_PRIMS = ${MAX_ROOM_PRIMS};
 
 ${WATER_WGSL}
 
@@ -44,16 +46,61 @@ fn basis(n: vec3f) -> Basis {
 
 fn safeDir(d: vec3f) -> vec3f { return select(d, vec3f(1e-8), abs(d) < vec3f(1e-8)); }
 
-// 部屋（直方体）の内側から出る点。面：0 = +x, 1 = -x, 2 = +y（天井）, 3 = -y（床）, 4 = +z（手前）, 5 = -z（奥・スクリーン）
+// 部屋の内側から出る点（光線が最初に当たる面）。面：0 = +x, 1 = -x, 2 = +y（天井）, 3 = -y（床）, 4 = +z（手前）, 5 = -z（奥・スクリーン）。
+// 読み込んだ部屋の形（STEP。uPrimCount > 0）のときは、その面（部屋の中の物は 8 + 向き）。形の面がない所は、外枠の直方体の面（src/room/gl.ts と同じ）
 struct Exit { t: f32, face: i32 }
+fn meshExit(o: vec3f, d: vec3f, e0: Exit) -> Exit {
+  var e = e0;
+  // 面をまとめて囲む直方体を、光線が距離 e.t までに通らなければ、どの面にも当たらない
+  let id = 1.0 / safeDir(d);
+  let t0 = (u.uPrimBoxMin - o) * id;
+  let t1 = (u.uPrimBoxMax - o) * id;
+  let tn = min(t0, t1);
+  let tf = max(t0, t1);
+  if (max(max(tn.x, tn.y), max(tn.z, 0.0)) > min(min(tf.x, tf.y), min(tf.z, e.t))) { return e; }
+  for (var i = 0; i < MAX_ROOM_PRIMS; i++) {
+    if (f32(i) >= u.uPrimCount) { break; }
+    let info = u.uPrimInfo[i];
+    if (info.z > 0.5) {
+      // 軸にそった長方形：厚さ 0 の直方体（uPrimO・uPrimU が両端の角）に入る所
+      let a0 = (u.uPrimO[i] - o) * id;
+      let a1 = (u.uPrimU[i] - o) * id;
+      let n0 = min(a0, a1);
+      let f0 = max(a0, a1);
+      let ta = max(max(n0.x, n0.y), n0.z);
+      if (ta <= min(min(f0.x, f0.y), f0.z) && ta > 1e-5 && ta < e.t) { e = Exit(ta, i32(info.x + 0.5)); }
+      continue;
+    }
+    let e1 = u.uPrimU[i];
+    let e2 = u.uPrimV[i];
+    let pv = cross(d, e2);
+    let det = dot(e1, pv);
+    if (abs(det) < 1e-12) { continue; }
+    let inv = 1.0 / det;
+    let s = o - u.uPrimO[i];
+    let a = dot(s, pv) * inv;
+    if (a < 0.0 || a > 1.0) { continue; }
+    let qv = cross(s, e1);
+    let b = dot(d, qv) * inv;
+    if (b < 0.0 || b > 1.0 || (info.y > 0.5 && a + b > 1.0)) { continue; }
+    let ti = dot(e2, qv) * inv;
+    if (ti > 1e-5 && ti < e.t) { e = Exit(ti, i32(info.x + 0.5)); }
+  }
+  return e;
+}
 fn exitRoom(o: vec3f, d: vec3f) -> Exit {
   let dd = safeDir(d);
   let bound = mix(u.uRoomMin, u.uRoomMax, step(vec3f(0.0), dd));
   let t = (bound - o) / dd;
-  if (t.x <= t.y && t.x <= t.z) { return Exit(t.x, select(1, 0, dd.x > 0.0)); }
-  if (t.y <= t.z) { return Exit(t.y, select(3, 2, dd.y > 0.0)); }
-  return Exit(t.z, select(5, 4, dd.z > 0.0));
+  var e: Exit;
+  if (t.x <= t.y && t.x <= t.z) { e = Exit(t.x, select(1, 0, dd.x > 0.0)); }
+  else if (t.y <= t.z) { e = Exit(t.y, select(3, 2, dd.y > 0.0)); }
+  else { e = Exit(t.z, select(5, 4, dd.z > 0.0)); }
+  if (u.uPrimCount > 0.5) { return meshExit(o, d, e); }
+  return e;
 }
+// 面の向き（部屋の中の物 8〜13 は、向きの番号 0〜5 に）
+fn dirOf(face: i32) -> i32 { return select(face, face - 8, face >= 8); }
 
 // 面の平面（面の外側まで広げたもの）との交点までの距離
 fn planeT(face: i32, o: vec3f, d: vec3f) -> f32 {
@@ -67,14 +114,16 @@ fn planeT(face: i32, o: vec3f, d: vec3f) -> f32 {
 }
 
 // 面の上の位置を 0〜1 の座標に（光の揺らぎの画像を読み書きするため。v は下が 0）
-fn faceUV(face: i32, p: vec3f) -> vec2f {
+fn faceUV(face0: i32, p: vec3f) -> vec2f {
+  let face = dirOf(face0);
   let q = (p - u.uRoomMin) / (u.uRoomMax - u.uRoomMin);
   if (face == 0 || face == 1) { return vec2f(q.z, q.y); }
   if (face == 2 || face == 3) { return vec2f(q.x, q.z); }
   return vec2f(q.x, q.y);
 }
 
-fn inwardNormal(face: i32) -> vec3f {
+fn inwardNormal(face0: i32) -> vec3f {
+  let face = dirOf(face0);
   if (face == 0) { return vec3f(-1.0, 0.0, 0.0); }
   if (face == 1) { return vec3f(1.0, 0.0, 0.0); }
   if (face == 2) { return vec3f(0.0, -1.0, 0.0); }
@@ -443,7 +492,7 @@ fn blurTap(face: i32, uv: vec2f) -> f32 {
     + causTex(face, uv + vec2f(o.x, -o.y)) + causTex(face, uv + vec2f(-o.x, o.y))) / 6.0;
 }
 fn causticAt(face: i32, p: vec3f) -> f32 {
-  if (u.uCausOn < 0.5 || face == 3) { return 0.0; }
+  if (u.uCausOn < 0.5 || face == 3 || face >= 8) { return 0.0; }
   return blurTap(face, faceUV(face, p));
 }
 // 水盤の底に屈折して届く日差し
@@ -603,6 +652,11 @@ fn skyNee(p: vec3f, n: vec3f) -> vec3f {
   let cp = dot(n, w);
   let cq = dot(windowOutwardK(k), w);
   if (cp <= 0.0 || cq <= 0.0) { return vec3f(0.0); }
+  // 読み込んだ部屋の形は凸とは限らないので、窓の点までの間に物があれば届かない
+  if (u.uPrimCount > 0.5) {
+    let eo = exitRoom(p, w);
+    if (eo.t * eo.t < d2 * 0.999 && !inWindow(eo.face, p + w * eo.t)) { return vec3f(0.0); }
+  }
   return outsideRadianceAvg(w) * cp / (windowPdf(k, w, d2) + cp / PI);
 }
 fn skyBsdf(n: vec3f, d: vec3f, t: f32, k: i32) -> vec3f {

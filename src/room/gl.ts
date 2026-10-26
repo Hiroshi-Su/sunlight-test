@@ -5,6 +5,7 @@ import { GLSL_SIMPLEX3, glPass } from '../scenes/shader.ts';
 import type { SceneInstance } from '../scenes/types.ts';
 import { CAUSTIC_FACES, CAUSTIC_SIZE, FLOOR_ALBEDO, POOL_ALBEDO, SCREEN_ALBEDO, SCREEN_IMAGE, WALL_ALBEDO, type RoomCore, type RoomFrame } from './core.ts';
 import { MAX_BLOBS, MAX_PRISMS, MAX_SHIM_COLORS, MAX_SHIM_PALETTE, MAX_SPOTS, type RoomScreenImage } from './model.ts';
+import { MAX_ROOM_PRIMS } from './step.ts';
 import { WATER_ABSORPTION, WATER_GLSL, WATER_IOR } from './water.ts';
 
 const f3 = (n: number): string => n.toFixed(4);
@@ -119,6 +120,14 @@ uniform float uSpotR;                // 器具の大きさ（球の半径）
 uniform float uSpotLampOn;           // 器具を描くか（0 = 描かない。照らす光は変わらない）
 uniform vec3 uAmbL;                  // 全体照明：天井の光る面の明るさ（放射輝度。0 = 消えている）
 uniform vec4 uAmbRect;               // 全体照明：光る面の範囲（x0, x1, z0, z1。高さは天井）
+// 読み込んだ部屋の形（STEP。src/room/step.ts）の面。uPrimCount が 0 なら四角い部屋
+const int MAX_ROOM_PRIMS = ${MAX_ROOM_PRIMS};
+uniform float uPrimCount;
+uniform vec3 uPrimO[MAX_ROOM_PRIMS];    // 面の角
+uniform vec3 uPrimU[MAX_ROOM_PRIMS];    // 面の 2 辺（平行四辺形。三角形なら角と 2 辺の先の 3 点）
+uniform vec3 uPrimV[MAX_ROOM_PRIMS];
+uniform vec3 uPrimInfo[MAX_ROOM_PRIMS]; // x = 面の番号（0〜5 = 外枠の面、8〜13 = 部屋の中の物（8 + 向き））、y = 1 なら三角形、z = 1 なら軸にそった長方形（uPrimO・uPrimU が両端の角）
+uniform vec3 uPrimBoxMin, uPrimBoxMax; // 面をまとめて囲む直方体
 
 const float PI = 3.14159265358979;
 const float EPS = 1e-4;
@@ -141,16 +150,55 @@ vec3 safeDir(vec3 d) {
   return vec3(abs(d.x) < 1e-8 ? 1e-8 : d.x, abs(d.y) < 1e-8 ? 1e-8 : d.y, abs(d.z) < 1e-8 ? 1e-8 : d.z);
 }
 
-// 部屋（直方体）の内側から出る点。面：0 = +x, 1 = -x, 2 = +y（天井）, 3 = -y（床）, 4 = +z（手前）, 5 = -z（奥・スクリーン）
+// 読み込んだ部屋の形の面のうち、距離 t より手前で光線が当たる面。当たれば、その面の番号と距離にする
+float meshExit(vec3 o, vec3 d, float t, inout int face) {
+  // 面をまとめて囲む直方体を、光線が距離 t までに通らなければ、どの面にも当たらない
+  vec3 id = 1.0 / safeDir(d);
+  vec3 t0 = (uPrimBoxMin - o) * id, t1 = (uPrimBoxMax - o) * id;
+  vec3 tn = min(t0, t1), tf = max(t0, t1);
+  if (max(max(tn.x, tn.y), max(tn.z, 0.0)) > min(min(tf.x, tf.y), min(tf.z, t))) return t;
+  for (int i = 0; i < MAX_ROOM_PRIMS; i++) {
+    if (float(i) >= uPrimCount) break;
+    vec3 info = uPrimInfo[i];
+    if (info.z > 0.5) {
+      // 軸にそった長方形：厚さ 0 の直方体（uPrimO・uPrimU が両端の角）に入る所
+      vec3 a0 = (uPrimO[i] - o) * id, a1 = (uPrimU[i] - o) * id;
+      vec3 n0 = min(a0, a1), f0 = max(a0, a1);
+      float ta = max(max(n0.x, n0.y), n0.z);
+      if (ta <= min(min(f0.x, f0.y), f0.z) && ta > 1e-5 && ta < t) { t = ta; face = int(info.x + 0.5); }
+      continue;
+    }
+    vec3 e1 = uPrimU[i], e2 = uPrimV[i];
+    vec3 pv = cross(d, e2);
+    float det = dot(e1, pv);
+    if (abs(det) < 1e-12) continue;
+    float inv = 1.0 / det;
+    vec3 s = o - uPrimO[i];
+    float a = dot(s, pv) * inv;
+    if (a < 0.0 || a > 1.0) continue;
+    vec3 qv = cross(s, e1);
+    float b = dot(d, qv) * inv;
+    if (b < 0.0 || b > 1.0 || (uPrimInfo[i].y > 0.5 && a + b > 1.0)) continue;
+    float ti = dot(e2, qv) * inv;
+    if (ti > 1e-5 && ti < t) { t = ti; face = int(uPrimInfo[i].x + 0.5); }
+  }
+  return t;
+}
+
+// 部屋の内側から出る点（光線が最初に当たる面）。面：0 = +x, 1 = -x, 2 = +y（天井）, 3 = -y（床）, 4 = +z（手前）, 5 = -z（奥・スクリーン）。
+// 読み込んだ部屋の形のときは、その面（部屋の中の物は 8 + 向き）。形の面がない所（開いた手前など）は、外枠の直方体の面
 float exitRoom(vec3 o, vec3 d, out int face) {
   vec3 dd = safeDir(d);
   vec3 bound = mix(uRoomMin, uRoomMax, step(0.0, dd));
   vec3 t = (bound - o) / dd;
-  if (t.x <= t.y && t.x <= t.z) { face = dd.x > 0.0 ? 0 : 1; return t.x; }
-  if (t.y <= t.z) { face = dd.y > 0.0 ? 2 : 3; return t.y; }
-  face = dd.z > 0.0 ? 4 : 5;
-  return t.z;
+  float tb;
+  if (t.x <= t.y && t.x <= t.z) { face = dd.x > 0.0 ? 0 : 1; tb = t.x; }
+  else if (t.y <= t.z) { face = dd.y > 0.0 ? 2 : 3; tb = t.y; }
+  else { face = dd.z > 0.0 ? 4 : 5; tb = t.z; }
+  return uPrimCount > 0.5 ? meshExit(o, d, tb, face) : tb;
 }
+// 面の向き（部屋の中の物 8〜13 は、向きの番号 0〜5 に）
+int dirOf(int face) { return face >= 8 ? face - 8 : face; }
 
 // 面の平面（面の外側まで広げたもの）との交点までの距離
 float planeT(int face, vec3 o, vec3 d) {
@@ -165,6 +213,7 @@ float planeT(int face, vec3 o, vec3 d) {
 
 // 面の上の位置を 0〜1 の座標に（光の揺らぎの画像を読み書きするため）
 vec2 faceUV(int face, vec3 p) {
+  face = dirOf(face);
   vec3 q = (p - uRoomMin) / (uRoomMax - uRoomMin);
   if (face == 0 || face == 1) return vec2(q.z, q.y);
   if (face == 2 || face == 3) return vec2(q.x, q.z);
@@ -172,6 +221,7 @@ vec2 faceUV(int face, vec3 p) {
 }
 
 vec3 inwardNormal(int face) {
+  face = dirOf(face);
   if (face == 0) return vec3(-1.0, 0.0, 0.0);
   if (face == 1) return vec3(1.0, 0.0, 0.0);
   if (face == 2) return vec3(0.0, -1.0, 0.0);
@@ -532,7 +582,7 @@ float blurTap(sampler2D s, vec2 uv) {
     + texture(s, uv + vec2(o.x, -o.y)).r + texture(s, uv + vec2(-o.x, o.y)).r) / 6.0;
 }
 float causticAt(int face, vec3 p) {
-  if (uCausOn == 0) return 0.0;
+  if (uCausOn == 0 || face >= 8) return 0.0;
   vec2 uv = faceUV(face, p);
   if (face == 0) return blurTap(uCaus0, uv);
   if (face == 1) return blurTap(uCaus1, uv);
@@ -649,7 +699,7 @@ vec3 cosineSample(vec3 n) {
   return normalize(t * r * cos(phi) + b * r * sin(phi) + n * sqrt(max(0.0, 1.0 - u1)));
 }
 
-// 窓から見える空（と海）から受ける光（窓の面の 1 点を選ぶ。部屋は凸なので、窓はどこからでも遮られずに見える）
+// 窓から見える空（と海）から受ける光（窓の面の 1 点を選ぶ。四角い部屋は凸なので、窓はどこからでも遮られずに見える。読み込んだ部屋の形では、間に物がないかを確かめる）
 // 窓から入る空の光。2 通りの選び方を混ぜる（多重重点サンプリング、バランス・ヒューリスティック）
 // - 窓の中の点を選ぶ（skyNee）：小さい窓に強い。ただし窓のすぐ近くの点では「面積 ÷ 距離²」が極端に大きくなり、
 //   これだけだと白い点（ファイアフライ）が出る（天井いっぱいの天窓の、壁の上の縁など）
@@ -677,6 +727,12 @@ vec3 skyNee(vec3 p, vec3 n) {
   w *= inversesqrt(d2);
   float cp = dot(n, w), cq = dot(windowOutwardK(k), w);
   if (cp <= 0.0 || cq <= 0.0) return vec3(0.0);
+  // 読み込んだ部屋の形は凸とは限らないので、窓の点までの間に物があれば届かない
+  if (uPrimCount > 0.5) {
+    int fo;
+    float to = exitRoom(p, w, fo);
+    if (to * to < d2 * 0.999 && !inWindow(fo, p + w * to)) return vec3(0.0);
+  }
   return outsideRadianceAvg(w) * cp / (windowPdf(k, w, d2) + cp / PI);
 }
 // 照り返しの光線 d が窓 k から外へ出たとき（t = 窓までの距離）に数える空の光（拡散面が返す光、skyNee / π と同じ単位）

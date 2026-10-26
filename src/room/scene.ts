@@ -12,6 +12,7 @@
 // z の符号だけ反転して使う（toThree）。窓の位置・緯度経度が変わっても、この対応は変わらない。
 //
 // 構成：値の計算は src/room/core.ts（描く方式によらない）、描くのは src/room/gl.ts（WebGL2・GLSL）か src/room/gpu.ts（WebGPU・WGSL）
+import type { RoomMesh } from './step.ts';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { WindowSide } from '../config.ts';
@@ -52,6 +53,8 @@ export interface RoomSceneOptions {
   guide?: HTMLCanvasElement | null;
   /** 部屋の中央の光の軌跡（部屋を作り直しても動きが続くよう、外で 1 つだけ作って渡す） */
   trails?: TrailLayer | null;
+  /** 読み込んだ部屋の形（STEP。src/room/step.ts）。null・省略なら四角い部屋。room の寸法はこの形の大きさに合わせておく */
+  mesh?: RoomMesh | null;
 }
 
 /** 合わせるための線に描くもの */
@@ -71,9 +74,10 @@ export function createRoomScene(
   facingAzimuth: number,
   opts: RoomSceneOptions = {},
 ) {
-  const { view, gpu = null, resolution = { scale: 1, output: 'view' }, guide = null, trails = null } = opts;
+  const { view, gpu = null, resolution = { scale: 1, output: 'view' }, guide = null, trails = null, mesh = null } = opts;
   const { widthM: W, depthM: D, heightM: H } = room;
   const core = new RoomCore(windowSide, room, facingAzimuth);
+  core.setMesh(mesh);
   const renderer: RoomRenderer = gpu ? new GpuRoomRenderer(gpu, core) : new GlRoomRenderer(core);
   const backend: Backend = gpu ? 'webgpu' : 'webgl';
   container.appendChild(renderer.canvas);

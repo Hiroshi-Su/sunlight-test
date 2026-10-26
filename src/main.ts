@@ -6,6 +6,7 @@ import { APP_MODES, type AppMode, type ParamValues, type VisualsConfig, applyEnv
 import { drawGuides, drawLightArrow } from './diagram.ts';
 import { kelvinAt, kelvinToRgb, skyColors } from './palette.ts';
 import { type RoomView, createRoomScene } from './room/scene.ts';
+import { roomMesh } from './room/room-models.ts';
 import { findScene } from './scenes/index.ts';
 import { lightDebug } from './scenes/light-debug.ts';
 import { type SceneDef, type SceneInput, mergeParams } from './scenes/types.ts';
@@ -188,6 +189,7 @@ const trailLayer = mode === 'room' ? new TrailLayer(el('roomTrails', HTMLCanvasE
 const buildRoom = (view?: RoomView) =>
   createRoomScene(el('roomStage', HTMLDivElement), roomSite.windowSide, roomUi?.room ?? roomEntry.room, roomSite.facingAzimuth, {
     view, gpu: webgpu, resolution: roomUi?.resolution, calibration: roomUi?.calibration, guide: el('roomGuide', HTMLCanvasElement), trails: trailLayer,
+    mesh: roomMesh(roomUi?.settings.roomModel ?? 'box'),
   });
 if (mode === 'room') { room = buildRoom(); if (roomUi) room.setGuides(roomUi.guides); }
 if (room) addEventListener('resize', () => room?.resize());

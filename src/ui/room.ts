@@ -15,6 +15,7 @@ import { el, ignoreSliderWheel } from './dom.ts';
 import { type WarpCorners, warpCss } from './warp.ts';
 import { type RoomSettingsFile, mergeKnown, oneOf } from '../room/settings-file.ts';
 import { shareRoomSettings } from '../room/live-share.ts';
+import { ROOM_MODELS, roomMesh } from '../room/room-models.ts';
 import { mountTimeControls } from './time-controls.ts';
 
 /**
@@ -154,6 +155,10 @@ export function mountRoomUi(
   const base = mergeKnown(codeDefaults(configRoom, configWindow), saved);
   // 部屋の寸法。設定ファイル（config/site.json）は変えない。パネルで変えたものは「部屋の設定を保存」で config/room.json に残せる
   const room: RoomGeometry = { ...base.room };
+  // 部屋の形：四角い部屋（box）か、読み込んだ STEP（src/private/rooms/ のファイル名。?model= でも選べる）。STEP のときは、部屋の寸法をその形の大きさにする
+  const shape = { id: roomMesh(q.get('model') ?? base.render.roomModel) ? (q.get('model') ?? base.render.roomModel) : 'box' };
+  const fitShape = (): void => { const m = roomMesh(shape.id); if (m) Object.assign(room, m.size); };
+  fitShape();
   const gui = new GUI({ container: el('room-panel', HTMLElement), width: 380, title: 'room' });
   ignoreSliderWheel(gui.domElement);
 
@@ -192,6 +197,26 @@ export function mountRoomUi(
       .name('場所（太陽と月の緯度経度）').onChange((id: string) => { settings.location = id; const l = pickLoc(id); if (l) hooks.onLocation?.(l); });
   }
   const fr = gui.addFolder('部屋');
+  // 部屋の形（読み込める STEP があるときだけ出す）。変えたら部屋を作り直す
+  const shapeInfo = { text: '' };
+  const showShape = (): void => {
+    const m = roomMesh(shape.id);
+    shapeInfo.text = !m ? '四角い部屋（寸法は下の値）' : `面 ${m.prims.length} 枚・幅 ${m.size.widthM.toFixed(3)} × 奥行き ${m.size.depthM.toFixed(3)} × 高さ ${m.size.heightM.toFixed(3)} m${m.warnings.length ? `。${m.warnings.join('。')}` : ''}`;
+    for (const c of dimControls) c.show(!m).updateDisplay();
+  };
+  const dimControls: { show(v: boolean): { updateDisplay(): void } }[] = [];
+  if (ROOM_MODELS.length > 0) {
+    const options: Record<string, string> = { '四角い部屋（箱）': 'box' };
+    for (const m of ROOM_MODELS) options[m.mesh ? m.id : `${m.id}（読めません：${m.error}）`] = m.id;
+    fr.add(shape, 'id', options).name('部屋の形').onChange(() => {
+      if (!roomMesh(shape.id)) shape.id = 'box';
+      settings.roomModel = shape.id;
+      fitShape();
+      showShape();
+      roomChanged();
+    });
+    fr.add(shapeInfo, 'text').name('形').disable().listen();
+  }
 
   // 画面の設定。照り返しを 0 にすると、窓から直接届く光だけになる（照り返しの効果を見比べられる）
   // 水は ?sea=1（海）・?ripples=1（水面の反射の揺らぎ）・?pool=1（水盤）で最初からオンにできる
@@ -215,6 +240,7 @@ export function mountRoomUi(
     window: { ...winBase },
     openings,
     location: locState.id,
+    roomModel: shape.id,
     clouds: on('clouds', r0.clouds), cloudShadow: on('cloudShadow', r0.cloudShadow),
     screen: q.has('screen') ? q.get('screen') !== '0' : r0.screen,
     // ?moon=0 で月明かりを消して開く
@@ -277,11 +303,15 @@ export function mountRoomUi(
   const cSkyD = fr.add(openings, 'skyDepthM', 0.2, room.depthM, 0.05).name('天窓の奥行き（m）').onChange(applyOpenings);
   const fit = applyOpenings;
   // 部屋の寸法（現地の空間に合わせる）。動かし終えたときに部屋を作り直す
-  const roomChanged = (): void => { fit(); hooks.onRoomSize(); };
-  fr.add(room, 'widthM', 2, 40, 0.05).name('部屋の幅（m）').onFinishChange(roomChanged);
-  fr.add(room, 'depthM', 2, 40, 0.05).name('部屋の奥行き（m）').onFinishChange(roomChanged);
-  fr.add(room, 'heightM', 2, 15, 0.05).name('部屋の高さ（m）').onFinishChange(roomChanged);
-  fr.add({ run: (): void => { Object.assign(room, configRoom); fr.controllers.forEach((c) => c.updateDisplay()); roomChanged(); } }, 'run').name('部屋の寸法を設定どおりに戻す');
+  // 読み込んだ部屋の形のときは、寸法はその形の大きさのまま（パース調整モードのキーで変えても戻す）
+  const roomChanged = (): void => { fitShape(); fit(); hooks.onRoomSize(); };
+  dimControls.push(
+    fr.add(room, 'widthM', 2, 40, 0.05).name('部屋の幅（m）').onFinishChange(roomChanged),
+    fr.add(room, 'depthM', 2, 40, 0.05).name('部屋の奥行き（m）').onFinishChange(roomChanged),
+    fr.add(room, 'heightM', 2, 15, 0.05).name('部屋の高さ（m）').onFinishChange(roomChanged),
+    fr.add({ run: (): void => { Object.assign(room, configRoom); fr.controllers.forEach((c) => c.updateDisplay()); roomChanged(); } }, 'run').name('部屋の寸法を設定どおりに戻す'),
+  );
+  showShape();
   fit();
   const fv = gui.addFolder('光の計算');
   fv.add(settings, 'bounces', 0, 6, 1).name('照り返しの回数');
@@ -939,7 +969,7 @@ export function codeDefaults(room: RoomGeometry, configWindow: WindowGeometry) {
     render: {
       exposure: 2.5, bounces: 3, smooth: true,
       seaView: ROOM_DEFAULTS.seaView as boolean, seaRipples: false, pool: ROOM_DEFAULTS.pool as boolean, poolReflect: ROOM_DEFAULTS.poolReflect as boolean,
-      waveAmp: ROOM_DEFAULTS.waveAmp as number, poolDepthM: 0.3, seaLevelM: -1, seaWaves: 'fft' as SeaWaves, seaCompare: false, location: 'venue',
+      waveAmp: ROOM_DEFAULTS.waveAmp as number, poolDepthM: 0.3, seaLevelM: -1, seaWaves: 'fft' as SeaWaves, seaCompare: false, location: 'venue', roomModel: 'box',
       openings: { left: false, right: false, top: 'none' as WindowTop, skyWidthM: Math.round(room.widthM * 0.4 * 20) / 20, skyDepthM: Math.round(room.depthM * 0.5 * 20) / 20 },
       glass: { right: false, left: false, ceiling: false, front: false, back: false },
       glassSpecs: Object.fromEntries(GLASS_FACES.map((f) => [f, { ...GLASS_SPEC_DEFAULT }])) as Record<GlassFace, GlassSpec>, seaWindMS: 6, seaWaveScale: 1, seaRoughness: 0.004, seaScatter: 0.6,
