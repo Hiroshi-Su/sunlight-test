@@ -5,7 +5,7 @@ import type { Clock } from '../clock.ts';
 import { mountCalibMode } from './calib-mode.ts';
 import { WINDOW_SIDES, WINDOW_SIDE_LABEL, type WindowSide } from '../config.ts';
 import { PALETTE_KELVIN_ALTS, PALETTE_SKY_ALTS, type PaletteTable, defaultPalette, kelvinAt, setPalette } from '../palette.ts';
-import { EXHIBIT_SIZE, type GuideOptions, LIGHT_KINDS, type LightKind, MAX_BLOBS, MAX_SHIM_COLORS, MAX_SHIM_PALETTE, MAX_SPOTS, MAX_PRISMS, type MoonSettings, type OrganicLook, PRISM_MOTIONS, PRISM_PATTERNS, type Openings, WINDOW_TOPS, type WindowTop, GLASS_FACES, GLASS_KINDS, GLASS_SURFACES, type GlassFace, type GlassKind, type GlassSurface, MOON_MODES, SEA_WAVES, type SeaWaves, SHIMMER_ANCHORS, SHIMMER_COLOR_MODES, type PrismMotion, type PrismPattern, type PrismSettings, SPOT_MODES, TRAIL_COLOR_MODES, type TrailSettings, type RoomGeometry, type RoomOutput, type RoomRenderSettings, type RoomResolution, type SpotLight, type SpotMode, type SpotSettings, type ViewCalibration, type WindowGeometry, defaultCalibration } from '../room/scene.ts';
+import { EXHIBIT_SIZE, type GuideOptions, LIGHT_KINDS, type LightKind, MAX_BLOBS, MAX_SHIM_COLORS, MAX_SHIM_PALETTE, MAX_SPOTS, MAX_PRISMS, type MoonSettings, type OrganicLook, PRISM_MOTIONS, PRISM_PATTERNS, type Openings, WINDOW_TOPS, type WindowTop, GLASS_FACES, GLASS_KINDS, GLASS_SURFACES, type GlassFace, type GlassKind, type GlassSpec, type GlassSurface, MOON_MODES, SEA_WAVES, type SeaWaves, SHIMMER_ANCHORS, SHIMMER_COLOR_MODES, type PrismMotion, type PrismPattern, type PrismSettings, SPOT_MODES, TRAIL_COLOR_MODES, type TrailSettings, type RoomGeometry, type RoomOutput, type RoomRenderSettings, type RoomResolution, type SpotLight, type SpotMode, type SpotSettings, type ViewCalibration, type WindowGeometry, defaultCalibration } from '../room/scene.ts';
 import { SCENES, findScene } from '../scenes/index.ts';
 import type { SceneDef } from '../scenes/types.ts';
 import type { SolarState } from '../solar.ts';
@@ -220,12 +220,17 @@ export function mountRoomUi(
     // ?moon=0 で月明かりを消して開く
     moon: { ...r0.moon, on: on('moon', r0.moon.on), mode: oneOf(q.get('moonMode') ?? r0.moon.mode, MOON_MODES, 'realFull') },
     // ?glass=right,back のように、ガラスの壁にする面を並べる（?glass=0 ですべて壁）
-    glassSpec: {
-      ...r0.glassSpec,
-      kind: oneOf(r0.glassSpec.kind, GLASS_KINDS, 'lowIron'),
-      surface: oneOf(q.get('glassSurface') ?? r0.glassSpec.surface, GLASS_SURFACES, 'flat'),
-      prism: on('glassPrism', r0.glassSpec.prism),
-    },
+    // ガラスの仕様は面ごと。面ごとに保存する前のファイル（render.glassSpec が 1 つ）なら、その値を全部の面に使う。
+    // URL：?glassSurface=swell（全部の面）・?glassSurface.right=swell（右の壁だけ）、?glassPrism=1・?glassPrism.back=1 も同じ
+    glassSpecs: Object.fromEntries(GLASS_FACES.map((f) => {
+      const src = glassSpecsOf(saved, base)[f];
+      return [f, {
+        ...src,
+        kind: oneOf(q.get(`glassKind.${f}`) ?? src.kind, GLASS_KINDS, 'lowIron'),
+        surface: oneOf(q.get(`glassSurface.${f}`) ?? q.get('glassSurface') ?? src.surface, GLASS_SURFACES, 'flat'),
+        prism: q.has(`glassPrism.${f}`) ? q.get(`glassPrism.${f}`) === '1' : on('glassPrism', src.prism),
+      }];
+    })) as Record<GlassFace, GlassSpec>,
     glass: Object.fromEntries(GLASS_FACES.map((f) => [f, q.has('glass') ? (q.get('glass') ?? '').split(',').includes(f) : !!r0.glass[f]])) as Record<GlassFace, boolean>,
     // プリズム：保存した値の出し方・動き方が選択肢になければ既定にする
     prism: {
@@ -400,26 +405,37 @@ export function mountRoomUi(
   // ガラスの壁：面ごとに、枠なしの一枚ガラスにする（外は空と海。光も景色も通り、部屋の中が映り込む）。窓（穴）の所は窓のまま
   const fgl = gui.addFolder('ガラスの壁（窓の所は穴のまま、残りを一枚ガラスに）');
   const GLASS_LABEL: Record<GlassFace, string> = { right: '右の壁', left: '左の壁', ceiling: '天井（天窓のときは、天窓のまわりの天井）', front: '手前の壁（見る人の側）', back: '奥の壁（スクリーンの側）' };
-  for (const f of GLASS_FACES) fgl.add(settings.glass, f).name(GLASS_LABEL[f]);
-  // ガラスの仕様と表面の形（すべてのガラスの面に共通）
-  const gsp = settings.glassSpec;
-  fgl.add(gsp, 'kind', { '高透過ガラス（低鉄。ほぼ無色）': 'lowIron', '普通の板ガラス（わずかに緑）': 'float', '色付きガラス': 'tinted' }).name('ガラスの種類').onChange(() => showGlass());
-  const cGlassColor = fgl.addColor(gsp, 'color').name('ガラスの色（色付きのとき）');
-  fgl.add(gsp, 'transmission', 0, 1, 0.01).name('透過率の倍率');
-  fgl.add(gsp, 'surface', { '平ら': 'flat', '波打ち（水面のような細かい波）': 'wave', 'うねり（大きくゆるやかな波）': 'swell', 'リブ（縦の筋）': 'reeded' }).name('表面の形').onChange(() => showGlass());
-  const cGlassScale = fgl.add(gsp, 'scaleM', 0.02, 1.5, 0.01).name('模様の大きさ（m）');
-  const cGlassDepth = fgl.add(gsp, 'depthMM', 0, 5, 0.05).name('表面の深さ（mm。深いほどゆがみと光の網目が強い）');
-  const cGlassPrism = fgl.add(gsp, 'prism').name('通る光にプリズム（虹）を出す').onChange(() => showGlass());
-  const cGlassPrismK = fgl.add(gsp, 'prismStrength', 1, 60, 1).name('虹の強さ（本物の何倍か）');
-  const showGlass = (): void => {
-    const wavy = gsp.surface !== 'flat';
-    cGlassColor.show(gsp.kind === 'tinted');
-    cGlassScale.show(wavy);
-    cGlassDepth.show(wavy);
-    cGlassPrism.show(wavy);
-    cGlassPrismK.show(wavy && gsp.prism);
-  };
-  showGlass();
+  // 面ごとのフォルダ：ガラスにするか、ガラスの種類・色・透過率、表面の形・大きさ・深さ、虹
+  const glassFolders = GLASS_FACES.map((f) => {
+    const gf = fgl.addFolder(GLASS_LABEL[f]);
+    const gsp = settings.glassSpecs[f];
+    gf.add(settings.glass, f).name('ガラスにする').onChange(() => show());
+    const cKind = gf.add(gsp, 'kind', { '高透過ガラス（低鉄。ほぼ無色）': 'lowIron', '普通の板ガラス（わずかに緑）': 'float', '色付きガラス': 'tinted' }).name('ガラスの種類').onChange(() => show());
+    const cColor = gf.addColor(gsp, 'color').name('ガラスの色（色付きのとき）');
+    const cTrans = gf.add(gsp, 'transmission', 0, 1, 0.01).name('透過率の倍率');
+    const cSurf = gf.add(gsp, 'surface', { '平ら': 'flat', '波打ち（水面のような細かい波）': 'wave', 'うねり（大きくゆるやかな波）': 'swell', 'リブ（縦の筋）': 'reeded' }).name('表面の形').onChange(() => show());
+    const cScale = gf.add(gsp, 'scaleM', 0.02, 1.5, 0.01).name('模様の大きさ（m）');
+    const cDepth = gf.add(gsp, 'depthMM', 0, 5, 0.05).name('表面の深さ（mm。深いほどゆがみと光の網目が強い）');
+    const cPrism = gf.add(gsp, 'prism').name('通る光にプリズム（虹）を出す').onChange(() => show());
+    const cPrismK = gf.add(gsp, 'prismStrength', 1, 60, 1).name('虹の強さ（本物の何倍か）');
+    const cCopy = gf.add({ run: () => {
+      for (const o of GLASS_FACES) if (o !== f) Object.assign(settings.glassSpecs[o], gsp);
+      glassFolders.forEach((g) => { g.folder.controllersRecursive().forEach((c) => c.updateDisplay()); g.show(); });
+    } }, 'run').name('ほかの面も、この面と同じガラスにする（ガラスにするかどうかは変えない）');
+    const show = (): void => {
+      const on = settings.glass[f];
+      const wavy = gsp.surface !== 'flat';
+      for (const c of [cKind, cTrans, cSurf, cCopy]) c.show(on);
+      cColor.show(on && gsp.kind === 'tinted');
+      cScale.show(on && wavy);
+      cDepth.show(on && wavy);
+      cPrism.show(on && wavy);
+      cPrismK.show(on && wavy && gsp.prism);
+    };
+    show();
+    if (!settings.glass[f]) gf.close();
+    return { folder: gf, show };
+  });
 
   // 水：3 つはそれぞれ独立に出し消しできる（窓の外の 2 つは、壁の窓のときだけ効く）
   const fw = gui.addFolder('水');
@@ -855,6 +871,19 @@ export function choiceOf(side: WindowSide, win: WindowGeometry, room: RoomGeomet
   return win.widthM >= room.widthM - 1e-6 && win.heightM >= room.depthM - 1e-6 ? 'ceiling' : 'skylight';
 }
 
+/** ガラスの仕様の既定（面ごとに同じ値から始める） */
+const GLASS_SPEC_DEFAULT: GlassSpec = { kind: 'lowIron', color: '#9ec9d6', transmission: 1, surface: 'flat', scaleM: 0.15, depthMM: 0.8, prism: false, prismStrength: 15 };
+
+/** 保存した設定のガラスの仕様（面ごと）。面ごとに保存する前のファイル（render.glassSpec が 1 つ）なら、その値を全部の面に使う */
+export function glassSpecsOf(saved: unknown, base: ReturnType<typeof codeDefaults>): Record<GlassFace, GlassSpec> {
+  const r = (saved as { render?: { glassSpec?: unknown; glassSpecs?: unknown } } | null)?.render;
+  const one = r?.glassSpec && !r.glassSpecs ? mergeKnown(GLASS_SPEC_DEFAULT, r.glassSpec) : null;
+  return Object.fromEntries(GLASS_FACES.map((f) => {
+    const g = one ?? base.render.glassSpecs[f];
+    return [f, { ...g, kind: oneOf(g.kind, GLASS_KINDS, 'lowIron'), surface: oneOf(g.surface, GLASS_SURFACES, 'flat') }];
+  })) as Record<GlassFace, GlassSpec>;
+}
+
 /** 窓の組み合わせから、計算の上の 1 つ目の窓の位置と大きさを決める（天井の窓があれば天井（左もあれば天井＋左）、なければ左 > 右。壁は壁いっぱい） */
 export function openingsLayout(o: Openings, room: RoomGeometry, sill: number): { side: WindowSide; window: WindowGeometry } {
   if (o.top !== 'none') {
@@ -912,7 +941,7 @@ export function codeDefaults(room: RoomGeometry, configWindow: WindowGeometry) {
       waveAmp: ROOM_DEFAULTS.waveAmp as number, poolDepthM: 0.3, seaLevelM: -1, seaWaves: 'fft' as SeaWaves, seaCompare: false, location: 'venue',
       openings: { left: true, right: false, top: 'none' as WindowTop, skyWidthM: Math.round(room.widthM * 0.4 * 20) / 20, skyDepthM: Math.round(room.depthM * 0.5 * 20) / 20 },
       glass: { right: false, left: false, ceiling: false, front: false, back: false },
-      glassSpec: { kind: 'lowIron' as GlassKind, color: '#9ec9d6', transmission: 1, surface: 'flat' as GlassSurface, scaleM: 0.15, depthMM: 0.8, prism: false, prismStrength: 15 }, seaWindMS: 6, seaWaveScale: 1, seaRoughness: 0.004, seaScatter: 0.6,
+      glassSpecs: Object.fromEntries(GLASS_FACES.map((f) => [f, { ...GLASS_SPEC_DEFAULT }])) as Record<GlassFace, GlassSpec>, seaWindMS: 6, seaWaveScale: 1, seaRoughness: 0.004, seaScatter: 0.6,
       clouds: false, cloudShadow: ROOM_DEFAULTS.cloudShadow as boolean, cloudAmount: 0.45, cloudOpacity: 0.8,
       cloudSizeM: 1500, cloudHeightM: 1500, windMS: 30, windFromDeg: 270,
       screenArea: false, screen: false, screenGain: 0.6,

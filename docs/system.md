@@ -165,6 +165,11 @@ Windows では、BIOS の「AC 電源が戻ったら起動する」（Restore on
 
 **第一候補は OpenWeather の Current Weather Data**。10 分ごとに取って 1 日 144 回で、無料枠に遠く届かない。クレジット表示は、作品の説明パネルやキャプションに入れる。
 
+**出典の表示**（[OpenWeather の FAQ](https://openweathermap.org/faq)）：無料プランでも必須。「サービスの見える部分」に、文字「Weather data provided by OpenWeather」・openweathermap.org へのリンク・OpenWeather のロゴを置く。映像の中ではなく、作品の横の印刷したキャプションに置く予定（紙ではリンクを押せないので、URL を文字か QR コードで載せる）。
+
+- 2026-10-26：キャプションに置いてよいか、データを見せない使い方でライセンス（CC BY-SA 4.0 / ODbL）の「同じ条件で公開する」決まりが作品にかかるかを、OpenWeather に問い合わせた（個人の作品として。商業的な場所で展示するかもしれないことも伝えた）。**返事待ち**
+- ライセンスは、公式の資料どうしで書き方がそろっていない（料金のページは ODbL、ライセンスの説明資料は CC BY-SA 4.0）
+
 ### 4.3 取る値と、映像での使い道の例
 
 Current Weather Data（`https://api.openweathermap.org/data/2.5/weather?lat=…&lon=…&units=metric&appid=…`）の答えから、次の値を取り出す。

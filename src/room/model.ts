@@ -72,8 +72,8 @@ export interface RoomRenderSettings {
   openings: Openings;
   /** ガラスの壁にする面（枠なしの一枚ガラス。外は空と海）。窓（穴）の所は窓のまま。天窓のときに天井をガラスにすると、天窓のまわりの天井がガラスになる */
   glass: Record<GlassFace, boolean>;
-  /** ガラスの仕様と表面の形（ガラスの面すべてに共通） */
-  glassSpec: GlassSpec;
+  /** ガラスの仕様と表面の形（面ごと） */
+  glassSpecs: Record<GlassFace, GlassSpec>;
   /** 正弦波の海と FFT の海を並べて比べる（海を窓の奥行きの真ん中で分け、手前側：正弦波、奥側：FFT。WebGPU のとき） */
   seaCompare: boolean;
   /** 窓の外の海面の、描かない細かいさざ波の粗さ（傾きの 2 乗平均）。大きいほど太陽のきらめきが広い帯になる */

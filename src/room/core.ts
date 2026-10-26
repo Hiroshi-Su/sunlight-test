@@ -6,7 +6,7 @@ import { type WindowSide, wallWindowSide } from '../config.ts';
 import { type RGB, kelvinToRgb } from '../palette.ts';
 import { DriftBlend } from '../scenes/shader.ts';
 import { SUN_ANGULAR_RADIUS_DEG, directSunFactor, skyBrightness } from './daylight.ts';
-import { MAX_BLOBS, MAX_PRISMS, MAX_SHIM_COLORS, MAX_SHIM_PALETTE, MAX_SPOTS, GLASS_FACES, GLASS_FACE_INDEX, GLASS_SURFACES, PRISM_PATTERNS, type OrganicLook, type PrismMotion, type RoomGeometry, type RoomInput, type RoomRenderSettings, type RoomScreenImage, type SpotLight, cloudFlowDir, moonDirection, moonWeight, spotPose, spotWeight, toThree, windowRect } from './model.ts';
+import { MAX_BLOBS, MAX_PRISMS, MAX_SHIM_COLORS, MAX_SHIM_PALETTE, MAX_SPOTS, GLASS_FACES, GLASS_FACE_INDEX, GLASS_SURFACES, type GlassSpec, PRISM_PATTERNS, type OrganicLook, type PrismMotion, type RoomGeometry, type RoomInput, type RoomRenderSettings, type RoomScreenImage, type SpotLight, cloudFlowDir, moonDirection, moonWeight, spotPose, spotWeight, toThree, windowRect } from './model.ts';
 import { OCEAN_CASCADES, OCEAN_LODS, type OceanSpectrum, buildOceanSpectrum } from './ocean.ts';
 import { wavePhases } from './water.ts';
 
@@ -82,6 +82,19 @@ const unitLum = (c: THREE.Vector3): THREE.Vector3 => {
   const lum = 0.2126 * c.x + 0.7152 * c.y + 0.0722 * c.z;
   return lum > 1e-4 ? c.multiplyScalar(1 / lum) : new THREE.Vector3(1, 1, 1);
 };
+
+/**
+ * ガラスの表面の曲がり具合の最大（正弦波ごとの 振幅 × 波数² の和の 6 割）から、光が集まり切る距離 ×（n−1）を決める。
+ * シェーダーの正弦波（GLASS_W）と同じ並び：[波の長さの倍率, 深さと長さの倍率]
+ */
+function glassFocus(gs: GlassSpec): number {
+  const L = Math.max(0.01, gs.scaleM), A = Math.max(0, gs.depthMM) / 1000;
+  const waves: [number, number][] = gs.surface === 'reeded' ? [[1, 1]]
+    : gs.surface === 'swell' ? [[1, 3], [0.73, 3], [1.31, 3]]
+    : [[1, 1], [0.73, 1], [1.31, 1], [0.58, 1], [1.12, 1], [0.87, 1]];
+  const hmax = 0.6 * waves.reduce((sum, [w, m]) => sum + A * m * (gs.surface === 'reeded' ? 1 : 0.45) * (2 * Math.PI / (L * w * m)) ** 2, 0);
+  return hmax > 0 ? 1 / hmax : 1e3;
+}
 
 /** スポットライトの色（線形）。明るさの目盛りをそろえるため、色を変えても明るさ（輝度）は 1 にする */
 export function spotColor(light: SpotLight): THREE.Vector3 {
@@ -194,9 +207,10 @@ export class RoomCore {
       uSeaGlintE: { value: new THREE.Vector3() },                 // その光の強さ
       uGlassMask: { value: 0 },                                  // ガラスの壁の面（ビット）
       uOpenMask: { value: 0 },                                   // 1 つ目・2 つ目の窓のほかに、壁いっぱいの窓にする面（ビット）
-      uGlassWave: { value: new THREE.Vector4() },                // ガラスの表面の形・模様の大きさ（m）・深さ（m）・虹の強さ
-      uGlassTint: { value: new THREE.Vector3(0.99, 0.995, 0.99) }, // ガラスを真正面から通る光の割合（色ごと）
-      uGlassFocus: { value: 1 },                                 // 光が集まり切る距離 ×（n−1）の上限
+      // ガラスの仕様（面の番号ごと。0 = 右、1 = 左、2 = 天井、4 = 手前、5 = 奥）
+      uGlassWaveA: { value: Array.from({ length: 6 }, () => new THREE.Vector3()) },  // 表面の形・模様の大きさ（m）・深さ（m）
+      uGlassWaveB: { value: Array.from({ length: 6 }, () => new THREE.Vector3()) },  // 虹の強さ・光が集まり切る距離 ×（n−1）の上限
+      uGlassTintF: { value: Array.from({ length: 6 }, () => new THREE.Vector3(0.99, 0.995, 0.99)) }, // 真正面で通る光の割合（色ごと）
       uSeaSplit: { value: 0 },                                   // 1 = 海の手前側（窓の奥行きの真ん中より手前）は正弦波の海（比べるとき）
       uOceanOn: { value: 0 },                                    // 1 = 海の波を FFT の画像から読む（WebGPU のときだけ使う）
       uOceanSize: { value: new THREE.Vector2(OCEAN_CASCADES[0].sizeM, OCEAN_CASCADES[1].sizeM) },
@@ -619,7 +633,7 @@ export class RoomCore {
     // 重ね合わせのやり直し：視点や設定（窓の大きさを含む）が変わったら最初から
     const key = [
       sp.mode, sp.kind, JSON.stringify(sp.ambient), sp.count, JSON.stringify(sp.lights.slice(0, sp.count)),
-      moon.on, moon.strength, moon.skyStrength, moon.color, moon.azimuthDeg, moon.altitudeDeg, moon.mode, real ? Math.round(phaseK * 100) : 0, moon.seaRoadAltDeg, moon.seaRoadOffsetDeg, JSON.stringify(settings.glass), JSON.stringify(settings.glassSpec), JSON.stringify(settings.openings),
+      moon.on, moon.strength, moon.skyStrength, moon.color, moon.azimuthDeg, moon.altitudeDeg, moon.mode, real ? Math.round(phaseK * 100) : 0, moon.seaRoadAltDeg, moon.seaRoadOffsetDeg, JSON.stringify(settings.glass), JSON.stringify(settings.glassSpecs), JSON.stringify(settings.openings),
       settings.bounces, settings.seaView, settings.seaRipples, settings.pool, settings.poolReflect, settings.waveAmp, settings.poolDepthM, settings.seaLevelM, this.winRect.toArray(),
       cloudsOn, settings.cloudShadow, settings.cloudAmount, settings.cloudOpacity, settings.cloudSizeM, settings.cloudHeightM,
       settings.screenArea, !!screen, screen?.def.id, settings.screenGain,
@@ -663,23 +677,17 @@ export class RoomCore {
     // ガラスの壁：面ぜんたいが窓になる。壁がガラスなら、天窓だけのときも海が見える
     s.uGlassMask.value = GLASS_FACES.reduce((m, f) => m + (settings.glass[f] ? 1 << GLASS_FACE_INDEX[f] : 0), 0);
     const glassWall = (s.uGlassMask.value & 0b110011) !== 0;
-    // ガラスの仕様：種類ごとの色（真正面で通る光の割合）× 透過率。表面の形と虹
-    const gs = settings.glassSpec;
-    const tint = gs.kind === 'float' ? new THREE.Vector3(0.94, 0.975, 0.965)
-      : gs.kind === 'lowIron' ? new THREE.Vector3(0.99, 0.995, 0.99)
-      : linear(hexToRgb(gs.color));
-    s.uGlassTint.value.copy(tint.multiplyScalar(Math.max(0, gs.transmission)));
-    // 表面の曲がり具合の最大（正弦波ごとの 振幅 × 波数² の和の 6 割）から、光が集まり切る距離（×（n−1））を決める。シェーダーの正弦波と同じ並び
-    {
-      const L = Math.max(0.01, gs.scaleM), A = Math.max(0, gs.depthMM) / 1000;
-      // [波の長さの倍率, 深さと長さの倍率]
-      const waves: [number, number][] = gs.surface === 'reeded' ? [[1, 1]]
-        : gs.surface === 'swell' ? [[1, 3], [0.73, 3], [1.31, 3]]
-        : [[1, 1], [0.73, 1], [1.31, 1], [0.58, 1], [1.12, 1], [0.87, 1]];
-      const hmax = 0.6 * waves.reduce((sum, [w, m]) => sum + A * m * (gs.surface === 'reeded' ? 1 : 0.45) * (2 * Math.PI / (L * w * m)) ** 2, 0);
-      s.uGlassFocus.value = hmax > 0 ? 1 / hmax : 1e3;
+    // ガラスの仕様（面ごと）：種類ごとの色（真正面で通る光の割合）× 透過率。表面の形と虹
+    for (const face of GLASS_FACES) {
+      const gs = settings.glassSpecs[face];
+      const i = GLASS_FACE_INDEX[face];
+      const tint = gs.kind === 'float' ? new THREE.Vector3(0.94, 0.975, 0.965)
+        : gs.kind === 'lowIron' ? new THREE.Vector3(0.99, 0.995, 0.99)
+        : linear(hexToRgb(gs.color));
+      s.uGlassTintF.value[i]!.copy(tint.multiplyScalar(Math.max(0, gs.transmission)));
+      s.uGlassWaveA.value[i]!.set(GLASS_SURFACES.indexOf(gs.surface), Math.max(0.01, gs.scaleM), Math.max(0, gs.depthMM) / 1000);
+      s.uGlassWaveB.value[i]!.set(gs.prism ? Math.max(0, gs.prismStrength) : 0, glassFocus(gs), 0);
     }
-    s.uGlassWave.value.set(GLASS_SURFACES.indexOf(gs.surface), Math.max(0.01, gs.scaleM), Math.max(0, gs.depthMM) / 1000, gs.prism ? Math.max(0, gs.prismStrength) : 0);
     s.uSeaOn.value = settings.seaView && (windowSide !== 'ceiling' || glassWall || s.uOpenMask.value > 0) ? 1 : 0;
     s.uSeaY.value = settings.seaLevelM;
     s.uSeaBody.value.set(0.12, 0.35, 0.42).multiplyScalar(skyL * 0.25);
