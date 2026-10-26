@@ -137,7 +137,8 @@ export interface MoonSettings {
    *  set = どちらも、方位・高度で決めた月（B。本物どおり。月が低く窓の正面にあるときだけ海に光の道が見える）、
    *  split = 部屋は方位・高度で決めた月、海だけ窓の真ん中の向きの低い月（前の作り方。向きがそろわない）、
    *  real = 本物の月（日時と緯度経度から位置と満ち欠けを計算。月が出ていない時間・新月の夜は月の光がない）、
-   *  realFull = 本物の月の位置で、明るさはいつも満月 */
+   *  realFull = 本物の月の位置で、明るさはいつも満月、
+   *  realSky = 本物の月（月の光は満ち欠けどおり）で、夜空の明るさだけは skyCurve の割合（満ち欠けに合わせてゆるやかに暗くし、下限を残す） */
   mode: MoonMode;
   /** 海に映す月の光の明るさの倍率（部屋を照らす月の光に対して。0 で海に光の道を出さない） */
   seaRoadStrength: number;
@@ -147,10 +148,32 @@ export interface MoonSettings {
   seaRoadAltDeg: number;
   /** 窓から見える月の円盤の大きさ（本物の見かけの大きさの何倍か。0 で描かない）。本物の月のときは、満ち欠けの形も描く */
   diskScale: number;
+  /** realSky の夜空の明るさの割合（満月 = 1）：位相角 30°（満月の 2〜3 日前後）・60°（約 5 日前後）のときと、半月（90°）以降・月が出ていないときの下限。間は直線でつなぐ */
+  skyCurve: { d30: number; d60: number; floor: number };
+  /** realSky で、満ち欠けを日時によらず試す（real = 日時どおり、数字 = 位相角（度）、none = 月が出ていない） */
+  phasePreview: string;
+}
+
+/** 満ち欠けを試すときの選択肢 */
+export const MOON_PHASE_PREVIEWS = ['real', '0', '30', '60', '90', '120', '150', '180', 'none'] as const;
+
+/** 満月を 1 とした、地上を照らす月の明るさ（位相角 i 度から。Allen の式。src/moon.ts と同じ） */
+export const moonPhaseBrightness = (i: number): number => 10 ** (-0.4 * (0.026 * i + 4e-9 * i ** 4));
+
+/** realSky の夜空の明るさの割合（満月 = 1）。位相角 0°・30°・60°・90° の値を直線でつなぎ、90° 以降と月が出ていないときは下限 */
+export function moonSkyCurve(curve: MoonSettings['skyCurve'], phaseAngleDeg: number, up: boolean): number {
+  if (!up) return curve.floor;
+  const pts: [number, number][] = [[0, 1], [30, curve.d30], [60, curve.d60], [90, curve.floor]];
+  const i = Math.min(90, Math.max(0, phaseAngleDeg));
+  for (let k = 1; k < pts.length; k++) {
+    const [a, va] = pts[k - 1]!, [b, vb] = pts[k]!;
+    if (i <= b) return Math.max(curve.floor, va + (vb - va) * ((i - a) / (b - a)));
+  }
+  return curve.floor;
 }
 
 /** 月の置き方 */
-export const MOON_MODES = ['low', 'set', 'split', 'real', 'realFull'] as const;
+export const MOON_MODES = ['low', 'set', 'split', 'real', 'realFull', 'realSky'] as const;
 export type MoonMode = (typeof MOON_MODES)[number];
 
 /** ガラスにできる面（面ぜんたいが枠なしの一枚ガラス。床は水盤なので除く） */
