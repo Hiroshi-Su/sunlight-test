@@ -5,7 +5,7 @@ import type { Clock } from '../clock.ts';
 import { mountCalibMode } from './calib-mode.ts';
 import { WINDOW_SIDES, WINDOW_SIDE_LABEL, type WindowSide } from '../config.ts';
 import { PALETTE_KELVIN_ALTS, PALETTE_SKY_ALTS, type PaletteTable, defaultPalette, kelvinAt, setPalette } from '../palette.ts';
-import { EXHIBIT_SIZE, type GuideOptions, LIGHT_KINDS, type LightKind, MAX_BLOBS, MAX_SHIM_COLORS, MAX_SHIM_PALETTE, MAX_SPOTS, MAX_PRISMS, type MoonSettings, type OrganicLook, PRISM_MOTIONS, PRISM_PATTERNS, type Openings, WINDOW_TOPS, type WindowTop, GLASS_FACES, GLASS_KINDS, GLASS_SURFACES, type GlassFace, TEX_SURFACES, type TexSurface, type SurfaceTexture, type GlassKind, type GlassSpec, type GlassSurface, MOON_MODES, SEA_WAVES, type SeaWaves, SHIMMER_ANCHORS, SHIMMER_COLOR_MODES, type PrismMotion, type PrismPattern, type PrismSettings, SPOT_MODES, TRAIL_COLOR_MODES, type TrailSettings, type RoomGeometry, type RoomOutput, type RoomRenderSettings, type RoomResolution, type SpotLight, type SpotMode, type SpotSettings, type ViewCalibration, type WindowGeometry, defaultCalibration } from '../room/scene.ts';
+import { EXHIBIT_SIZE, type GuideOptions, LIGHT_KINDS, type LightKind, MAX_BLOBS, MAX_SHIM_COLORS, MAX_SHIM_PALETTE, MAX_SPOTS, MAX_PRISMS, type MoonSettings, type OrganicLook, PRISM_MOTIONS, PRISM_PATTERNS, type Openings, WINDOW_TOPS, type WindowTop, GLASS_FACES, GLASS_KINDS, GLASS_SURFACES, type GlassFace, TEX_SURFACES, type TexSurface, type SurfaceTexture, type GlassKind, type GlassSpec, type GlassSurface, MOON_MODES, MOON_PHASE_PREVIEWS, SEA_WAVES, type SeaWaves, SHIMMER_ANCHORS, SHIMMER_COLOR_MODES, type PrismMotion, type PrismPattern, type PrismSettings, SPOT_MODES, TRAIL_COLOR_MODES, type TrailSettings, type RoomGeometry, type RoomOutput, type RoomRenderSettings, type RoomResolution, type SpotLight, type SpotMode, type SpotSettings, type ViewCalibration, type WindowGeometry, defaultCalibration } from '../room/scene.ts';
 import { SCENES, findScene } from '../scenes/index.ts';
 import type { SceneDef } from '../scenes/types.ts';
 import type { SolarState } from '../solar.ts';
@@ -92,7 +92,7 @@ const PRISM_MOTION_LABEL: Record<PrismMotion, string> = {
 export const MOON_DEFAULTS: MoonSettings = {
   on: true, strength: 0.5, skyStrength: 0.7, color: '#a9bfff', azimuthDeg: 180, altitudeDeg: 50, onAltDeg: 0, fullAltDeg: -8,
   mode: 'realFull', seaRoadStrength: 1.5, seaRoadOffsetDeg: 0, seaRoadAltDeg: 6, diskScale: 1,
-  skyCurve: { d30: 0.69, d60: 0.43, floor: 0.35 }, phasePreview: 'real',
+  skyCurve: { d30: 0.69, d60: 0.43, floor: 0.35 }, lightCurve: { d30: 0.77, d60: 0.6, d90: 0.51, d120: 0.47, floor: 0.35 }, phasePreview: 'real',
 };
 const SPOT_MODE_LABEL: Record<SpotMode, string> = { auto: '自動（太陽が沈むと点く）', on: '常に点ける', off: '消す' };
 const LIGHT_KIND_LABEL: Record<LightKind, string> = { spot: 'スポットライト（頭上から丸く照らす）', ambient: '全体照明（天井全体がやわらかく光る）' };
@@ -246,7 +246,13 @@ export function mountRoomUi(
     clouds: on('clouds', r0.clouds), cloudShadow: on('cloudShadow', r0.cloudShadow),
     screen: q.has('screen') ? q.get('screen') !== '0' : r0.screen,
     // ?moon=0 で月明かりを消して開く
-    moon: { ...r0.moon, on: on('moon', r0.moon.on), mode: oneOf(q.get('moonMode') ?? r0.moon.mode, MOON_MODES, 'realFull') },
+    // ?moonPhase=180（位相角）/ none（月が出ていない）/ full・new / real で満ち欠けを試す。?moonMode がなければ、試せる置き方（realSky）にする
+    moon: {
+      ...r0.moon,
+      on: on('moon', r0.moon.on),
+      mode: oneOf(q.get('moonMode') ?? (moonPhaseParam(q) ? 'realSky' : r0.moon.mode), MOON_MODES, 'realFull'),
+      phasePreview: moonPhaseParam(q) ?? oneOf(r0.moon.phasePreview, MOON_PHASE_PREVIEWS, 'real'),
+    },
     // ?glass=right,back のように、ガラスの壁にする面を並べる（?glass=0 ですべて壁）
     // ガラスの仕様は面ごと。面ごとに保存する前のファイル（render.glassSpec が 1 つ）なら、その値を全部の面に使う。
     // URL：?glassSurface=swell（全部の面）・?glassSurface.right=swell（右の壁だけ）、?glassPrism=1・?glassPrism.back=1 も同じ
@@ -788,7 +794,16 @@ export function mountRoomUi(
     '本物の月（日時から位置と満ち欠け。月が出ていない・新月の夜は暗い）': 'real',
     '本物の月の位置で、いつも満月の明るさ（月が出ていない間は、決めた方位・高度から）': 'realFull',
     '本物の月（夜空は満ち欠けに合わせてゆるやかに暗く。下限あり）': 'realSky',
+    '本物の月（月の光と夜空に下限あり。月が出ていないときは月の光なし）': 'realFloor',
   }).name('月の置き方').onChange(() => showSky());
+  // realFloor：月の光の明るさ（満月 = 1）。満ち欠けの段階ごとの値を直線でつなぐ
+  const cLight = [
+    fm.add(mn.lightCurve, 'd30', 0, 1, 0.01).name('月の光：満月の 2〜3 日前後（位相角 30°）'),
+    fm.add(mn.lightCurve, 'd60', 0, 1, 0.01).name('月の光：満月の約 5 日前後（位相角 60°）'),
+    fm.add(mn.lightCurve, 'd90', 0, 1, 0.01).name('月の光：半月（位相角 90°）'),
+    fm.add(mn.lightCurve, 'd120', 0, 1, 0.01).name('月の光：三日月くらい（位相角 120°）'),
+    fm.add(mn.lightCurve, 'floor', 0, 1, 0.01).name('月の光：細い月・新月（下限）'),
+  ];
   // realSky：夜空の明るさの割合（満月 = 1）と、満ち欠けを試す
   const cSky30 = fm.add(mn.skyCurve, 'd30', 0, 1, 0.01).name('夜空：満月の 2〜3 日前後（位相角 30°）');
   const cSky60 = fm.add(mn.skyCurve, 'd60', 0, 1, 0.01).name('夜空：満月の約 5 日前後（位相角 60°）');
@@ -797,13 +812,17 @@ export function mountRoomUi(
     '日時どおり': 'real', '満月': '0', '満月の 2〜3 日前後': '30', '満月の約 5 日前後': '60', '半月': '90',
     '三日月くらい': '120', '細い月': '150', '新月': '180', '月が出ていない': 'none',
   }).name('満ち欠けを試す（日時によらず）');
-  const showSky = (): void => { for (const c of [cSky30, cSky60, cSkyMin, cPreview]) c.show(mn.mode === 'realSky'); };
+  const showSky = (): void => {
+    const curve = mn.mode === 'realSky' || mn.mode === 'realFloor';
+    for (const c of [cSky30, cSky60, cSkyMin, cPreview]) c.show(curve);
+    for (const c of cLight) c.show(mn.mode === 'realFloor');
+  };
   showSky();
   fm.add(mn, 'diskScale', 0, 10, 0.1).name('窓から見える月の大きさ（本物の何倍か。0 で描かない）');
   fm.add(mn, 'seaRoadStrength', 0, 20, 0.1).name('海に映す月の光の明るさ（0 で海に光の道を出さない）');
   fm.add(mn, 'seaRoadOffsetDeg', -80, 80, 1).name('低い月の向き：窓の真ん中から奥へ（度、A と前の作り方）');
   fm.add(mn, 'seaRoadAltDeg', 1, 60, 0.5).name('低い月の高度（度。低いほど光の道が長く、部屋の奥まで差し込む）');
-  fm.add({ run: () => { Object.assign(mn, { ...MOON_DEFAULTS, on: mn.on, skyCurve: mn.skyCurve }); Object.assign(mn.skyCurve, MOON_DEFAULTS.skyCurve); showSky(); fm.controllers.forEach((c) => c.updateDisplay()); } }, 'run').name('月明かりの設定を既定に戻す');
+  fm.add({ run: () => { Object.assign(mn, { ...MOON_DEFAULTS, on: mn.on, skyCurve: mn.skyCurve, lightCurve: mn.lightCurve }); Object.assign(mn.skyCurve, MOON_DEFAULTS.skyCurve); Object.assign(mn.lightCurve, MOON_DEFAULTS.lightCurve); showSky(); fm.controllers.forEach((c) => c.updateDisplay()); } }, 'run').name('月明かりの設定を既定に戻す');
 
   mountTimeControls(gui, clock);
 
@@ -857,7 +876,7 @@ export function mountRoomUi(
     get warp(): WarpCorners { return corners(); },
     /** @param fps 画面の更新の速さ（毎フレームの間隔をならしたもの。画面の上限、多くは 60 で頭打ちになる） */
     updateStatus(s: SolarState, lit: number, samples: number, backend: Backend, size: { width: number; height: number }, spotOn: number, fps: number, fpsLimit: number, moonOn: number, moonPos: MoonPosition | null = null): void {
-      const realMoon = mn.mode === 'real' || mn.mode === 'realFull' || mn.mode === 'realSky';
+      const realMoon = mn.mode === 'real' || mn.mode === 'realFull' || mn.mode === 'realSky' || mn.mode === 'realFloor';
       const { sun, light } = s;
       const windowText = openingsText(openings, room);
       statusEl.textContent = [
@@ -874,7 +893,7 @@ export function mountRoomUi(
         `ライト  ${spot.mode === 'off' ? '消す' : spotOn <= 0 ? '消えている（太陽が出ている）' : `点いている ${Math.round(spotOn * 100)}%`}`,
         `月明かり  ${!mn.on ? '消す' : moonOn > 0 ? `点いている ${Math.round(moonOn * 100)}%` : realMoon && moonPos && moonPos.altitude <= 0 && s.sun.altitude <= 0 ? '消えている（月が出ていない）' : '消えている（太陽が出ている）'}`,
         ...(realMoon && moonPos ? [`本物の月  方位 ${moonPos.azimuth.toFixed(0)}°・高度 ${moonPos.altitude.toFixed(0)}°・照らされている割合 ${Math.round(moonPos.illumination * 100)}%（明るさ 満月の ${Math.round(moonPos.brightness * 100)}%${mn.mode === 'realFull' ? (moonPos.altitude > 0 ? '。いつも満月の明るさで出す' : '。月が出ていないので、決めた方位・高度から満月の明るさで出す') : ''}）`]
-          .concat(mn.mode === 'realSky' && mn.phasePreview !== 'real' ? [`※ 満ち欠けを試している（${mn.phasePreview === 'none' ? '月が出ていない' : `位相角 ${mn.phasePreview}°`}）。窓から見える月の形は日時どおり`] : []) : []),
+          .concat((mn.mode === 'realSky' || mn.mode === 'realFloor') && mn.phasePreview !== 'real' ? [`※ 満ち欠けを試している（${mn.phasePreview === 'none' ? '月が出ていない' : `位相角 ${mn.phasePreview}°`}）。窓から見える月の形は日時どおり`] : []) : []),
         `1 画素あたりの光線 ${samples} 本${samples < 256 ? '（止めておくと増えて、ざらつきが減る）' : ''}`,
         `計算 ${size.width}×${size.height}（${resolution.output === 'view' ? '画面の枠' : `展示の ${EXHIBIT_SIZE.width}×${EXHIBIT_SIZE.height}`} の ${Math.round(resolution.scale * 100)}%、画素数 ${Math.round(resolution.scale * resolution.scale * 100)}%）`,
         `描画 ${BACKEND_LABEL[backend]}  倍率 ${devicePixelRatio}`,
@@ -940,6 +959,19 @@ export const choiceSide = (c: WindowChoice): WindowSide => (c === 'skylight' ? '
 export function choiceOf(side: WindowSide, win: WindowGeometry, room: RoomGeometry): WindowChoice {
   if (side !== 'ceiling') return side;
   return win.widthM >= room.widthM - 1e-6 && win.heightM >= room.depthM - 1e-6 ? 'ceiling' : 'skylight';
+}
+
+/** URL の ?moonPhase=（満ち欠けを試す）。0〜180 の位相角は近い選択肢にまとめる。full = 満月、new = 新月。なければ null */
+export function moonPhaseParam(q: URLSearchParams): string | null {
+  const v = q.get('moonPhase');
+  if (v === null) return null;
+  if (v === 'full') return '0';
+  if (v === 'new') return '180';
+  if (v === 'real' || v === 'none') return v;
+  const n = Number(v);
+  if (!Number.isFinite(n)) return null;
+  const opts = MOON_PHASE_PREVIEWS.filter((o) => o !== 'real' && o !== 'none').map(Number);
+  return String(opts.reduce((a, b) => (Math.abs(b - n) < Math.abs(a - n) ? b : a)));
 }
 
 /** ガラスの仕様の既定（面ごとに同じ値から始める） */
@@ -1022,7 +1054,7 @@ export function codeDefaults(room: RoomGeometry, configWindow: WindowGeometry) {
       screenArea: false, screen: false, screenGain: 0.6,
       prism: { ...PRISM_DEFAULTS, streaks: { ...PRISM_DEFAULTS.streaks }, hung: { ...PRISM_DEFAULTS.hung }, panel: { ...PRISM_DEFAULTS.panel }, beams: { ...PRISM_DEFAULTS.beams }, waves: { ...PRISM_DEFAULTS.waves }, organic: { ...PRISM_DEFAULTS.organic }, blobs: { ...PRISM_DEFAULTS.blobs }, shimmer: { ...PRISM_DEFAULTS.shimmer, palette: [...PRISM_DEFAULTS.shimmer.palette] } },
       trails: { ...TRAIL_DEFAULTS },
-      moon: { ...MOON_DEFAULTS, skyCurve: { ...MOON_DEFAULTS.skyCurve } },
+      moon: { ...MOON_DEFAULTS, skyCurve: { ...MOON_DEFAULTS.skyCurve }, lightCurve: { ...MOON_DEFAULTS.lightCurve } },
     },
     screenScene: 'light-clouds',
     palette: defaultPalette() as PaletteTable,

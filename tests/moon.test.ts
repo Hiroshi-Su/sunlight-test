@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { moonEcliptic, moonPosition } from '../src/moon.ts';
-import { moonPhaseBrightness, moonSkyCurve } from '../src/room/model.ts';
+import { moonLightCurve, moonPhaseBrightness, moonSkyCurve } from '../src/room/model.ts';
 
 test('月の黄経・黄緯・距離：Meeus 例題 47.a（1992 年 4 月 12 日 0 時）に 0.3° 以内', () => {
   // 例題の答え：λ = 133.162655°、β = −3.229126°、距離 368409.7 km
@@ -43,4 +43,15 @@ test('夜空の明るさの割合（realSky）：満月 1、30°・60° は決�
   assert.equal(moonSkyCurve(c, 180, true), 0.35);
   assert.equal(moonSkyCurve(c, 0, false), 0.35);
   assert.ok(Math.abs(moonPhaseBrightness(90) - 0.091) < 1e-3);
+});
+
+test('月の光の割合（realFloor）：段階ごとの値を直線でつなぎ、細い月・新月は下限。月が出ていないときは 0', () => {
+  const c = { d30: 0.77, d60: 0.6, d90: 0.51, d120: 0.47, floor: 0.35 };
+  assert.equal(moonLightCurve(c, 0, true), 1);
+  assert.ok(Math.abs(moonLightCurve(c, 30, true) - 0.77) < 1e-12);
+  assert.ok(Math.abs(moonLightCurve(c, 75, true) - 0.555) < 1e-12);
+  assert.ok(Math.abs(moonLightCurve(c, 120, true) - 0.47) < 1e-12);
+  assert.ok(Math.abs(moonLightCurve(c, 150, true) - 0.35) < 1e-12);
+  assert.ok(Math.abs(moonLightCurve(c, 180, true) - 0.35) < 1e-12);
+  assert.equal(moonLightCurve(c, 0, false), 0);
 });

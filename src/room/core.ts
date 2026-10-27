@@ -6,7 +6,7 @@ import { type WindowSide, wallWindowSide } from '../config.ts';
 import { type RGB, kelvinToRgb } from '../palette.ts';
 import { DriftBlend } from '../scenes/shader.ts';
 import { SUN_ANGULAR_RADIUS_DEG, directSunFactor, skyBrightness } from './daylight.ts';
-import { MAX_BLOBS, MAX_PRISMS, MAX_SHIM_COLORS, MAX_SHIM_PALETTE, MAX_SPOTS, GLASS_FACES, GLASS_FACE_INDEX, GLASS_SURFACES, type GlassSpec, TEX_SURFACES, moonPhaseBrightness, moonSkyCurve, PRISM_PATTERNS, type OrganicLook, type PrismMotion, type RoomGeometry, type RoomInput, type RoomRenderSettings, type RoomScreenImage, type SpotLight, cloudFlowDir, moonDirection, moonWeight, spotPose, spotWeight, toThree, windowRect } from './model.ts';
+import { MAX_BLOBS, MAX_PRISMS, MAX_SHIM_COLORS, MAX_SHIM_PALETTE, MAX_SPOTS, GLASS_FACES, GLASS_FACE_INDEX, GLASS_SURFACES, type GlassSpec, TEX_SURFACES, moonLightCurve, moonPhaseBrightness, moonSkyCurve, PRISM_PATTERNS, type OrganicLook, type PrismMotion, type RoomGeometry, type RoomInput, type RoomRenderSettings, type RoomScreenImage, type SpotLight, cloudFlowDir, moonDirection, moonWeight, spotPose, spotWeight, toThree, windowRect } from './model.ts';
 import { MAX_ROOM_PRIMS, type RoomMesh, type RoomPrim, type Vec3 } from './step.ts';
 import { MAX_TEXTURES, type TexturePixels, texturePixels } from './textures.ts';
 import { OCEAN_CASCADES, OCEAN_LODS, type OceanSpectrum, buildOceanSpectrum } from './ocean.ts';
@@ -515,7 +515,7 @@ export class RoomCore {
     // realFull はいつも満月の明るさで、月が地平線の下にある間は、決めた方位・高度の月で同じ明るさの光を入れる（夜はいつも同じ明るさ）
     // realSky は月の光は real と同じで、夜空だけ skyCurve の割合。「満ち欠けを試す」では、位相角（と月が出ていない）を日時によらず決める
     // （試している間、本物の月が地平線の下なら、決めた方位・高度の月で照らす）
-    const sky = moon.mode === 'realSky';
+    const sky = moon.mode === 'realSky' || moon.mode === 'realFloor';
     const preview = sky && moon.phasePreview !== 'real' ? moon.phasePreview : null;
     const realPos = (moon.mode === 'real' || moon.mode === 'realFull' || sky) && input.moon ? input.moon : null;
     const fallback = !!realPos && realPos.altitude <= 0 && (moon.mode === 'realFull' || (preview !== null && preview !== 'none'));
@@ -523,7 +523,9 @@ export class RoomCore {
     const moonUp = preview === 'none' ? false : preview !== null ? true : (real?.altitude ?? 0) > 0;
     const moonAlt = preview === 'none' ? -1 : real ? real.altitude : moon.altitudeDeg;
     const phaseAngle = preview !== null && preview !== 'none' ? Number(preview) : (realPos?.phaseAngle ?? 0);
-    const phaseK = moon.mode === 'real' && real ? real.brightness : sky && realPos ? moonPhaseBrightness(phaseAngle) : 1;
+    const phaseK = moon.mode === 'real' && real ? real.brightness
+      : moon.mode === 'realFloor' && realPos ? moonLightCurve(moon.lightCurve, phaseAngle, moonUp)
+      : sky && realPos ? moonPhaseBrightness(phaseAngle) : 1;
     const useMoon = !sunUp && moonW > 0 && moonAlt > 0;
     const moonCol = linear(hexToRgb(moon.color));
     const moonLum = 0.2126 * moonCol.x + 0.7152 * moonCol.y + 0.0722 * moonCol.z;
@@ -720,7 +722,7 @@ export class RoomCore {
     // 重ね合わせのやり直し：視点や設定（窓の大きさを含む）が変わったら最初から
     const key = [
       sp.mode, sp.kind, JSON.stringify(sp.ambient), sp.count, JSON.stringify(sp.lights.slice(0, sp.count)),
-      moon.on, moon.strength, moon.skyStrength, moon.color, moon.azimuthDeg, moon.altitudeDeg, moon.mode, real ? Math.round(phaseK * 100) : 0, preview, JSON.stringify(moon.skyCurve), moon.seaRoadAltDeg, moon.seaRoadOffsetDeg, JSON.stringify(settings.glass), JSON.stringify(settings.glassSpecs), JSON.stringify(settings.openings), JSON.stringify(settings.textures), this.textures.key,
+      moon.on, moon.strength, moon.skyStrength, moon.color, moon.azimuthDeg, moon.altitudeDeg, moon.mode, real ? Math.round(phaseK * 100) : 0, preview, JSON.stringify(moon.skyCurve), JSON.stringify(moon.lightCurve), moon.seaRoadAltDeg, moon.seaRoadOffsetDeg, JSON.stringify(settings.glass), JSON.stringify(settings.glassSpecs), JSON.stringify(settings.openings), JSON.stringify(settings.textures), this.textures.key,
       settings.bounces, settings.seaView, settings.seaRipples, settings.pool, settings.poolReflect, settings.waveAmp, settings.poolDepthM, settings.seaLevelM, this.winRect.toArray(),
       cloudsOn, settings.cloudShadow, settings.cloudAmount, settings.cloudOpacity, settings.cloudSizeM, settings.cloudHeightM,
       settings.screenArea, !!screen, screen?.def.id, settings.screenGain,

@@ -138,7 +138,8 @@ export interface MoonSettings {
    *  split = 部屋は方位・高度で決めた月、海だけ窓の真ん中の向きの低い月（前の作り方。向きがそろわない）、
    *  real = 本物の月（日時と緯度経度から位置と満ち欠けを計算。月が出ていない時間・新月の夜は月の光がない）、
    *  realFull = 本物の月の位置で、明るさはいつも満月、
-   *  realSky = 本物の月（月の光は満ち欠けどおり）で、夜空の明るさだけは skyCurve の割合（満ち欠けに合わせてゆるやかに暗くし、下限を残す） */
+   *  realSky = 本物の月（月の光は満ち欠けどおり）で、夜空の明るさだけは skyCurve の割合（満ち欠けに合わせてゆるやかに暗くし、下限を残す）、
+   *  realFloor = realSky と同じ夜空で、月の光も lightCurve の割合（満ち欠けに合わせてゆるやかに暗くし、下限を残す。月が出ていないときは 0） */
   mode: MoonMode;
   /** 海に映す月の光の明るさの倍率（部屋を照らす月の光に対して。0 で海に光の道を出さない） */
   seaRoadStrength: number;
@@ -150,7 +151,9 @@ export interface MoonSettings {
   diskScale: number;
   /** realSky の夜空の明るさの割合（満月 = 1）：位相角 30°（満月の 2〜3 日前後）・60°（約 5 日前後）のときと、半月（90°）以降・月が出ていないときの下限。間は直線でつなぐ */
   skyCurve: { d30: number; d60: number; floor: number };
-  /** realSky で、満ち欠けを日時によらず試す（real = 日時どおり、数字 = 位相角（度）、none = 月が出ていない） */
+  /** realFloor の月の光の明るさ（満月 = 1）：位相角 30°・60°・90°（半月）・120° のときと、150° 以降（細い月・新月）の下限。間は直線でつなぐ。月が出ていないときは 0 */
+  lightCurve: { d30: number; d60: number; d90: number; d120: number; floor: number };
+  /** realSky・realFloor で、満ち欠けを日時によらず試す（real = 日時どおり、数字 = 位相角（度）、none = 月が出ていない） */
   phasePreview: string;
 }
 
@@ -159,6 +162,22 @@ export const MOON_PHASE_PREVIEWS = ['real', '0', '30', '60', '90', '120', '150',
 
 /** 満月を 1 とした、地上を照らす月の明るさ（位相角 i 度から。Allen の式。src/moon.ts と同じ） */
 export const moonPhaseBrightness = (i: number): number => 10 ** (-0.4 * (0.026 * i + 4e-9 * i ** 4));
+
+/** 位相角（度）の点の値を直線でつなぐ（範囲の外は端の値） */
+function piecewise(pts: [number, number][], x: number): number {
+  if (x <= pts[0]![0]) return pts[0]![1];
+  for (let k = 1; k < pts.length; k++) {
+    const [a, va] = pts[k - 1]!, [b, vb] = pts[k]!;
+    if (x <= b) return va + (vb - va) * ((x - a) / (b - a));
+  }
+  return pts[pts.length - 1]![1];
+}
+
+/** realFloor の月の光の明るさ（満月 = 1）。位相角 0°・30°・60°・90°・120°・150° の値を直線でつなぎ、150° 以降は下限。月が出ていないときは 0 */
+export function moonLightCurve(curve: MoonSettings['lightCurve'], phaseAngleDeg: number, up: boolean): number {
+  if (!up) return 0;
+  return Math.max(curve.floor, piecewise([[0, 1], [30, curve.d30], [60, curve.d60], [90, curve.d90], [120, curve.d120], [150, curve.floor]], phaseAngleDeg));
+}
 
 /** realSky の夜空の明るさの割合（満月 = 1）。位相角 0°・30°・60°・90° の値を直線でつなぎ、90° 以降と月が出ていないときは下限 */
 export function moonSkyCurve(curve: MoonSettings['skyCurve'], phaseAngleDeg: number, up: boolean): number {
@@ -173,7 +192,7 @@ export function moonSkyCurve(curve: MoonSettings['skyCurve'], phaseAngleDeg: num
 }
 
 /** 月の置き方 */
-export const MOON_MODES = ['low', 'set', 'split', 'real', 'realFull', 'realSky'] as const;
+export const MOON_MODES = ['low', 'set', 'split', 'real', 'realFull', 'realSky', 'realFloor'] as const;
 export type MoonMode = (typeof MOON_MODES)[number];
 
 /** ガラスにできる面（面ぜんたいが枠なしの一枚ガラス。床は水盤なので除く） */
