@@ -6,7 +6,7 @@ import { type WindowSide, wallWindowSide } from '../config.ts';
 import { type RGB, kelvinToRgb } from '../palette.ts';
 import { DriftBlend } from '../scenes/shader.ts';
 import { SUN_ANGULAR_RADIUS_DEG, directSunFactor, skyBrightness } from './daylight.ts';
-import { MAX_BLOBS, MAX_PRISMS, MAX_SHIM_COLORS, MAX_SHIM_PALETTE, MAX_SPOTS, GLASS_FACES, GLASS_FACE_INDEX, GLASS_SURFACES, type GlassSpec, TEX_SURFACES, moonLightCurve, moonPhaseBrightness, moonSkyCurve, PRISM_PATTERNS, type OrganicLook, type PrismMotion, type RoomGeometry, type RoomInput, type RoomRenderSettings, type RoomScreenImage, type SpotLight, cloudFlowDir, moonDirection, moonWeight, spotPose, spotWeight, toThree, windowRect } from './model.ts';
+import { MAX_BLOBS, MAX_PRISMS, MAX_SHIM_COLORS, MAX_SHIM_PALETTE, MAX_SPOTS, GLASS_FACES, GLASS_FACE_INDEX, GLASS_SURFACES, type GlassSpec, TEX_SURFACES, moonLightCurve, moonPhaseBrightness, moonSkyCurve, PRISM_PATTERNS, type OrganicLook, type PrismMotion, type RoomGeometry, type RoomInput, type RoomRenderSettings, type RoomScreenImage, type SpotLight, cloudFlowDir, lighthouseProfile, lighthouseWeight, moonDirection, moonWeight, spotPose, spotWeight, toThree, windowRect } from './model.ts';
 import { MAX_ROOM_PRIMS, type RoomMesh, type RoomPrim, type Vec3 } from './step.ts';
 import { MAX_TEXTURES, type TexturePixels, texturePixels } from './textures.ts';
 import { OCEAN_CASCADES, OCEAN_LODS, type OceanSpectrum, buildOceanSpectrum } from './ocean.ts';
@@ -36,6 +36,14 @@ const AMBIENT_SCALE = 0.045;
 // 倍率 1 で、月の光（光に垂直な面での放射照度）は晴れた日の直射日光の約 1/10、夜空の明るさは昼の空の約 1/8
 const MOON_SCALE = 0.25;
 const MOON_SKY_SCALE = SKY_SCALE * 0.12;
+// 灯台の光の目盛り（演出上の値）。明るさ 1 で、帯がこちらを向いた瞬間に部屋に届く光（放射照度）が、既定の月の光（満月）の約 3 倍
+const LIGHTHOUSE_SCALE = MOON_SCALE * 0.5 * 3;
+/** 灯台の光の帯が見える、空気のもやの散乱の強さ（1/m、もやの濃さ 1 のとき）。夜空の前で帯がほどよく見える値 */
+const LIGHTHOUSE_AIR = 1e-3;
+/** こちらを向いたときの灯火のにじみ（にじみ 1 のとき）。灯火のまわり約 2° が光る */
+const LIGHTHOUSE_GLARE = 0.002;
+/** 灯台の光が見える距離の目安（m。これより遠い所の光の帯は、もやでかすむ） */
+const LIGHTHOUSE_VIS = 10000;
 /** 窓から見える月の円盤の明るさ（露出をかけた後の値。トーンマップで約 0.88 の白になり、表面の模様が見える） */
 const MOON_DISK_EXPOSED = 1.6;
 /** スポットライトの器具の大きさ（球の半径、m）。水面に映るライトのきらめきと、器具そのものの見え方に使う */
@@ -173,6 +181,11 @@ export class RoomCore {
   moonOn = 0;
   /** スポットライトの今の点き具合（0〜1。状態表示に使う） */
   spotOn = 0;
+  /** 灯台の光の今の点き具合（0〜1）と、帯が部屋を向いている度合い（0〜1）。状態表示に使う */
+  lighthouseOn = 0;
+  lighthouseFacing = 0;
+  /** 灯台の光の帯の向き（ラジアン。実際の時間で回す） */
+  private lhAngle = 0;
   private readonly t0 = performance.now();
   private lastT = -1;
   // 雲の流れ（ノイズの座標で。足し続ける量は DriftBlend で巻き戻す）
@@ -307,6 +320,12 @@ export class RoomCore {
       uSpotLampOn: { value: 0 },
       uAmbL: { value: new THREE.Vector3() },
       uAmbRect: { value: new THREE.Vector4() },
+      // 灯台の光（夜）。帯は水平で、上から見て時計回りに回る
+      uLhOn: { value: 0 },                                          // 点き具合（0 = 消えている）
+      uLhPos: { value: new THREE.Vector3(0, 30, -2000) },           // 灯火の位置
+      uLhAxis: { value: new THREE.Vector4(0, 1, 0.05, 0.03) },      // 帯の向き（ラジアン）・帯の本数・広がりの半分の tan・明るさの広がり（ガウスの幅、ラジアン）
+      uLhI: { value: new THREE.Vector3() },                         // 光度（色 × 強さ × 点き具合。距離² で割ると放射照度）
+      uLhLook: { value: new THREE.Vector4(0, 0, LIGHTHOUSE_VIS, 0) }, // 空気の散乱の強さ・灯火のにじみ・もやで見える距離
       // 読み込んだ部屋の形（STEP）の面。面の数が 0 なら四角い部屋（src/room/step.ts）
       uPrimCount: { value: 0 },
       uPrimO: { value: Array.from({ length: MAX_ROOM_PRIMS }, () => new THREE.Vector3()) },    // 面の角
@@ -719,9 +738,31 @@ export class RoomCore {
     else s.uAmbL.value.set(0, 0, 0);
     this.spotOn = n > 0 || ambOn ? spotW : 0;
 
+    // 灯台の光：奥の壁の真ん中から、正面（−z）を offsetDeg だけ右へ回した向きの沖に置く。帯は実際の時間で回す（早送りしても速さは変わらない）
+    const lh = settings.lighthouse;
+    const lhW = lighthouseWeight(lh, sun.altitude);
+    const lhBeams = Math.min(4, Math.max(1, Math.round(lh.beams)));
+    this.lhAngle = (this.lhAngle + (dt * 2 * Math.PI) / Math.max(1, lh.periodS)) % (2 * Math.PI);
+    const off = (lh.offsetDeg * Math.PI) / 180;
+    const lhDist = Math.max(50, lh.distanceM);
+    const lhPos = new THREE.Vector3(lhDist * Math.sin(off), settings.seaLevelM + Math.max(1, lh.heightM), -this.room.depthM - lhDist * Math.cos(off));
+    const lhHalf = (Math.min(60, Math.max(0.5, lh.beamDeg)) * Math.PI) / 360;
+    s.uLhOn.value = lhW;
+    s.uLhPos.value.copy(lhPos);
+    s.uLhAxis.value.set(this.lhAngle, lhBeams, Math.tan(lhHalf), 0.6 * lhHalf);
+    const lhCol = linear(hexToRgb(lh.color));
+    const lhLum = 0.2126 * lhCol.x + 0.7152 * lhCol.y + 0.0722 * lhCol.z;
+    if (lhLum > 1e-4) lhCol.multiplyScalar(1 / lhLum);
+    s.uLhI.value.copy(lhCol).multiplyScalar(LIGHTHOUSE_SCALE * Math.max(0, lh.strength) * lhW * lhDist * lhDist);
+    s.uLhLook.value.set(LIGHTHOUSE_AIR * Math.max(0, lh.haze), LIGHTHOUSE_GLARE * Math.max(0, lh.glare), LIGHTHOUSE_VIS, 0);
+    const toRoom = new THREE.Vector3(0, 1.5, -this.room.depthM / 2).sub(lhPos).normalize();
+    this.lighthouseOn = lhW;
+    this.lighthouseFacing = lhW > 0 ? lighthouseProfile(toRoom, this.lhAngle, lhBeams, lh.beamDeg) : 0;
+
     // 重ね合わせのやり直し：視点や設定（窓の大きさを含む）が変わったら最初から
     const key = [
       sp.mode, sp.kind, JSON.stringify(sp.ambient), sp.count, JSON.stringify(sp.lights.slice(0, sp.count)),
+      lh.mode, lh.distanceM, lh.offsetDeg, lh.heightM, lh.beams, lh.beamDeg, lh.strength, lh.color,
       moon.on, moon.strength, moon.skyStrength, moon.color, moon.azimuthDeg, moon.altitudeDeg, moon.mode, real ? Math.round(phaseK * 100) : 0, preview, JSON.stringify(moon.skyCurve), JSON.stringify(moon.lightCurve), moon.seaRoadAltDeg, moon.seaRoadOffsetDeg, JSON.stringify(settings.glass), JSON.stringify(settings.glassSpecs), JSON.stringify(settings.openings), JSON.stringify(settings.textures), this.textures.key,
       settings.bounces, settings.seaView, settings.seaRipples, settings.pool, settings.poolReflect, settings.waveAmp, settings.poolDepthM, settings.seaLevelM, this.winRect.toArray(),
       cloudsOn, settings.cloudShadow, settings.cloudAmount, settings.cloudOpacity, settings.cloudSizeM, settings.cloudHeightM,
@@ -753,6 +794,8 @@ export class RoomCore {
     // 雲の影・スクリーンの映像は絶えず動くので、照り返しが遅れすぎないよう、直近 32 枚ぶんまでの平均にとどめる
     // （直射日光と映像そのものは毎フレーム計算し直すので遅れない。遅れるのは、それが周りを照らす照り返しの部分だけ）
     if ((cloudsOn && settings.cloudShadow) || screen) this.samples = Math.min(this.samples, 32);
+    // 灯台の帯が部屋の近くを通る間は、照り返しが帯に遅れて付いてこないよう、直近 8 枚ぶんまでの平均にとどめる（帯は約 0.2 秒で通り過ぎる）
+    if (this.lighthouseFacing > 0.003) this.samples = Math.min(this.samples, 8);
 
     // 波は実際の時間で動かす（早送りしても波の速さは変わらない）
     const ph = wavePhases(now);

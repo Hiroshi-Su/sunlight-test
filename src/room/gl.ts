@@ -124,6 +124,11 @@ uniform float uSpotR;                // 器具の大きさ（球の半径）
 uniform float uSpotLampOn;           // 器具を描くか（0 = 描かない。照らす光は変わらない）
 uniform vec3 uAmbL;                  // 全体照明：天井の光る面の明るさ（放射輝度。0 = 消えている）
 uniform vec4 uAmbRect;               // 全体照明：光る面の範囲（x0, x1, z0, z1。高さは天井）
+uniform float uLhOn;                 // 灯台の光：点き具合（0 = 消えている）
+uniform vec3 uLhPos;                 // 灯火の位置
+uniform vec4 uLhAxis;                // 帯の向き（ラジアン）・帯の本数・広がりの半分の tan・明るさの広がり（ガウスの幅、ラジアン）
+uniform vec3 uLhI;                   // 光度（距離² で割ると放射照度）
+uniform vec4 uLhLook;                // 空気の散乱の強さ・灯火のにじみ・もやで見える距離
 // 読み込んだ部屋の形（STEP。src/room/step.ts）の面。uPrimCount が 0 なら四角い部屋
 const int MAX_ROOM_PRIMS = ${MAX_ROOM_PRIMS};
 uniform float uPrimCount;
@@ -409,9 +414,67 @@ float cloudTrans(vec3 p) {
   float t = (uCloudY - p.y) / max(uSunDir.y, 0.02);
   return 1.0 - uCloudOpacity * cloudDensity(p.xz + uSunDir.xz * t, 3);
 }
-// 雲のある空：点 o から向き d（上向き）に見える空の明るさ
+// ---- 灯台の光（夜）。沖の灯台から、水平な円すいの光の帯が回る（上から見て時計回り） ----
+// 灯台から向き w へ出る光の強さ（0〜1）：いちばん近い帯の軸からの角度で決まる（ガウス形。縁で約 6%）。帯の向きは (−sin a, 0, cos a)
+float lhProfile(vec3 w) {
+  float seg = 2.0 * PI / uLhAxis.y;
+  float x = atan(-w.x, w.z) - uLhAxis.x + 0.5 * seg;
+  float da = x - seg * floor(x / seg) - 0.5 * seg;
+  float e = asin(clamp(w.y, -1.0, 1.0));
+  float a2 = da * da * (1.0 - w.y * w.y) + e * e;
+  return exp(-a2 / (uLhAxis.w * uLhAxis.w));
+}
+// 点 o から向き d を見たときの、灯台の光：空気のもやで散った光の帯（距離 tMax まで）と、こちらを向いたときの灯火のまぶしさ。
+// 帯：灯火から見ると、視線（直線）の上の点は 1 つの平面の中に並び、点までの距離 r と、灯火から見た角度 ψ の間に ds / r² = dψ / h
+// （h は灯火から視線までの距離）が成り立つ。なので、もやが散らす光 σ·光度·∫ 帯の強さ / r² ds は、σ·光度 / h × 帯の強さを ψ で足したもの。
+// 帯の強さはガウス形なので、帯の軸から平面までの角度で決まる強さ × 平面の中で帯を横切る幅（視線の範囲で切る）で求まる。
+// 帯の方を向いて見るほど（光が目に向かって進むほど）、もやは前に強く散らすので明るい
+vec3 lighthouseSky(vec3 o, vec3 d, float tMax) {
+  if (uLhOn <= 0.0) return vec3(0.0);
+  vec3 col = vec3(0.0);
+  vec3 w0 = o - uLhPos;
+  float r0 = length(w0);
+  vec3 a0 = w0 / r0;                       // 灯火から見た、視線の始まりの向き
+  vec3 perp = d - a0 * dot(a0, d);
+  float pl = length(perp);
+  float h = max(r0 * pl, 0.5);             // 灯火から視線までの距離
+  if (pl > 1e-6) {
+    vec3 e2 = perp / pl;                   // 平面の中で、視線の進む側の向き
+    vec3 m = cross(a0, e2);                // 平面に垂直な向き
+    vec3 aEnd = normalize(w0 + d * min(tMax, 1e6));
+    float psiEnd = atan(dot(aEnd, e2), dot(aEnd, a0));
+    float sb2 = uLhAxis.w * uLhAxis.w;
+    float seg = 2.0 * PI / uLhAxis.y;
+    for (int k = 0; k < 4; k++) {
+      if (float(k) >= uLhAxis.y) break;
+      float a = uLhAxis.x + seg * float(k);
+      vec3 b = vec3(-sin(a), 0.0, cos(a));
+      float mb = dot(m, b);
+      float psiB = atan(dot(b, e2), dot(b, a0));
+      // 平面の中で帯を横切る割合（ガウスの積分。erf を tanh で近似し、引数は大きすぎないように切る）
+      float x0 = clamp(-psiB / uLhAxis.w, -4.0, 4.0), x1 = clamp((psiEnd - psiB) / uLhAxis.w, -4.0, 4.0);
+      float frac = 0.5 * (tanh(1.2 * x1) - tanh(1.2 * x0));
+      if (frac <= 1e-4) continue;
+      // 帯が視線と交わる所までの距離（もやで遠い所ほどかすむ）
+      float c = dot(b, a0), sn = dot(b, e2), d1 = dot(d, a0), d2 = dot(d, e2);
+      float den = d2 * c - d1 * sn;
+      float sB = den > 1e-6 ? clamp(r0 * sn / den, 0.0, tMax) : 0.0;
+      float ph = 0.4 + 3.0 * pow(max(-dot(d, b), 0.0), 12.0);
+      col += uLhI * (uLhLook.x * ph / h * exp(-mb * mb / sb2) * 1.772 * uLhAxis.w * frac * exp(-sB / uLhLook.z));
+    }
+  }
+  // 灯火：帯がこちらを向いているほど明るい（向いていなくても、かすかに見える）。芯は画素の大きさ、まわりに約 2° のにじみ
+  vec3 tl = uLhPos - o;
+  float dl2 = dot(tl, tl);
+  vec3 wl = tl * inversesqrt(dl2);
+  float ang = length(d - wl);
+  float core = max(1.5 * uPixAngle, 3e-4);
+  float lamp = exp(-ang * ang / (core * core)) / (PI * core * core) + uLhLook.y * exp(-ang * ang / 4e-4) / (PI * 4e-4);
+  return col + uLhI / dl2 * (0.02 + lhProfile(-wl)) * lamp;
+}
+// 雲のある空：点 o から向き d（上向き）に見える空の明るさ（灯台の光も足す）
 vec3 cloudySky(vec3 o, vec3 d) {
-  vec3 sky = skyRadiance(d);
+  vec3 sky = skyRadiance(d) + lighthouseSky(o, d, 1e9);
   if (uCloudOn == 0 || d.y <= 0.0) return sky;
   float t = (uCloudY - o.y) / max(d.y, 1e-3);
   float dens = cloudDensity(o.xz + d.xz * t, 5);
@@ -465,8 +528,7 @@ vec3 moonDisk(vec3 o, vec3 d) {
 // 海面の太陽のきらめき（マイクロファセット）。n は描いた波の向き、m2 は描ききれない細かい波の傾きの 2 乗平均（粗さ）。
 // 細かい傾きの分布を Beckmann 分布とし、太陽の向き l と視線 v の中間の向き h を向いた細かい面の割合で光らせる。
 // 粗いほど、きらめきが広い帯になって暗くなる（光の量は同じ）
-float seaGlint(vec3 n, vec3 v, float m2) {
-  vec3 l = uSeaGlintDir;
+float seaGlintL(vec3 n, vec3 v, float m2, vec3 l) {
   float nl = dot(n, l);
   if (l.y <= 0.0 || nl <= 0.0) return 0.0;
   vec3 h = normalize(v + l);
@@ -475,6 +537,7 @@ float seaGlint(vec3 n, vec3 v, float m2) {
   float D = exp(-(1.0 - c2) / (c2 * m2)) / (PI * m2 * c2 * c2);
   return fresnelWater(dot(h, v)) * D / (4.0 * max(dot(n, v), 0.05));
 }
+float seaGlint(vec3 n, vec3 v, float m2) { return seaGlintL(n, v, m2, uSeaGlintDir); }
 vec3 seaRadiance(vec3 o, vec3 d) {
   float t = (uSeaY - o.y) / min(d.y, -1e-4);
   vec3 x = o + d * t;
@@ -492,8 +555,15 @@ vec3 seaRadiance(vec3 o, vec3 d) {
   float toward = pow(0.5 + 0.5 * dot(dh, sh), 4.0);
   vec3 body = uSeaBody + uSunE * (vec3(0.02, 0.09, 0.07) * (uSeaLook.y * crest * (0.25 + toward) * max(uSunDir.y, 0.0)));
   vec3 c = F * cloudySky(x, r) + uSeaGlintE * (seaGlint(n, v, uSeaLook.x + sw.w) * cloudTrans(x)) + (1.0 - F) * body;
-  // 遠くはかすんで、地平線の空の色に近づく
-  return mix(c, skyRadiance(normalize(vec3(d.x, 0.02, d.z))), 1.0 - exp(-t / 600.0));
+  // 灯台の光が当たっている海面のきらめき（帯がこちらを向いたときは、灯火から手前へ光の道ができる）
+  if (uLhOn > 0.0) {
+    vec3 lv = uLhPos - x;
+    float ld2 = dot(lv, lv);
+    vec3 lw = lv * inversesqrt(ld2);
+    c += uLhI * (lhProfile(-lw) / ld2 * seaGlintL(n, v, uSeaLook.x + sw.w, lw));
+  }
+  // 遠くはかすんで、地平線の空の色に近づく。海面までの空気で散った灯台の光の帯を足す
+  return mix(c, skyRadiance(normalize(vec3(d.x, 0.02, d.z))), 1.0 - exp(-t / 600.0)) + lighthouseSky(o, d, t);
 }
 
 // 窓の外の明るさ：上は空、下は海（オフなら地面）
@@ -577,8 +647,19 @@ vec3 ambientIrradiance(vec3 p, vec3 n) {
 vec3 ambientPanel(int face, vec3 p) {
   return face == 2 && p.x > uAmbRect.x && p.x < uAmbRect.y && p.z > uAmbRect.z && p.z < uAmbRect.w ? uAmbL : vec3(0.0);
 }
+// 部屋の中の点 p（面の向き n）が受ける灯台の光。灯火の方へ窓を通って外へ出られれば届く（ガラスなら、その色を掛ける）
+vec3 lighthouseIrr(vec3 p, vec3 n) {
+  if (uLhOn <= 0.0) return vec3(0.0);
+  vec3 v = p - uLhPos;
+  float d2 = dot(v, v);
+  vec3 w = v * inversesqrt(d2);
+  float k = lhProfile(w);
+  float c = -dot(n, w);
+  if (k < 1e-4 || c <= 0.0 || !seesOutside(p, -w)) return vec3(0.0);
+  return uLhI * (k * c / d2) * glassSunFactor(p, -w, false);
+}
 vec3 spotIrradiance(vec3 p, vec3 n) {
-  vec3 e = ambientIrradiance(p, n);
+  vec3 e = ambientIrradiance(p, n) + lighthouseIrr(p, n);
   for (int i = 0; i < MAX_SPOTS; i++) {
     if (float(i) >= uSpotCount) break;
     e += spotOne(i, p, n);

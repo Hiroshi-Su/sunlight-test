@@ -5,7 +5,7 @@ import type { Clock } from '../clock.ts';
 import { mountCalibMode } from './calib-mode.ts';
 import { WINDOW_SIDES, WINDOW_SIDE_LABEL, type WindowSide } from '../config.ts';
 import { PALETTE_KELVIN_ALTS, PALETTE_SKY_ALTS, type PaletteTable, defaultPalette, kelvinAt, setPalette } from '../palette.ts';
-import { EXHIBIT_SIZE, type GuideOptions, LIGHT_KINDS, type LightKind, MAX_BLOBS, MAX_SHIM_COLORS, MAX_SHIM_PALETTE, MAX_SPOTS, MAX_PRISMS, type MoonSettings, type OrganicLook, PRISM_MOTIONS, PRISM_PATTERNS, type Openings, WINDOW_TOPS, type WindowTop, GLASS_FACES, GLASS_KINDS, GLASS_SURFACES, type GlassFace, TEX_SURFACES, type TexSurface, type SurfaceTexture, type GlassKind, type GlassSpec, type GlassSurface, MOON_MODES, MOON_PHASE_PREVIEWS, SEA_WAVES, type SeaWaves, SHIMMER_ANCHORS, SHIMMER_COLOR_MODES, type PrismMotion, type PrismPattern, type PrismSettings, SPOT_MODES, TRAIL_COLOR_MODES, type TrailSettings, type RoomGeometry, type RoomOutput, type RoomRenderSettings, type RoomResolution, type SpotLight, type SpotMode, type SpotSettings, type ViewCalibration, type WindowGeometry, defaultCalibration } from '../room/scene.ts';
+import { EXHIBIT_SIZE, type GuideOptions, LIGHT_KINDS, type LightKind, MAX_BLOBS, MAX_SHIM_COLORS, MAX_SHIM_PALETTE, MAX_SPOTS, MAX_PRISMS, type MoonSettings, type OrganicLook, PRISM_MOTIONS, PRISM_PATTERNS, type Openings, WINDOW_TOPS, type WindowTop, GLASS_FACES, GLASS_KINDS, GLASS_SURFACES, type GlassFace, TEX_SURFACES, type TexSurface, type SurfaceTexture, type GlassKind, type GlassSpec, type GlassSurface, LIGHTHOUSE_DEFAULTS, LIGHTHOUSE_MODES, type LighthouseMode, lighthouseWeight, MOON_MODES, MOON_PHASE_PREVIEWS, SEA_WAVES, type SeaWaves, SHIMMER_ANCHORS, SHIMMER_COLOR_MODES, type PrismMotion, type PrismPattern, type PrismSettings, SPOT_MODES, TRAIL_COLOR_MODES, type TrailSettings, type RoomGeometry, type RoomOutput, type RoomRenderSettings, type RoomResolution, type SpotLight, type SpotMode, type SpotSettings, type ViewCalibration, type WindowGeometry, defaultCalibration } from '../room/scene.ts';
 import { SCENES, findScene } from '../scenes/index.ts';
 import type { SceneDef } from '../scenes/types.ts';
 import type { SolarState } from '../solar.ts';
@@ -96,6 +96,15 @@ export const MOON_DEFAULTS: MoonSettings = {
 };
 const SPOT_MODE_LABEL: Record<SpotMode, string> = { auto: '自動（太陽が沈むと点く）', on: '常に点ける', off: '消す' };
 const LIGHT_KIND_LABEL: Record<LightKind, string> = { spot: 'スポットライト（頭上から丸く照らす）', ambient: '全体照明（天井全体がやわらかく光る）' };
+
+/** URL の ?lighthouse：1・night は夜に点ける、always はいつも、0・off は消す。ほかは指定なし */
+function lighthouseParam(v: string | null): LighthouseMode | null {
+  if (v === null) return null;
+  if (v === '1' || v === 'night') return 'night';
+  if (v === 'always') return 'always';
+  if (v === '0' || v === 'off') return 'off';
+  return null;
+}
 
 /** パネルの操作を、部屋の表示へ伝える */
 export interface RoomUiHooks {
@@ -253,6 +262,8 @@ export function mountRoomUi(
       mode: oneOf(q.get('moonMode') ?? (moonPhaseParam(q) ? 'realSky' : r0.moon.mode), MOON_MODES, 'realFull'),
       phasePreview: moonPhaseParam(q) ?? oneOf(r0.moon.phasePreview, MOON_PHASE_PREVIEWS, 'real'),
     },
+    // ?lighthouse=1（または night）で夜に灯台の光を点けて開く。always でいつも、0 で消す
+    lighthouse: { ...r0.lighthouse, mode: lighthouseParam(q.get('lighthouse')) ?? oneOf(r0.lighthouse.mode, LIGHTHOUSE_MODES, 'off') },
     // ?glass=right,back のように、ガラスの壁にする面を並べる（?glass=0 ですべて壁）
     // ガラスの仕様は面ごと。面ごとに保存する前のファイル（render.glassSpec が 1 つ）なら、その値を全部の面に使う。
     // URL：?glassSurface=swell（全部の面）・?glassSurface.right=swell（右の壁だけ）、?glassPrism=1・?glassPrism.back=1 も同じ
@@ -822,6 +833,22 @@ export function mountRoomUi(
   fm.add(mn, 'seaRoadStrength', 0, 20, 0.1).name('海に映す月の光の明るさ（0 で海に光の道を出さない）');
   fm.add(mn, 'seaRoadOffsetDeg', -80, 80, 1).name('低い月の向き：窓の真ん中から奥へ（度、A と前の作り方）');
   fm.add(mn, 'seaRoadAltDeg', 1, 60, 0.5).name('低い月の高度（度。低いほど光の道が長く、部屋の奥まで差し込む）');
+  // 灯台の光（夜）
+  const lh = settings.lighthouse;
+  const flh = gui.addFolder('灯台の光（夜）');
+  flh.add(lh, 'mode', { '出さない': 'off', '太陽が沈むと点く': 'night', 'いつも点ける（昼に確かめる用）': 'always' } satisfies Record<string, LighthouseMode>).name('灯台の光');
+  flh.add(lh, 'periodS', 2, 60, 0.5).name('1 周にかかる時間（秒）');
+  flh.add(lh, 'beams', 1, 4, 1).name('光の帯の本数');
+  flh.add(lh, 'beamDeg', 1, 30, 0.5).name('光の帯の広がり（度）');
+  flh.add(lh, 'strength', 0, 10, 0.05).name('明るさ（1 で、向いた瞬間に月の光の約 3 倍）');
+  flh.add(lh, 'haze', 0, 10, 0.05).name('光の帯の見え方（空気のもや。0 で帯は見えない）');
+  flh.add(lh, 'glare', 0, 10, 0.05).name('灯火のまぶしさ（にじみ）');
+  flh.addColor(lh, 'color').name('色');
+  flh.add(lh, 'distanceM', 100, 20000, 10).name('灯台までの距離（m、奥の壁から）');
+  flh.add(lh, 'offsetDeg', -80, 80, 1).name('灯台の向き：奥の壁の正面から右へ（度）');
+  flh.add(lh, 'heightM', 2, 200, 1).name('灯火の高さ（海面から m）');
+  flh.add({ run: () => { Object.assign(lh, { ...LIGHTHOUSE_DEFAULTS, mode: lh.mode }); flh.controllers.forEach((c) => c.updateDisplay()); } }, 'run').name('灯台の光の設定を既定に戻す');
+
   fm.add({ run: () => { Object.assign(mn, { ...MOON_DEFAULTS, on: mn.on, skyCurve: mn.skyCurve, lightCurve: mn.lightCurve }); Object.assign(mn.skyCurve, MOON_DEFAULTS.skyCurve); Object.assign(mn.lightCurve, MOON_DEFAULTS.lightCurve); showSky(); fm.controllers.forEach((c) => c.updateDisplay()); } }, 'run').name('月明かりの設定を既定に戻す');
 
   mountTimeControls(gui, clock);
@@ -892,6 +919,7 @@ export function mountRoomUi(
         ...(settings.screen ? [`スクリーン  ${findScene(screen.id).label}`] : []),
         `ライト  ${spot.mode === 'off' ? '消す' : spotOn <= 0 ? '消えている（太陽が出ている）' : `点いている ${Math.round(spotOn * 100)}%`}`,
         `月明かり  ${!mn.on ? '消す' : moonOn > 0 ? `点いている ${Math.round(moonOn * 100)}%` : realMoon && moonPos && moonPos.altitude <= 0 && s.sun.altitude <= 0 ? '消えている（月が出ていない）' : '消えている（太陽が出ている）'}`,
+        ...(settings.lighthouse.mode === 'off' ? [] : [`灯台の光  ${lighthouseWeight(settings.lighthouse, s.sun.altitude) > 0 ? `点いている ${Math.round(lighthouseWeight(settings.lighthouse, s.sun.altitude) * 100)}%（1 周 ${settings.lighthouse.periodS} 秒）` : '消えている（太陽が出ている）'}`]),
         ...(realMoon && moonPos ? [`本物の月  方位 ${moonPos.azimuth.toFixed(0)}°・高度 ${moonPos.altitude.toFixed(0)}°・照らされている割合 ${Math.round(moonPos.illumination * 100)}%（明るさ 満月の ${Math.round(moonPos.brightness * 100)}%${mn.mode === 'realFull' ? (moonPos.altitude > 0 ? '。いつも満月の明るさで出す' : '。月が出ていないので、決めた方位・高度から満月の明るさで出す') : ''}）`]
           .concat((mn.mode === 'realSky' || mn.mode === 'realFloor') && mn.phasePreview !== 'real' ? [`※ 満ち欠けを試している（${mn.phasePreview === 'none' ? '月が出ていない' : `位相角 ${mn.phasePreview}°`}）。窓から見える月の形は日時どおり`] : []) : []),
         `1 画素あたりの光線 ${samples} 本${samples < 256 ? '（止めておくと増えて、ざらつきが減る）' : ''}`,
@@ -1055,6 +1083,7 @@ export function codeDefaults(room: RoomGeometry, configWindow: WindowGeometry) {
       prism: { ...PRISM_DEFAULTS, streaks: { ...PRISM_DEFAULTS.streaks }, hung: { ...PRISM_DEFAULTS.hung }, panel: { ...PRISM_DEFAULTS.panel }, beams: { ...PRISM_DEFAULTS.beams }, waves: { ...PRISM_DEFAULTS.waves }, organic: { ...PRISM_DEFAULTS.organic }, blobs: { ...PRISM_DEFAULTS.blobs }, shimmer: { ...PRISM_DEFAULTS.shimmer, palette: [...PRISM_DEFAULTS.shimmer.palette] } },
       trails: { ...TRAIL_DEFAULTS },
       moon: { ...MOON_DEFAULTS, skyCurve: { ...MOON_DEFAULTS.skyCurve }, lightCurve: { ...MOON_DEFAULTS.lightCurve } },
+      lighthouse: { ...LIGHTHOUSE_DEFAULTS },
     },
     screenScene: 'light-clouds',
     palette: defaultPalette() as PaletteTable,

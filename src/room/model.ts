@@ -113,6 +113,66 @@ export interface RoomRenderSettings {
   trails: TrailSettings;
   /** 月明かり（夜に、太陽の代わりに窓から差し込む月の光と、夜空の明るさ） */
   moon: MoonSettings;
+  /** 灯台の光（夜に、沖の灯台の光の帯が海の上を水平に回る） */
+  lighthouse: LighthouseSettings;
+}
+
+export const LIGHTHOUSE_MODES = ['off', 'night', 'always'] as const;
+export type LighthouseMode = (typeof LIGHTHOUSE_MODES)[number];
+
+/**
+ * 灯台の光。奥の壁（スクリーン）の正面の沖に灯台を置き、円すいの光の帯を水平に回す（上から見て時計回り）。
+ * 帯が窓の外の空気で散って見える光の帯・こちらを向いたときの灯火のまぶしさ・海面のきらめき・窓から差し込む光を描く
+ */
+export interface LighthouseSettings {
+  /** off：出さない、night：太陽が沈むと点く（高度 0° で点き始め、−6° で最大）、always：いつも点ける（昼に確かめる用） */
+  mode: LighthouseMode;
+  /** 部屋（奥の壁の真ん中）から灯台までの距離（m） */
+  distanceM: number;
+  /** 奥の壁の正面から、灯台の向きを右へずらす角度（度。負なら左） */
+  offsetDeg: number;
+  /** 灯火の高さ（海面から m） */
+  heightM: number;
+  /** 1 周にかかる時間（秒） */
+  periodS: number;
+  /** 光の帯の本数（等しい間隔で並ぶ） */
+  beams: number;
+  /** 光の帯の広がり（円すいの全角、度） */
+  beamDeg: number;
+  /** 明るさ（1 で、帯がこちらを向いた瞬間に、部屋に届く光が既定の月の光の約 3 倍） */
+  strength: number;
+  /** 光の帯の見え方（空気のもやの濃さの倍率。0 で帯は見えない） */
+  haze: number;
+  /** こちらを向いたときの灯火のまぶしさ（光のにじみ）の倍率 */
+  glare: number;
+  /** 光の色 */
+  color: string;
+}
+
+export const LIGHTHOUSE_DEFAULTS: LighthouseSettings = {
+  mode: 'off', distanceM: 2000, offsetDeg: 0, heightM: 30, periodS: 10, beams: 1, beamDeg: 6, strength: 1, haze: 1, glare: 1, color: '#fff1d6',
+};
+
+/** 灯台の点き具合（0〜1）。night は太陽の高度 0° で点き始め、−6° で最大 */
+export function lighthouseWeight(lh: LighthouseSettings, sunAltDeg: number): number {
+  if (lh.mode === 'off') return 0;
+  if (lh.mode === 'always') return 1;
+  return Math.min(1, Math.max(0, -sunAltDeg / 6));
+}
+
+/**
+ * 灯台から向き w（単位ベクトル）へ出る光の強さ（0〜1）。いちばん近い光の帯の軸からの角度で決まる（ガウス形。
+ * 縁（広がりの半分の角度）で約 6%）。帯の軸は水平で、angle（ラジアン）の帯の向きは (−sin, 0, cos)。シェーダーの lhProfile と同じ式
+ */
+export function lighthouseProfile(w: { x: number; y: number; z: number }, angle: number, beams: number, beamDeg: number): number {
+  const seg = (2 * Math.PI) / Math.max(1, Math.round(beams));
+  const az = Math.atan2(-w.x, w.z);
+  const x = az - angle + 0.5 * seg;
+  const da = x - seg * Math.floor(x / seg) - 0.5 * seg;
+  const e = Math.asin(Math.min(1, Math.max(-1, w.y)));
+  const sigma = 0.6 * ((Math.max(0.5, beamDeg) * Math.PI) / 360);
+  const a2 = da * da * (1 - w.y * w.y) + e * e;
+  return Math.exp(-a2 / (sigma * sigma));
 }
 
 /**

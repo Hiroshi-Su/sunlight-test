@@ -316,5 +316,7 @@ export function createRoomScene(
     get spotOn(): number { return core.spotOn; },
     /** 月明かりの今の点き具合（0〜1） */
     get moonOn(): number { return core.moonOn; },
+    /** 灯台の光の帯が部屋を向いている度合い（0〜1） */
+    get lighthouseFacing(): number { return core.lighthouseFacing; },
   };
 }

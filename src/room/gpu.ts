@@ -306,8 +306,71 @@ fn cloudTrans(p: vec3f) -> f32 {
   return 1.0 - u.uCloudOpacity * cloudDensity(p.xz + u.uSunDir.xz * t, 3);
 }
 // 雲のある空：点 o から向き d（上向き）に見える空の明るさ
+// ---- 灯台の光（夜。GLSL 版の説明を参照） ----
+fn lhProfile(w: vec3f) -> f32 {
+  let seg = 2.0 * PI / u.uLhAxis.y;
+  let x = atan2(-w.x, w.z) - u.uLhAxis.x + 0.5 * seg;
+  let da = x - seg * floor(x / seg) - 0.5 * seg;
+  let e = asin(clamp(w.y, -1.0, 1.0));
+  let a2 = da * da * (1.0 - w.y * w.y) + e * e;
+  return exp(-a2 / (u.uLhAxis.w * u.uLhAxis.w));
+}
+fn lighthouseSky(o: vec3f, d: vec3f, tMax: f32) -> vec3f {
+  if (u.uLhOn <= 0.0) { return vec3f(0.0); }
+  var col = vec3f(0.0);
+  let w0 = o - u.uLhPos;
+  let r0 = length(w0);
+  let a0 = w0 / r0;
+  let perp = d - a0 * dot(a0, d);
+  let pl = length(perp);
+  let h = max(r0 * pl, 0.5);
+  if (pl > 1e-6) {
+    let e2 = perp / pl;
+    let m = cross(a0, e2);
+    let aEnd = normalize(w0 + d * min(tMax, 1e6));
+    let psiEnd = atan2(dot(aEnd, e2), dot(aEnd, a0));
+    let sb2 = u.uLhAxis.w * u.uLhAxis.w;
+    let seg = 2.0 * PI / u.uLhAxis.y;
+    for (var k = 0; k < 4; k++) {
+      if (f32(k) >= u.uLhAxis.y) { break; }
+      let a = u.uLhAxis.x + seg * f32(k);
+      let b = vec3f(-sin(a), 0.0, cos(a));
+      let mb = dot(m, b);
+      let psiB = atan2(dot(b, e2), dot(b, a0));
+      let x0 = clamp(-psiB / u.uLhAxis.w, -4.0, 4.0);
+      let x1 = clamp((psiEnd - psiB) / u.uLhAxis.w, -4.0, 4.0);
+      let frac = 0.5 * (tanh(1.2 * x1) - tanh(1.2 * x0));
+      if (frac <= 1e-4) { continue; }
+      let c = dot(b, a0);
+      let sn = dot(b, e2);
+      let den = dot(d, e2) * c - dot(d, a0) * sn;
+      var sB = 0.0;
+      if (den > 1e-6) { sB = clamp(r0 * sn / den, 0.0, tMax); }
+      let ph = 0.4 + 3.0 * pow(max(-dot(d, b), 0.0), 12.0);
+      col += u.uLhI * (u.uLhLook.x * ph / h * exp(-mb * mb / sb2) * 1.772 * u.uLhAxis.w * frac * exp(-sB / u.uLhLook.z));
+    }
+  }
+  let tl = u.uLhPos - o;
+  let dl2 = dot(tl, tl);
+  let wl = tl * inverseSqrt(dl2);
+  let ang = length(d - wl);
+  let core = max(1.5 * u.uPixAngle, 3e-4);
+  let lamp = exp(-ang * ang / (core * core)) / (PI * core * core) + u.uLhLook.y * exp(-ang * ang / 4e-4) / (PI * 4e-4);
+  return col + u.uLhI / dl2 * (0.02 + lhProfile(-wl)) * lamp;
+}
+fn lighthouseIrr(p: vec3f, n: vec3f) -> vec3f {
+  if (u.uLhOn <= 0.0) { return vec3f(0.0); }
+  let v = p - u.uLhPos;
+  let d2 = dot(v, v);
+  let w = v * inverseSqrt(d2);
+  let k = lhProfile(w);
+  let c = -dot(n, w);
+  if (k < 1e-4 || c <= 0.0) { return vec3f(0.0); }
+  if (!seesOutside(p, -w)) { return vec3f(0.0); }
+  return u.uLhI * (k * c / d2) * glassSunFactor(p, -w, false);
+}
 fn cloudySky(o: vec3f, d: vec3f) -> vec3f {
-  let sky = skyRadiance(d);
+  let sky = skyRadiance(d) + lighthouseSky(o, d, 1e9);
   if (u.uCloudOn < 0.5 || d.y <= 0.0) { return sky; }
   let t = (u.uCloudY - o.y) / max(d.y, 1e-3);
   let dens = cloudDensity(o.xz + d.xz * t, 5);
@@ -365,8 +428,8 @@ fn oceanLayer(tex: texture_2d<f32>, size: f32, layer: i32, p: vec2f, fw: f32) ->
 fn oceanSurface(p: vec2f, fw: f32) -> vec4f {
   return oceanLayer(ocean0, u.uOceanSize.x, 0, p, fw) + oceanLayer(ocean1, u.uOceanSize.y, 1, p, fw);
 }
-fn seaGlint(n: vec3f, v: vec3f, m2: f32) -> f32 {
-  let l = u.uSeaGlintDir;
+fn seaGlint(n: vec3f, v: vec3f, m2: f32) -> f32 { return seaGlintL(n, v, m2, u.uSeaGlintDir); }
+fn seaGlintL(n: vec3f, v: vec3f, m2: f32, l: vec3f) -> f32 {
   let nl = dot(n, l);
   if (l.y <= 0.0 || nl <= 0.0) { return 0.0; }
   let h = normalize(v + l);
@@ -394,8 +457,15 @@ fn seaRadiance(o: vec3f, d: vec3f) -> vec3f {
   let sh = normalize(u.uSunDir.xz + 1e-6);
   let toward = pow(0.5 + 0.5 * dot(dh, sh), 4.0);
   let body = u.uSeaBody + u.uSunE * (vec3f(0.02, 0.09, 0.07) * (u.uSeaLook.y * crest * (0.25 + toward) * max(u.uSunDir.y, 0.0)));
-  let c = F * cloudySky(x, r) + u.uSeaGlintE * (seaGlint(n, v, u.uSeaLook.x + sw.w) * cloudTrans(x)) + (1.0 - F) * body;
-  return mix(c, skyRadiance(normalize(vec3f(d.x, 0.02, d.z))), 1.0 - exp(-t / 600.0));
+  var c = F * cloudySky(x, r) + u.uSeaGlintE * (seaGlint(n, v, u.uSeaLook.x + sw.w) * cloudTrans(x)) + (1.0 - F) * body;
+  // 灯台の光が当たっている海面のきらめき（帯がこちらを向いたときは、灯火から手前へ光の道ができる）
+  if (u.uLhOn > 0.0) {
+    let lv = u.uLhPos - x;
+    let ld2 = dot(lv, lv);
+    let lw = lv * inverseSqrt(ld2);
+    c += u.uLhI * (lhProfile(-lw) / ld2 * seaGlintL(n, v, u.uSeaLook.x + sw.w, lw));
+  }
+  return mix(c, skyRadiance(normalize(vec3f(d.x, 0.02, d.z))), 1.0 - exp(-t / 600.0)) + lighthouseSky(o, d, t);
 }
 
 // 窓の外の明るさ：上は空、下は海（オフなら地面）
@@ -483,7 +553,7 @@ fn ambientPanel(face: i32, p: vec3f) -> vec3f {
   return vec3f(0.0);
 }
 fn spotIrradiance(p: vec3f, n: vec3f) -> vec3f {
-  var e = ambientIrradiance(p, n);
+  var e = ambientIrradiance(p, n) + lighthouseIrr(p, n);
   for (var i = 0; i < MAX_SPOTS; i++) {
     if (f32(i) >= u.uSpotCount) { break; }
     e += spotOne(i, p, n);
