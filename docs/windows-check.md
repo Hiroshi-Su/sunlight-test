@@ -77,7 +77,7 @@ Mac（Metal）では組み立てが速いので、見張りを緩めた影響は
 
 ## 準備
 
-1. 最新版を取る：`git pull`（`main` の c632328 以降）
+1. 最新版を取る：`git pull`（`main` の 64cbca9 以降）
 2. はじめてなら `npm install`
 3. `npm run dev` で開発サーバーを起こし、Chrome で `http://localhost:5173/?mode=room` を開く
 4. 部屋の設定（`config/room.json`）は git に入っていないので、その PC で保存してある設定がそのまま使われる。ガラスの表面を必ず「うねり」にして確かめたいときは、URL に `&glassSurface=swell` を付ける
