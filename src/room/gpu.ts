@@ -1313,6 +1313,48 @@ fn toSrgb(c: vec3f) -> vec3f {
 }
 
 ${FULLSCREEN_VS}
+// 画素の中の 1 点（q）の明るさ：窓の外・反射率・直射日光・光の揺らぎ
+fn subSample(q: vec2f, ind: vec3f) -> vec3f {
+  let h = primaryHit(q);
+  if (!h.ok) { return OUTSIDE; }
+  let lamp = spotLamp(u.uCamPos, h.dir, distance(u.uCamPos, h.p)); // ライトの器具そのもの
+  if (lamp.x + lamp.y + lamp.z > 0.0) { return lamp; }
+  var f = h.face;
+  var p = h.p;
+  var d = h.dir;
+  var w = 1.0;
+  var ind2 = ind;
+  var col = vec3f(0.0);
+  if (isGlass(f, p)) {
+    let gw = glassWaves(f, glassUV(f, p));
+    let slope = gw.g.x * glassTu(f) + gw.g.y * glassTv(f);
+    let gn = normalize(inwardNormal(f) - slope);
+    let c = clamp(dot(-d, gn), 0.0, 1.0);
+    w = glassFresnel(c);
+    var lt = outsideRadiance(p, normalize(d + 0.5 * slope));
+    if (u.uGlassWaveB[f].x > 0.0 && u.uGlassWaveA[f].x > 0.5) {
+      let dd = 0.012 * u.uGlassWaveB[f].x * 0.5;
+      lt = vec3f(outsideRadiance(p, normalize(d + (0.5 - dd) * slope)).r, lt.g, outsideRadiance(p, normalize(d + (0.5 + dd) * slope)).b);
+    }
+    col += (1.0 - w) * (lt + moonDisk(p, normalize(d + 0.5 * slope))) * glassTint(f, c);
+    let o2 = p + gn * EPS;
+    d = reflect(d, gn);
+    let e2 = exitRoom(o2, d);
+    f = e2.face;
+    p = o2 + d * e2.t;
+    col += w * spotLamp(o2, d, e2.t);
+    if (inWindow(f, p)) { return col + w * (outsideRadiance(p, d) + moonDisk(p, d) + u.uSunE * (sunLobe(d) * cloudTrans(p))); }
+    let cc = u.uViewProj * vec4f(p, 1.0);
+    let uv = cc.xy / max(cc.w, 1e-6) * 0.5 + 0.5;
+    if (cc.w > 0.0 && all(uv > vec2f(0.0)) && all(uv < vec2f(1.0))) { ind2 = accumAt(uv * u.uRes); }
+  }
+  if (inWindow(f, p)) { return col + outsideRadiance(p, d) + moonDisk(p, d); }
+  if (u.uPoolOn > 0.5 && f == 3) { return col + w * poolRadiance(p, d, ind2); }
+  let n = inwardNormal(f);
+  let a = albedo(f, p);
+  return col + w * (a * ind2 + a / PI * (sunLight(p + n * EPS, n) + u.uSunE * causticRGB(f, p, n) + spotIrradiance(p + n * EPS, n)) + screenLight(f, p, -1.0) + ambientPanel(f, p));
+}
+
 @fragment fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
   let px = vec2f(pos.x, u.uRes.y - pos.y); // WebGL の gl_FragCoord と同じ
   let hc = primaryHit(px);
@@ -1323,48 +1365,16 @@ ${FULLSCREEN_VS}
   var ind = vec3f(0.0);
   if (hc.ok && !inWindow(hc.face, hc.p)) { ind = smoothedIndirect(px, hc.face, hc.p); }
 
-  // 画素の中の 4 点で、窓の外・反射率・直射日光・光の揺らぎを求める（縁のギザギザを抑える）
+  // 画素の中の 4 点で求める（縁のギザギザを抑える）。計算が壊れた点（NaN・無限大）は捨て、残りの点で埋める
+  // （Windows の GPU では、うねりのあるガラスの所で、まれに壊れた値が出て黒い点や線になった）
   var col = vec3f(0.0);
+  var good = 0.0;
   for (var k = 0; k < 4; k++) {
     let o = vec2f(select(-0.25, 0.25, k == 1 || k == 3), select(-0.25, 0.25, k >= 2));
-    let h = primaryHit(px + o);
-    if (!h.ok) { col += OUTSIDE; continue; }
-    let lamp = spotLamp(u.uCamPos, h.dir, distance(u.uCamPos, h.p)); // ライトの器具そのもの
-    if (lamp.x + lamp.y + lamp.z > 0.0) { col += lamp; continue; }
-    var f = h.face;
-    var p = h.p;
-    var d = h.dir;
-    var w = 1.0;
-    var ind2 = ind;
-    if (isGlass(f, p)) {
-      let gw = glassWaves(f, glassUV(f, p));
-      let slope = gw.g.x * glassTu(f) + gw.g.y * glassTv(f);
-      let gn = normalize(inwardNormal(f) - slope);
-      let c = clamp(dot(-d, gn), 0.0, 1.0);
-      w = glassFresnel(c);
-      var lt = outsideRadiance(p, normalize(d + 0.5 * slope));
-      if (u.uGlassWaveB[f].x > 0.0 && u.uGlassWaveA[f].x > 0.5) {
-        let dd = 0.012 * u.uGlassWaveB[f].x * 0.5;
-        lt = vec3f(outsideRadiance(p, normalize(d + (0.5 - dd) * slope)).r, lt.g, outsideRadiance(p, normalize(d + (0.5 + dd) * slope)).b);
-      }
-      col += (1.0 - w) * (lt + moonDisk(p, normalize(d + 0.5 * slope))) * glassTint(f, c);
-      let o2 = p + gn * EPS;
-      d = reflect(d, gn);
-      let e2 = exitRoom(o2, d);
-      f = e2.face;
-      p = o2 + d * e2.t;
-      col += w * spotLamp(o2, d, e2.t);
-      if (inWindow(f, p)) { col += w * (outsideRadiance(p, d) + moonDisk(p, d) + u.uSunE * (sunLobe(d) * cloudTrans(p))); continue; }
-      let cc = u.uViewProj * vec4f(p, 1.0);
-      let uv = cc.xy / max(cc.w, 1e-6) * 0.5 + 0.5;
-      if (cc.w > 0.0 && all(uv > vec2f(0.0)) && all(uv < vec2f(1.0))) { ind2 = accumAt(uv * u.uRes); }
-    }
-    if (inWindow(f, p)) { col += outsideRadiance(p, d) + moonDisk(p, d); continue; }
-    if (u.uPoolOn > 0.5 && f == 3) { col += w * poolRadiance(p, d, ind2); continue; }
-    let n = inwardNormal(f);
-    let a = albedo(f, p);
-    col += w * (a * ind2 + a / PI * (sunLight(p + n * EPS, n) + u.uSunE * causticRGB(f, p, n) + spotIrradiance(p + n * EPS, n)) + screenLight(f, p, -1.0) + ambientPanel(f, p));
+    let c = subSample(px + o, ind);
+    if (!isBad(c)) { col += c; good += 1.0; }
   }
+  col *= 4.0 / max(good, 1.0);
   col = max(col, vec3f(0.0)) * (0.25 * u.uExposure); // プリズムで白を減らした所が負にならないように
   col = toSrgb(aces(col));
   let nz = fract(sin(dot(px, vec2f(12.9898, 78.233))) * 43758.5453) - 0.5;
