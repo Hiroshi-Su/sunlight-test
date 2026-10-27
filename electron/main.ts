@@ -106,7 +106,10 @@ let lastRecoverAt = 0;
 let failuresSinceBeat = 0;
 let crashRequested = false;
 let unresponsiveTimer: NodeJS.Timeout | undefined;
-const GRACE_MS = 30000;
+let beatSeen = false;
+// 読み込みの直後の猶予。room モードを Windows の WebGPU で初めて開くと、シェーダーの組み立てに約 40 秒かかって描画が止まる
+// （2 回目からは保存されて一瞬）。その間に復帰処理を走らせると、組み立てがやり直しになって終わらない
+const GRACE_MS = appConfig.startupGraceSec * 1000;
 const pageUrl = (): string => `app://soracity/index.html?mode=${mode}`;
 
 function createWindow(): void {
@@ -145,6 +148,7 @@ function createWindow(): void {
   wc.on('did-finish-load', () => {
     loadedAt = Date.now();
     lastBeat = Date.now() + GRACE_MS;
+    beatSeen = false;
   });
   // 描画プロセスが終わった後に読み込み直す（終了処理中の reload は無視されることがある）
   wc.on('render-process-gone', (_e, details) => {
@@ -160,9 +164,11 @@ function createWindow(): void {
   });
   wc.on('unresponsive', () => {
     if (!isCurrent()) return;
-    log('unresponsive');
+    const graceLeftSec = Math.max(0, Math.round((lastBeat - Date.now()) / 1000));
+    log('unresponsive', { graceLeftSec });
     clearTimeout(unresponsiveTimer);
-    unresponsiveTimer = setTimeout(() => recover('unresponsive', { hard: true }), 10000);
+    // 猶予の間は待つ。猶予が終わっても止まったままなら、これまでどおり 10 秒後に復帰処理に入る
+    unresponsiveTimer = setTimeout(() => recover('unresponsive', { hard: true }), 10000 + graceLeftSec * 1000);
   });
   wc.on('responsive', () => {
     clearTimeout(unresponsiveTimer);
@@ -268,6 +274,10 @@ ipcMain.on(IPC.setMode, (e, next: unknown) => {
 });
 ipcMain.on(IPC.heartbeat, (e, data: Heartbeat) => {
   if (!fromCurrent(e.sender)) return;
+  if (!beatSeen) {
+    beatSeen = true;
+    log('first-heartbeat', { afterLoadSec: Math.round((Date.now() - loadedAt) / 1000) }); // 初回の組み立てにかかった時間の目安
+  }
   lastBeat = Date.now();
   failuresSinceBeat = 0;
   latest = data;

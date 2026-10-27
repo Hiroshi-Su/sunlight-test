@@ -11,6 +11,7 @@
   "dailyReloadAt": "04:00",
   "statsIntervalSec": 300,
   "heartbeatTimeoutSec": 30,
+  "startupGraceSec": 180,
   "logDir": "logs",
   "_notes": {
     "mode": "\"verify\"=検証 UI / \"visuals\"=映像の制作・調整 / \"kiosk\"=展示用の枠なし全画面。起動引数 --mode=visuals などで上書き可",
@@ -19,6 +20,7 @@
     "dailyReloadAt": "毎日ページを再読み込みする現地時刻 \"HH:MM\"。null で無効",
     "statsIntervalSec": "稼働状況をログに書く間隔",
     "heartbeatTimeoutSec": "描画が止まったと判断して再読み込みするまでの秒数",
+    "startupGraceSec": "読み込みの直後、「応答なし」でも復帰処理に入らず待つ秒数。room モードを Windows の WebGPU で初めて開くと、シェーダーの組み立てに約 40 秒止まる（2 回目から一瞬）ので、それより十分長くする。省くと 180",
     "logDir": "ログの出力先（プロジェクトからの相対パス）"
   }
 }

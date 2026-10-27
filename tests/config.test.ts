@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { ConfigError, applyEnvToSiteConfig, envLatLon, parseAppConfig, parseSiteConfig, parseVisualsConfig } from '../src/config.ts';
+import { ConfigError, DEFAULT_STARTUP_GRACE_SEC, applyEnvToSiteConfig, envLatLon, parseAppConfig, parseSiteConfig, parseVisualsConfig } from '../src/config.ts';
 import { SCENES } from '../src/scenes/index.ts';
 import { mergeParams } from '../src/scenes/types.ts';
 
@@ -68,6 +68,15 @@ test('app.json の誤りを報告する', () => {
   const raw = { ...readJson('app.json'), mode: 'fullscreen', dailyReloadAt: '4:00', heartbeatTimeoutSec: 5 };
   const problems = problemsOf(() => parseAppConfig(raw));
   assert.equal(problems.length, 3);
+});
+
+test('app.json の startupGraceSec：省くと既定（180 秒）、短すぎる値は誤り', () => {
+  const { startupGraceSec: _omit, ...withoutGrace } = readJson('app.json') as Record<string, unknown>;
+  assert.equal(parseAppConfig(withoutGrace).startupGraceSec, DEFAULT_STARTUP_GRACE_SEC);
+  assert.equal(parseAppConfig(readJson('app.json')).startupGraceSec, 180);
+  const problems = problemsOf(() => parseAppConfig({ ...withoutGrace, startupGraceSec: 5 }));
+  assert.equal(problems.length, 1);
+  assert.ok(problems[0]!.includes('startupGraceSec'));
 });
 
 test('visuals.json を検証する', () => {

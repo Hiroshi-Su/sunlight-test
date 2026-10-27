@@ -50,8 +50,13 @@ export interface AppConfig {
   dailyReloadAt: string | null;
   statsIntervalSec: number;
   heartbeatTimeoutSec: number;
+  /** 読み込みの直後、「応答なし」で復帰処理に入らず待つ秒数（初回のシェーダーの組み立てが長いため） */
+  startupGraceSec: number;
   logDir: string;
 }
+
+/** startupGraceSec を省いたときの値。Windows の WebGPU で room モードを初めて開くと、組み立てに約 40 秒かかった（docs/windows-check.md） */
+export const DEFAULT_STARTUP_GRACE_SEC = 180;
 
 export class ConfigError extends Error {
   readonly problems: string[];
@@ -238,6 +243,8 @@ export function parseAppConfig(raw: unknown, file = 'config/app.json'): AppConfi
     dailyReloadAt: typeof daily === 'string' ? daily : null,
     statsIntervalSec: c.num(o, 'statsIntervalSec', '(root)', 10),
     heartbeatTimeoutSec: c.num(o, 'heartbeatTimeoutSec', '(root)', 15),
+    // 古い app.json（この項目がない）でも動くよう、省いたときは既定にする
+    startupGraceSec: o['startupGraceSec'] === undefined ? DEFAULT_STARTUP_GRACE_SEC : c.num(o, 'startupGraceSec', '(root)', 10),
     logDir: c.str(o, 'logDir', '(root)'),
   };
   if (c.problems.length) throw new ConfigError(file, c.problems);
