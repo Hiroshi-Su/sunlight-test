@@ -1402,56 +1402,72 @@ vec3 toSrgb(vec3 c) {
 float glassFresnel(float c) { return 0.04 + 0.96 * pow(1.0 - c, 5.0); }
 vec3 glassTint(int f, float c) { return pow(uGlassTintF[f], vec3(1.0 / max(c, 0.2))); }
 
+// 無限大か NaN（GPU によっては isnan が最適化で消えるので、ビットで調べる）
+bool isBad(vec3 v) {
+  uvec3 e = floatBitsToUint(v) & uvec3(0x7f800000u);
+  return any(equal(e, uvec3(0x7f800000u)));
+}
+
+// 画素の中の 1 点（q）の明るさ：窓の外・反射率・直射日光・光の揺らぎ
+vec3 subSample(vec2 q, vec3 ind) {
+  int f; vec3 p, d;
+  if (!primaryHit(q, f, p, d)) return OUTSIDE;
+  vec3 lamp = spotLamp(uCamPos, d, distance(uCamPos, p)); // ライトの器具そのもの
+  if (lamp.x + lamp.y + lamp.z > 0.0) return lamp;
+  // ガラスの壁：透けた外の景色を足し、光線を反射させて、その先を下の処理で描く（反射の割合 w を掛ける）
+  float w = 1.0;
+  vec3 ind2 = ind;
+  vec3 col = vec3(0.0);
+  if (isGlass(f, p)) {
+    // 表面の形：傾きで面の向きを傾け（映り込みがゆがむ）、透けて見える向きを (n−1)·∇h だけ曲げる（外の景色がゆがむ）。虹がオンなら色ごとに曲げ方を変える
+    vec2 gg; vec3 gH;
+    glassWaves(f, glassUV(f, p), gg, gH);
+    vec3 tu, tv;
+    glassAxes(f, tu, tv);
+    vec3 slope = gg.x * tu + gg.y * tv;
+    vec3 gn = normalize(inwardNormal(f) - slope);
+    float c = clamp(dot(-d, gn), 0.0, 1.0);
+    w = glassFresnel(c);
+    vec3 lt = outsideRadiance(p, normalize(d + 0.5 * slope));
+    if (uGlassWaveB[f].x > 0.0 && uGlassWaveA[f].x > 0.5) {
+      float dd = 0.012 * uGlassWaveB[f].x * 0.5;
+      lt = vec3(outsideRadiance(p, normalize(d + (0.5 - dd) * slope)).r, lt.g, outsideRadiance(p, normalize(d + (0.5 + dd) * slope)).b);
+    }
+    col += (1.0 - w) * (lt + moonDisk(p, normalize(d + 0.5 * slope))) * glassTint(f, c);
+    vec3 o2 = p + gn * EPS;
+    d = reflect(d, gn);
+    float t2 = exitRoom(o2, d, f);
+    p = o2 + d * t2;
+    col += w * spotLamp(o2, d, t2);
+    if (inWindow(f, p)) return col + w * (outsideRadiance(p, d) + moonDisk(p, d) + uSunE * (sunLobe(d) * cloudTrans(p)));
+    // 映った所の照り返しは、その所が画面に映っていればその画素の値を使う
+    vec4 cc = uViewProj * vec4(p, 1.0);
+    vec2 uv = cc.xy / max(cc.w, 1e-6) * 0.5 + 0.5;
+    if (cc.w > 0.0 && all(greaterThan(uv, vec2(0.0))) && all(lessThan(uv, vec2(1.0)))) ind2 = texture(uAccum, uv).rgb;
+  }
+  if (inWindow(f, p)) return col + outsideRadiance(p, d) + moonDisk(p, d);
+  if (uPoolOn == 1 && f == 3) return col + w * poolRadiance(p, d, ind2);
+  vec3 n = inwardNormal(f);
+  vec3 a = albedo(f, p);
+  return col + w * (a * ind2 + a / PI * (sunLight(p + n * EPS, n) + uSunE * causticRGB(f, p, n) + spotIrradiance(p + n * EPS, n)) + screenLight(f, p, -1.0) + ambientPanel(f, p));
+}
+
 void main() {
   vec2 px = gl_FragCoord.xy;
   int fc; vec3 pc, dc;
   bool hitC = primaryHit(px, fc, pc, dc);
   vec3 ind = hitC && !inWindow(fc, pc) ? smoothedIndirect(px, fc, pc) : vec3(0.0);
 
-  // 画素の中の 4 点で、窓の外・反射率・直射日光・光の揺らぎを求める（縁のギザギザを抑える）
+  // 画素の中の 4 点で求める（縁のギザギザを抑える）。計算が壊れた点（NaN・無限大）は捨て、残りの点で埋める
+  // （Windows の GPU では、うねりのあるガラスの所で、まれに壊れた値が出て黒い点や線になった。WebGPU 版と同じ）
   vec3 col = vec3(0.0);
+  float good = 0.0;
   for (int k = 0; k < 4; k++) {
     vec2 o = vec2(k == 1 || k == 3 ? 0.25 : -0.25, k >= 2 ? 0.25 : -0.25);
-    int f; vec3 p, d;
-    if (!primaryHit(px + o, f, p, d)) { col += OUTSIDE; continue; }
-    vec3 lamp = spotLamp(uCamPos, d, distance(uCamPos, p)); // ライトの器具そのもの
-    if (lamp.x + lamp.y + lamp.z > 0.0) { col += lamp; continue; }
-    // ガラスの壁：透けた外の景色を足し、光線を反射させて、その先を下の処理で描く（反射の割合 w を掛ける）
-    float w = 1.0;
-    vec3 ind2 = ind;
-    if (isGlass(f, p)) {
-      // 表面の形：傾きで面の向きを傾け（映り込みがゆがむ）、透けて見える向きを (n−1)·∇h だけ曲げる（外の景色がゆがむ）。虹がオンなら色ごとに曲げ方を変える
-      vec2 gg; vec3 gH;
-      glassWaves(f, glassUV(f, p), gg, gH);
-      vec3 tu, tv;
-      glassAxes(f, tu, tv);
-      vec3 slope = gg.x * tu + gg.y * tv;
-      vec3 gn = normalize(inwardNormal(f) - slope);
-      float c = clamp(dot(-d, gn), 0.0, 1.0);
-      w = glassFresnel(c);
-      vec3 lt = outsideRadiance(p, normalize(d + 0.5 * slope));
-      if (uGlassWaveB[f].x > 0.0 && uGlassWaveA[f].x > 0.5) {
-        float dd = 0.012 * uGlassWaveB[f].x * 0.5;
-        lt = vec3(outsideRadiance(p, normalize(d + (0.5 - dd) * slope)).r, lt.g, outsideRadiance(p, normalize(d + (0.5 + dd) * slope)).b);
-      }
-      col += (1.0 - w) * (lt + moonDisk(p, normalize(d + 0.5 * slope))) * glassTint(f, c);
-      vec3 o2 = p + gn * EPS;
-      d = reflect(d, gn);
-      float t2 = exitRoom(o2, d, f);
-      p = o2 + d * t2;
-      col += w * spotLamp(o2, d, t2);
-      if (inWindow(f, p)) { col += w * (outsideRadiance(p, d) + moonDisk(p, d) + uSunE * (sunLobe(d) * cloudTrans(p))); continue; }
-      // 映った所の照り返しは、その所が画面に映っていればその画素の値を使う
-      vec4 cc = uViewProj * vec4(p, 1.0);
-      vec2 uv = cc.xy / max(cc.w, 1e-6) * 0.5 + 0.5;
-      if (cc.w > 0.0 && all(greaterThan(uv, vec2(0.0))) && all(lessThan(uv, vec2(1.0)))) ind2 = texture(uAccum, uv).rgb;
-    }
-    if (inWindow(f, p)) { col += outsideRadiance(p, d) + moonDisk(p, d); continue; }
-    if (uPoolOn == 1 && f == 3) { col += w * poolRadiance(p, d, ind2); continue; }
-    vec3 n = inwardNormal(f);
-    vec3 a = albedo(f, p);
-    col += w * (a * ind2 + a / PI * (sunLight(p + n * EPS, n) + uSunE * causticRGB(f, p, n) + spotIrradiance(p + n * EPS, n)) + screenLight(f, p, -1.0) + ambientPanel(f, p));
+    vec3 c = subSample(px + o, ind);
+    if (!isBad(c)) { col += c; good += 1.0; }
   }
+  col *= 4.0 / max(good, 1.0);
   col = max(col, vec3(0.0)) * (0.25 * uExposure); // プリズムで白を減らした所が負にならないように
   col = toSrgb(aces(col));
   float nz = fract(sin(dot(px, vec2(12.9898, 78.233))) * 43758.5453) - 0.5;
