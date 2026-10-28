@@ -5,7 +5,7 @@ import type { Clock } from '../clock.ts';
 import { mountCalibMode } from './calib-mode.ts';
 import { WINDOW_SIDES, WINDOW_SIDE_LABEL, type WindowSide } from '../config.ts';
 import { PALETTE_KELVIN_ALTS, PALETTE_SKY_ALTS, type PaletteTable, defaultPalette, kelvinAt, setPalette } from '../palette.ts';
-import { EXHIBIT_SIZE, type GuideOptions, LIGHT_KINDS, type LightKind, MAX_BLOBS, MAX_SHIM_COLORS, MAX_SHIM_PALETTE, MAX_SPOTS, MAX_PRISMS, type MoonSettings, type OrganicLook, PRISM_MOTIONS, PRISM_PATTERNS, type Openings, WINDOW_TOPS, type WindowTop, GLASS_FACES, GLASS_KINDS, GLASS_SURFACES, type GlassFace, TEX_SURFACES, type TexSurface, type SurfaceTexture, type GlassKind, type GlassSpec, type GlassSurface, LIGHTHOUSE_DEFAULTS, LIGHTHOUSE_MODES, type LighthouseMode, lighthouseWeight, MOON_MODES, MOON_PHASE_PREVIEWS, SEA_WAVES, type SeaWaves, SHIMMER_ANCHORS, SHIMMER_COLOR_MODES, type PrismMotion, type PrismPattern, type PrismSettings, SPOT_MODES, TRAIL_COLOR_MODES, type TrailSettings, type RoomGeometry, type RoomOutput, type RoomRenderSettings, type RoomResolution, type SpotLight, type SpotMode, type SpotSettings, type ViewCalibration, type WindowGeometry, defaultCalibration } from '../room/scene.ts';
+import { EXHIBIT_SIZE, type GuideOptions, LIGHT_KINDS, type LightKind, MAX_BLOBS, MAX_SHIM_COLORS, MAX_SHIM_PALETTE, MAX_SPOTS, MAX_PRISMS, type MoonSettings, type OrganicLook, PRISM_MOTIONS, PRISM_PATTERNS, type Openings, WINDOW_TOPS, type WindowTop, GLASS_FACES, GLASS_KINDS, GLASS_SURFACES, type GlassFace, TEX_SURFACES, type TexSurface, type SurfaceTexture, type GlassKind, type GlassSpec, type GlassSurface, LIGHTHOUSE_DEFAULTS, LIGHTHOUSE_MODES, SKY_LOOKS, type SkyLook, type LighthouseMode, lighthouseWeight, MOON_MODES, MOON_PHASE_PREVIEWS, SEA_WAVES, type SeaWaves, SHIMMER_ANCHORS, SHIMMER_COLOR_MODES, type PrismMotion, type PrismPattern, type PrismSettings, SPOT_MODES, TRAIL_COLOR_MODES, type TrailSettings, type RoomGeometry, type RoomOutput, type RoomRenderSettings, type RoomResolution, type SpotLight, type SpotMode, type SpotSettings, type ViewCalibration, type WindowGeometry, defaultCalibration } from '../room/scene.ts';
 import { SCENES, findScene } from '../scenes/index.ts';
 import type { SceneDef } from '../scenes/types.ts';
 import type { SolarState } from '../solar.ts';
@@ -248,6 +248,8 @@ export function mountRoomUi(
     seaCompare: on('seaCompare', r0.seaCompare),
     seaView: on('sea', r0.seaView), seaRipples: on('ripples', r0.seaRipples), pool: on('pool', r0.pool), poolReflect: on('poolReflect', r0.poolReflect),
     waveAmp: num('wave', r0.waveAmp),
+    // ?seaHaze=10000 で、海がかすむ距離（m）を変えて開く
+    seaHazeM: num('seaHaze', r0.seaHazeM),
     window: { ...winBase },
     openings,
     location: locState.id,
@@ -262,6 +264,8 @@ export function mountRoomUi(
       mode: oneOf(q.get('moonMode') ?? (moonPhaseParam(q) ? 'realSky' : r0.moon.mode), MOON_MODES, 'realFull'),
       phasePreview: moonPhaseParam(q) ?? oneOf(r0.moon.phasePreview, MOON_PHASE_PREVIEWS, 'real'),
     },
+    // ?skyLook=picked で、見える空を選んだ色のまま出して開く（real で部屋と同じ露出で写す）
+    skyLook: oneOf(q.get('skyLook') ?? r0.skyLook, SKY_LOOKS, 'real'),
     // ?lighthouse=1（または night）で夜に灯台の光を点けて開く。always でいつも、0 で消す
     lighthouse: { ...r0.lighthouse, mode: lighthouseParam(q.get('lighthouse')) ?? oneOf(r0.lighthouse.mode, LIGHTHOUSE_MODES, 'off') },
     // ?glass=right,back のように、ガラスの壁にする面を並べる（?glass=0 ですべて壁）
@@ -534,6 +538,8 @@ export function mountRoomUi(
   showSeaSplit();
   fw.add(settings, 'seaRoughness', 0.0005, 0.03, 0.0005).name('海面の細かい粗さ（大きいほど太陽のきらめきが広い帯に）');
   fw.add(settings, 'seaScatter', 0, 3, 0.05).name('海の波の山が透ける強さ');
+  // 遠くの海が空の色に溶ける距離。短いほど水平線がぼやけ、長いほどくっきりする（晴れた日に見通せる距離は 10〜30km）
+  fw.add(settings, 'seaHazeM', 100, 30000, 100).name('海がかすむ距離（m。長いほど水平線がくっきり）');
 
   // 空・雲：窓から見える空に雲が流れ、太陽を横切ると日差しが弱まる（雲の影が部屋を通り過ぎる）
   const fc = gui.addFolder('空・雲');
@@ -771,6 +777,8 @@ export function mountRoomUi(
   const fpal = gui.addFolder('日差しと空の色（太陽の高度ごと）');
   const altLabel = (alts: readonly number[], i: number): string =>
     i === 0 ? `太陽 ${alts[i]}° 以下` : i === alts.length - 1 ? `太陽 ${alts[i]}° 以上` : `太陽 ${alts[i]}°`;
+  // 空の見え方：リアル（部屋と同じ露出で写すので、選んだ色より暗くくすむ）か、見える空だけ選んだ色のまま
+  fpal.add(settings, 'skyLook', { 'リアル（部屋と同じ露出で写す）': 'real', '選んだ色のまま（見える空だけ）': 'picked' }).name('空の見え方');
   const fk = fpal.addFolder('日差しの色温度（K）');
   PALETTE_KELVIN_ALTS.forEach((_, i) => fk.add(pal.kelvin as unknown as Record<string, number>, String(i), 1000, 12000, 50).name(altLabel(PALETTE_KELVIN_ALTS, i)).onChange(palChanged));
   const fsk = fpal.addFolder('空の色（上・地平線の近く）');
@@ -1068,7 +1076,7 @@ export function codeDefaults(room: RoomGeometry, configWindow: WindowGeometry) {
     // 既定は窓なし（左右の壁・天井とも白い壁）。窓の位置と大きさは、窓を開けたときのためのもの
     window: defaultWindow('left', room, configWindow),
     render: {
-      exposure: 2.5, bounces: 3, smooth: true,
+      exposure: 2.5, skyLook: 'real' as SkyLook, bounces: 3, smooth: true,
       seaView: ROOM_DEFAULTS.seaView as boolean, seaRipples: false, pool: ROOM_DEFAULTS.pool as boolean, poolReflect: ROOM_DEFAULTS.poolReflect as boolean,
       waveAmp: ROOM_DEFAULTS.waveAmp as number, poolDepthM: 0.3, seaLevelM: -1, seaWaves: 'fft' as SeaWaves, seaCompare: false, location: 'venue', roomModel: 'box',
       openings: { left: false, right: false, top: 'none' as WindowTop, skyWidthM: Math.round(room.widthM * 0.4 * 20) / 20, skyDepthM: Math.round(room.depthM * 0.5 * 20) / 20 },
@@ -1076,7 +1084,7 @@ export function codeDefaults(room: RoomGeometry, configWindow: WindowGeometry) {
       glassSpecs: Object.fromEntries(GLASS_FACES.map((f) => [f, { ...GLASS_SPEC_DEFAULT }])) as Record<GlassFace, GlassSpec>,
       // 面に貼る画像：既定はどの面も貼らない
       textures: Object.fromEntries(TEX_SURFACES.map((g) => [g, { image: 'none', sizeM: 1, gain: 1 }])) as Record<TexSurface, SurfaceTexture>,
-      seaWindMS: 6, seaWaveScale: 1, seaRoughness: 0.004, seaScatter: 0.6,
+      seaWindMS: 6, seaWaveScale: 1, seaRoughness: 0.004, seaScatter: 0.6, seaHazeM: 600,
       clouds: false, cloudShadow: ROOM_DEFAULTS.cloudShadow as boolean, cloudAmount: 0.45, cloudOpacity: 0.8,
       cloudSizeM: 1500, cloudHeightM: 1500, windMS: 30, windFromDeg: 270,
       screenArea: false, screen: false, screenGain: 0.6,

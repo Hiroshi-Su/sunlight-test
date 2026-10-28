@@ -42,6 +42,11 @@ export interface RoomInput {
 export interface RoomRenderSettings {
   /** 露出（画面の明るさ）。1 が標準 */
   exposure: number;
+  /**
+   * 空の見え方。real：部屋と同じ露出で写す（カメラに近い。選んだ色より暗く、くすんで見える）。
+   * picked：窓・ガラス越しに見える空だけ、画面に出たときに選んだ色になるようにする（部屋を照らす空の光は real と同じ）
+   */
+  skyLook: SkyLook;
   /** 照り返しの回数。0 = 直接光だけ（照り返しなし） */
   bounces: number;
   /** 照り返しの成分を近くの画素でならす（ざらつきを減らす） */
@@ -84,6 +89,8 @@ export interface RoomRenderSettings {
   seaRoughness: number;
   /** 窓の外の海の、波の山が日差しで透けて緑がかる強さ（0 = 透けない） */
   seaScatter: number;
+  /** 窓の外の海が空気でかすむ距離（m）。遠くの海は、この距離で約 63% が地平線近くの空の色に溶ける。大きいほど水平線がくっきりする */
+  seaHazeM: number;
   /** 窓の大きさ（パネルで変えられる。初期値は config/site.json） */
   window: WindowGeometry;
   /** 窓の外の空に雲を浮かべる */
@@ -115,6 +122,22 @@ export interface RoomRenderSettings {
   moon: MoonSettings;
   /** 灯台の光（夜に、沖の灯台の光の帯が海の上を水平に回る） */
   lighthouse: LighthouseSettings;
+}
+
+export const SKY_LOOKS = ['real', 'picked'] as const;
+export type SkyLook = (typeof SKY_LOOKS)[number];
+
+/**
+ * 画面の仕上げ（ACES の近似式 y = x(2.51x + 0.03) / (x(2.43x + 0.59) + 0.14)）の逆。仕上げの後に y（線形、0〜1）になる x を返す。
+ * 2 次方程式 (2.43y − 2.51)x² + (0.59y − 0.03)x + 0.14y = 0 の 0 以上の解。y が 1 に近いと x が大きくなりすぎるので 0.98 で止める
+ */
+export function acesInverse(y: number): number {
+  const v = Math.min(0.98, y);
+  if (!(v > 0)) return 0;
+  const a = 2.43 * v - 2.51;
+  const b = 0.59 * v - 0.03;
+  const c = 0.14 * v;
+  return (-b - Math.sqrt(b * b - 4 * a * c)) / (2 * a);
 }
 
 export const LIGHTHOUSE_MODES = ['off', 'night', 'always'] as const;

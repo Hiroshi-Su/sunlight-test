@@ -6,7 +6,7 @@ import { type WindowSide, wallWindowSide } from '../config.ts';
 import { type RGB, kelvinToRgb } from '../palette.ts';
 import { DriftBlend } from '../scenes/shader.ts';
 import { SUN_ANGULAR_RADIUS_DEG, directSunFactor, skyBrightness } from './daylight.ts';
-import { MAX_BLOBS, MAX_PRISMS, MAX_SHIM_COLORS, MAX_SHIM_PALETTE, MAX_SPOTS, GLASS_FACES, GLASS_FACE_INDEX, GLASS_SURFACES, type GlassSpec, TEX_SURFACES, moonLightCurve, moonPhaseBrightness, moonSkyCurve, PRISM_PATTERNS, type OrganicLook, type PrismMotion, type RoomGeometry, type RoomInput, type RoomRenderSettings, type RoomScreenImage, type SpotLight, cloudFlowDir, lighthouseProfile, lighthouseWeight, moonDirection, moonWeight, spotPose, spotWeight, toThree, windowRect } from './model.ts';
+import { MAX_BLOBS, MAX_PRISMS, MAX_SHIM_COLORS, MAX_SHIM_PALETTE, MAX_SPOTS, GLASS_FACES, GLASS_FACE_INDEX, GLASS_SURFACES, type GlassSpec, TEX_SURFACES, moonLightCurve, moonPhaseBrightness, moonSkyCurve, PRISM_PATTERNS, type OrganicLook, type PrismMotion, type RoomGeometry, type RoomInput, type RoomRenderSettings, type RoomScreenImage, type SpotLight, cloudFlowDir, acesInverse, lighthouseProfile, lighthouseWeight, moonDirection, moonWeight, spotPose, spotWeight, toThree, windowRect } from './model.ts';
 import { MAX_ROOM_PRIMS, type RoomMesh, type RoomPrim, type Vec3 } from './step.ts';
 import { MAX_TEXTURES, type TexturePixels, texturePixels } from './textures.ts';
 import { OCEAN_CASCADES, OCEAN_LODS, type OceanSpectrum, buildOceanSpectrum } from './ocean.ts';
@@ -224,11 +224,14 @@ export class RoomCore {
       uSunE: { value: new THREE.Vector3() },
       uSkyTop: { value: new THREE.Vector3() },
       uSkyBottom: { value: new THREE.Vector3() },
+      uViewSkyTop: { value: new THREE.Vector3() },    // 見える空（画面に出す段階だけ）
+      uViewSkyBottom: { value: new THREE.Vector3() },
       uGround: { value: new THREE.Vector3() },
       uScreenRect: { value: new THREE.Vector4(-screenW / 2, screenW / 2, screenCy - screenH / 2, screenCy + screenH / 2) },
       uSeaOn: { value: 0 },
       uSeaY: { value: -1 },
       uSeaBody: { value: new THREE.Vector3() },
+      uSeaHaze: { value: 600 },                                    // 海が空気でかすむ距離（m）
       uSeaLook: { value: new THREE.Vector2(0.004, 0.6) },        // 海面の細かい粗さ・波の山が透ける強さ
       uPixAngle: { value: 1e-3 },
       uSeaGlintDir: { value: new THREE.Vector3(0, 1, 0) },        // 海に映すきらめきの光の向き（昼は太陽、夜は海に映す月）
@@ -825,6 +828,7 @@ export class RoomCore {
     s.uSeaY.value = settings.seaLevelM;
     s.uSeaBody.value.set(0.12, 0.35, 0.42).multiplyScalar(skyL * 0.25);
     s.uSeaLook.value.set(Math.max(1e-4, settings.seaRoughness), Math.max(0, settings.seaScatter));
+    s.uSeaHaze.value = Math.max(50, settings.seaHazeM);
     // FFT の海：風速・向き・高さが変わったら波のスペクトルを作り直す
     s.uOceanOn.value = s.uSeaOn.value && settings.seaWaves === 'fft' ? 1 : 0;
     if (s.uOceanOn.value) {
@@ -856,6 +860,20 @@ export class RoomCore {
     s.uSeaSplit.value = settings.seaCompare && s.uOceanOn.value ? 1 : 0;
     s.uSkyTop.value.copy(top);
     s.uSkyBottom.value.copy(bottom);
+    // 空の見え方が「選んだ色のまま」なら、見える空だけ、露出と仕上げ（ACES）を通した後に選んだ色になる明るさにする。
+    // 太陽の高度による明るさ（skyBrightness）と夜空（月）は使わない（高度ごとの色の表が、明るさも決める）
+    if (settings.skyLook === 'picked') {
+      const view = (c: RGB): THREE.Vector3 => {
+        const l = linear(c);
+        const k = 1 / Math.max(0.05, settings.exposure);
+        return l.set(acesInverse(l.x) * k, acesInverse(l.y) * k, acesInverse(l.z) * k);
+      };
+      s.uViewSkyTop.value.copy(view(input.sky.top));
+      s.uViewSkyBottom.value.copy(view(input.sky.bottom));
+    } else {
+      s.uViewSkyTop.value.copy(top);
+      s.uViewSkyBottom.value.copy(bottom);
+    }
     s.uGround.value.copy(ground);
     s.uProjInv.value.copy(camera.projectionMatrixInverse);
     s.uCamWorld.value.copy(camera.matrixWorld);

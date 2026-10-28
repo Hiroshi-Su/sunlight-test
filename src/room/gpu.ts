@@ -269,8 +269,12 @@ fn albedoLod(face: i32, p: vec3f, lod: f32) -> vec3f {
 }
 fn albedo(face: i32, p: vec3f) -> vec3f { return albedoLod(face, p, -1.0); }
 
+// 画面に出す段階（見える空）だけ true。「選んだ色のまま」のときは、見える空だけ uViewSky*（部屋を照らす空の光は uSky* のまま）
+var<private> gView: bool = false;
 fn skyRadiance(d: vec3f) -> vec3f {
-  return mix(u.uSkyBottom, u.uSkyTop, sqrt(max(d.y, 0.0)));
+  let t = sqrt(max(d.y, 0.0));
+  if (gView) { return mix(u.uViewSkyBottom, u.uViewSkyTop, t); }
+  return mix(u.uSkyBottom, u.uSkyTop, t);
 }
 
 ${WGSL_SIMPLEX3}
@@ -465,7 +469,7 @@ fn seaRadiance(o: vec3f, d: vec3f) -> vec3f {
     let lw = lv * inverseSqrt(ld2);
     c += u.uLhI * (lhProfile(-lw) / ld2 * seaGlintL(n, v, u.uSeaLook.x + sw.w, lw));
   }
-  return mix(c, skyRadiance(normalize(vec3f(d.x, 0.02, d.z))), 1.0 - exp(-t / 600.0)) + lighthouseSky(o, d, t);
+  return mix(c, skyRadiance(normalize(vec3f(d.x, 0.02, d.z))), 1.0 - exp(-t / u.uSeaHaze)) + lighthouseSky(o, d, t);
 }
 
 // 窓の外の明るさ：上は空、下は海（オフなら地面）
@@ -1427,6 +1431,7 @@ fn subSample(q: vec2f, ind: vec3f) -> vec3f {
 
 @fragment fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
   let px = vec2f(pos.x, u.uRes.y - pos.y); // WebGL の gl_FragCoord と同じ
+  gView = true;
   let hc = primaryHit(px);
   // スクリーンの映像を読むぼかしの段は、隣の画素との差から決める（WGSL では分岐の中で求められないので、先に求めておく）
   let st = screenUV(hc.p);

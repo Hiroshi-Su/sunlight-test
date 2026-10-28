@@ -38,12 +38,15 @@ uniform float uSunSinR;      // 太陽の見かけの半径の sin
 uniform vec3 uSunE;          // 直射日光の強さ（光に垂直な面での放射照度）
 uniform vec3 uSkyTop;
 uniform vec3 uSkyBottom;
+uniform vec3 uViewSkyTop;    // 見える空（画面に出す段階だけ）。「選んだ色のまま」でなければ uSkyTop と同じ
+uniform vec3 uViewSkyBottom;
 uniform vec3 uGround;
 uniform vec4 uScreenRect;    // スクリーン面（奥の壁の x0, x1, y0, y1）
 uniform int uScreenArea;     // スクリーン面を壁と分けて示す（0 なら、ただの壁として扱う）
 uniform int uSeaOn;          // 窓の外に海を描く
 uniform float uSeaY;         // 窓の外の水面の高さ
 uniform vec3 uSeaBody;       // 水の中から出てくる光（水の色）
+uniform float uSeaHaze;      // 海が空気でかすむ距離（m）
 uniform vec2 uSeaLook;       // 海面の細かい粗さ（傾きの 2 乗平均）・波の山が透ける強さ
 uniform float uPixAngle;     // 1 画素が見込む角度（ラジアン）
 uniform vec3 uSeaGlintDir;   // 海に映すきらめきの光の向き（昼は太陽、夜は海に映す月）
@@ -379,8 +382,12 @@ vec3 albedoLod(int face, vec3 p, float lod) {
 }
 vec3 albedo(int face, vec3 p) { return albedoLod(face, p, -1.0); }
 
+// 画面に出す段階（見える空）だけ true。「選んだ色のまま」のときは、見える空だけ uViewSky*（部屋を照らす空の光は uSky* のまま）
+bool gView = false;
 vec3 skyRadiance(vec3 d) {
-  return mix(uSkyBottom, uSkyTop, sqrt(max(d.y, 0.0)));
+  float t = sqrt(max(d.y, 0.0));
+  if (gView) return mix(uViewSkyBottom, uViewSkyTop, t);
+  return mix(uSkyBottom, uSkyTop, t);
 }
 
 ${GLSL_SIMPLEX3}
@@ -563,7 +570,7 @@ vec3 seaRadiance(vec3 o, vec3 d) {
     c += uLhI * (lhProfile(-lw) / ld2 * seaGlintL(n, v, uSeaLook.x + sw.w, lw));
   }
   // 遠くはかすんで、地平線の空の色に近づく。海面までの空気で散った灯台の光の帯を足す
-  return mix(c, skyRadiance(normalize(vec3(d.x, 0.02, d.z))), 1.0 - exp(-t / 600.0)) + lighthouseSky(o, d, t);
+  return mix(c, skyRadiance(normalize(vec3(d.x, 0.02, d.z))), 1.0 - exp(-t / uSeaHaze)) + lighthouseSky(o, d, t);
 }
 
 // 窓の外の明るさ：上は空、下は海（オフなら地面）
@@ -1535,6 +1542,7 @@ vec3 subSample(vec2 q, vec3 ind) {
 
 void main() {
   vec2 px = gl_FragCoord.xy;
+  gView = true;
   int fc; vec3 pc, dc;
   bool hitC = primaryHit(px, fc, pc, dc);
   vec3 ind = hitC && !inWindow(fc, pc) ? smoothedIndirect(px, fc, pc) : vec3(0.0);
