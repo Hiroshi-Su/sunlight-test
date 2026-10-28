@@ -46,7 +46,8 @@ uniform int uScreenArea;     // スクリーン面を壁と分けて示す（0 �
 uniform int uSeaOn;          // 窓の外に海を描く
 uniform float uSeaY;         // 窓の外の水面の高さ
 uniform vec3 uSeaBody;       // 水の中から出てくる光（水の色）
-uniform float uSeaHaze;      // 海が空気でかすむ距離（m）
+uniform float uSeaHaze;
+uniform float uSeaHorizon;   // 水平線：0 = 平らな海、1 = 地球の丸みと遠くの波の傾きを入れる      // 海が空気でかすむ距離（m）
 uniform vec2 uSeaLook;       // 海面の細かい粗さ（傾きの 2 乗平均）・波の山が透ける強さ
 uniform float uPixAngle;     // 1 画素が見込む角度（ラジアン）
 uniform vec3 uSeaGlintDir;   // 海に映すきらめきの光の向き（昼は太陽、夜は海に映す月）
@@ -147,6 +148,7 @@ uniform vec3 uTexB[7];       // 明るさの倍率
 uniform highp sampler2DArray uTexArr;
 
 const float PI = 3.14159265358979;
+const float EARTH_R = 6371000.0; // 地球の半径（m）
 const float EPS = 1e-4;
 const float IOR = ${WATER_IOR.toFixed(3)};
 const vec3 WATER_ABS = vec3(${WATER_ABSORPTION.map(f3).join(', ')});
@@ -547,15 +549,36 @@ float seaGlintL(vec3 n, vec3 v, float m2, vec3 l) {
 float seaGlint(vec3 n, vec3 v, float m2) { return seaGlintL(n, v, m2, uSeaGlintDir); }
 vec3 seaRadiance(vec3 o, vec3 d) {
   float t = (uSeaY - o.y) / min(d.y, -1e-4);
+  vec3 dl = d; // 当たった所の水面から見た視線（地球の丸みで、水面の水平が少し傾く）
+  if (uSeaHorizon > 0.5) {
+    // 地球の丸み：見下ろす角度 a、目の高さ h の視線は、t²/(2R) − a·t + h = 0 で丸い海面に当たる。
+    // a² < 2h/R なら水平線より上（空）。当たった所では、水面の水平に対して √(a² − 2h/R) の角度で見下ろす
+    float h = max(o.y - uSeaY, 0.01);
+    float a = -d.y;
+    float disc = a * a - 2.0 * h / EARTH_R;
+    if (disc <= 0.0) return cloudySky(o, d);
+    t = 2.0 * h / (a + sqrt(disc));
+    dl = normalize(vec3(d.x, -sqrt(disc), d.z));
+  }
   vec3 x = o + d * t;
   // 画素の大きさ（水面の上で m）。斜めに見るほど奥行きの向きに伸びる
   float fw = t * uPixAngle / sqrt(max(-d.y, 1e-3));
   vec4 sw = seaSurface(x.xz, fw);
   vec3 n = waveNormal(sw.xyz);
-  vec3 v = -d;
-  float F = fresnelWater(dot(v, n));
-  vec3 r = reflect(d, n);
+  vec3 v = -dl;
+  float cv = dot(v, n);
+  vec3 r = reflect(dl, n);
   r.y = abs(r.y);
+  if (uSeaHorizon > 0.5) {
+    // 遠くの消した波の傾き（sw.w）と細かい粗さ：浅い角度で見ても、見えている波の面はこちらへ傾いている。
+    // 視線の向きの傾きのばらつき σ² ≒ 全体の半分。見えている面の平均の cos ≒ √(cos² + 1.5σ²)（真横から見ると約 1.2σ）。
+    // 映す割合はその角度のフレネル、映る空はその面で跳ね返る向き（高さ ≒ 2·cos − 見下ろす角度）
+    float s2 = 0.5 * (uSeaLook.x + sw.w);
+    cv = sqrt(cv * cv + 1.5 * s2);
+    r.y = max(r.y, 2.0 * cv + dl.y);
+    r = normalize(r);
+  }
+  float F = fresnelWater(cv);
   // 水の中の色：波の山（薄い所）は日差しが透けて緑がかる。太陽の方を見ているほど強い
   float crest = clamp(sw.x / (0.03 * uWaveAmp + 1e-4), 0.0, 1.0);
   vec2 dh = normalize(d.xz + 1e-6), sh = normalize(uSunDir.xz + 1e-6);

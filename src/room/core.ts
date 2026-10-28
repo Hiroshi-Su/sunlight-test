@@ -231,7 +231,8 @@ export class RoomCore {
       uSeaOn: { value: 0 },
       uSeaY: { value: -1 },
       uSeaBody: { value: new THREE.Vector3() },
-      uSeaHaze: { value: 600 },                                    // 海が空気でかすむ距離（m）
+      uSeaHaze: { value: 600 },
+      uSeaHorizon: { value: 0 },                                   // 水平線：0 = 平らな海、1 = 地球の丸みと遠くの波の傾き                                    // 海が空気でかすむ距離（m）
       uSeaLook: { value: new THREE.Vector2(0.004, 0.6) },        // 海面の細かい粗さ・波の山が透ける強さ
       uPixAngle: { value: 1e-3 },
       uSeaGlintDir: { value: new THREE.Vector3(0, 1, 0) },        // 海に映すきらめきの光の向き（昼は太陽、夜は海に映す月）
@@ -829,6 +830,7 @@ export class RoomCore {
     s.uSeaBody.value.set(0.12, 0.35, 0.42).multiplyScalar(skyL * 0.25);
     s.uSeaLook.value.set(Math.max(1e-4, settings.seaRoughness), Math.max(0, settings.seaScatter));
     s.uSeaHaze.value = Math.max(50, settings.seaHazeM);
+    s.uSeaHorizon.value = settings.seaHorizon === 'real' ? 1 : 0;
     // FFT の海：風速・向き・高さが変わったら波のスペクトルを作り直す
     s.uOceanOn.value = s.uSeaOn.value && settings.seaWaves === 'fft' ? 1 : 0;
     if (s.uOceanOn.value) {

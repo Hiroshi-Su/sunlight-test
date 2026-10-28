@@ -23,6 +23,7 @@ const SCREEN: GPUTextureFormat = 'rgba8unorm';
 // ---- 全段階で共通の部分：部屋・窓・太陽・空・雲・水面、カメラの光線 ----
 const common = /* wgsl */ `
 const PI = 3.14159265358979;
+const EARTH_R = 6371000.0; // 地球の半径（m）
 const EPS = 1e-4;
 const IOR = ${WATER_IOR.toFixed(3)};
 const WATER_ABS = vec3f(${WATER_ABSORPTION.map(f3).join(', ')});
@@ -443,7 +444,18 @@ fn seaGlintL(n: vec3f, v: vec3f, m2: f32, l: vec3f) -> f32 {
   return fresnelWater(dot(h, v)) * D / (4.0 * max(dot(n, v), 0.05));
 }
 fn seaRadiance(o: vec3f, d: vec3f) -> vec3f {
-  let t = (u.uSeaY - o.y) / min(d.y, -1e-4);
+  var t = (u.uSeaY - o.y) / min(d.y, -1e-4);
+  var dl = d; // 当たった所の水面から見た視線（地球の丸みで、水面の水平が少し傾く）
+  if (u.uSeaHorizon > 0.5) {
+    // 地球の丸み：見下ろす角度 a、目の高さ h の視線は、t²/(2R) − a·t + h = 0 で丸い海面に当たる。
+    // a² < 2h/R なら水平線より上（空）。当たった所では、水面の水平に対して √(a² − 2h/R) の角度で見下ろす
+    let h = max(o.y - u.uSeaY, 0.01);
+    let a = -d.y;
+    let disc = a * a - 2.0 * h / EARTH_R;
+    if (disc <= 0.0) { return cloudySky(o, d); }
+    t = 2.0 * h / (a + sqrt(disc));
+    dl = normalize(vec3f(d.x, -sqrt(disc), d.z));
+  }
   let x = o + d * t;
   let fw = t * u.uPixAngle / sqrt(max(-d.y, 1e-3));
   // 比べるとき（uSeaSplit）は、海を窓の奥行きの真ん中で 2 つに分け、手前側（見る人の側）を正弦波の海にする（窓からどちらも見える）
@@ -452,10 +464,20 @@ fn seaRadiance(o: vec3f, d: vec3f) -> vec3f {
   var sw: vec4f;
   if (fft) { sw = oceanSurface(x.xz, fw); } else { sw = seaSurface(x.xz, fw); }
   let n = waveNormal(sw.xyz);
-  let v = -d;
-  let F = fresnelWater(dot(v, n));
-  var r = reflect(d, n);
+  let v = -dl;
+  var cv = dot(v, n);
+  var r = reflect(dl, n);
   r.y = abs(r.y);
+  if (u.uSeaHorizon > 0.5) {
+    // 遠くの消した波の傾き（sw.w）と細かい粗さ：浅い角度で見ても、見えている波の面はこちらへ傾いている。
+    // 視線の向きの傾きのばらつき σ² ≒ 全体の半分。見えている面の平均の cos ≒ √(cos² + 1.5σ²)（真横から見ると約 1.2σ）。
+    // 映す割合はその角度のフレネル、映る空はその面で跳ね返る向き（高さ ≒ 2·cos − 見下ろす角度）
+    let s2 = 0.5 * (u.uSeaLook.x + sw.w);
+    cv = sqrt(cv * cv + 1.5 * s2);
+    r.y = max(r.y, 2.0 * cv + dl.y);
+    r = normalize(r);
+  }
+  let F = fresnelWater(cv);
   let crest = clamp(sw.x / select(0.03 * u.uWaveAmp + 1e-4, 2.0 * u.uOceanRms + 1e-4, fft), 0.0, 1.0);
   let dh = normalize(d.xz + 1e-6);
   let sh = normalize(u.uSunDir.xz + 1e-6);

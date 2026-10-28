@@ -91,6 +91,11 @@ export interface RoomRenderSettings {
   seaScatter: number;
   /** 窓の外の海が空気でかすむ距離（m）。遠くの海は、この距離で約 63% が地平線近くの空の色に溶ける。大きいほど水平線がくっきりする */
   seaHazeM: number;
+  /**
+   * 水平線の作り方。flat：どこまでも続く平らな海で、遠くの細かい波は消して鏡のようにする（今まで。水平線は空に溶ける）。
+   * real：地球の丸みで水平線を有限の距離にし、遠くの消した波の傾きも、映す割合と映る空の向きに入れる（水平線の下の海が空より暗い線になる）
+   */
+  seaHorizon: SeaHorizon;
   /** 窓の大きさ（パネルで変えられる。初期値は config/site.json） */
   window: WindowGeometry;
   /** 窓の外の空に雲を浮かべる */
@@ -123,6 +128,9 @@ export interface RoomRenderSettings {
   /** 灯台の光（夜に、沖の灯台の光の帯が海の上を水平に回る） */
   lighthouse: LighthouseSettings;
 }
+
+export const SEA_HORIZONS = ['flat', 'real'] as const;
+export type SeaHorizon = (typeof SEA_HORIZONS)[number];
 
 export const SKY_LOOKS = ['real', 'picked'] as const;
 export type SkyLook = (typeof SKY_LOOKS)[number];
