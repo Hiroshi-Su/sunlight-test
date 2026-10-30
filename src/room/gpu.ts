@@ -37,6 +37,36 @@ const MAX_ROOM_PRIMS = ${MAX_ROOM_PRIMS};
 
 ${WATER_WGSL}
 
+// ---- 水盤と窓の外の海をつなぐ（src/room/gl.ts と同じ）----
+// 壁の下が開いているとき（uPoolSea = 2）：海とつながる面までの距離から、海の波が入る割合（0〜1）。遠いほど静まる
+fn poolSeaInflow(p: vec2f) -> f32 {
+  if (u.uPoolSea < 1.5) { return 0.0; }
+  let m = u32(u.uPoolSeaMask + 0.5);
+  var dm = 1e9;
+  if ((m & 1u) != 0u) { dm = min(dm, u.uRoomMax.x - p.x); }
+  if ((m & 2u) != 0u) { dm = min(dm, p.x - u.uRoomMin.x); }
+  if ((m & 16u) != 0u) { dm = min(dm, u.uRoomMax.z - p.y); }
+  if ((m & 32u) != 0u) { dm = min(dm, p.y - u.uRoomMin.z); }
+  return exp(-max(dm, 0.0) / u.uPoolSeaReach);
+}
+// 水盤の波（高さ・x・z の傾き）。壁の下が開いているときは、つながる面に近いほど海の波（正弦波）にする
+fn poolSurface(p: vec2f) -> vec3f {
+  let k = poolSeaInflow(p);
+  if (k < 1e-3) { return poolWave(p); }
+  return mix(poolWave(p), seaSurface(p, 0.0).xyz, k);
+}
+// 水の中を o から向き d に進む光線が、海とつながる面を抜けるまでの距離と、その面（抜けなければ距離 1e9）
+fn poolSeaWall(o: vec3f, d: vec3f) -> vec2f {
+  let m = u32(u.uPoolSeaMask + 0.5);
+  var r = vec2f(1e9, -1.0);
+  if (u.uPoolSea < 0.5) { return r; }
+  if ((m & 1u) != 0u && d.x > 1e-6) { let t = (u.uRoomMax.x - o.x) / d.x; if (t < r.x) { r = vec2f(t, 0.0); } }
+  if ((m & 2u) != 0u && d.x < -1e-6) { let t = (u.uRoomMin.x - o.x) / d.x; if (t < r.x) { r = vec2f(t, 1.0); } }
+  if ((m & 16u) != 0u && d.z > 1e-6) { let t = (u.uRoomMax.z - o.z) / d.z; if (t < r.x) { r = vec2f(t, 4.0); } }
+  if ((m & 32u) != 0u && d.z < -1e-6) { let t = (u.uRoomMin.z - o.z) / d.z; if (t < r.x) { r = vec2f(t, 5.0); } }
+  return r;
+}
+
 // n を軸にした正規直交基底
 struct Basis { t: vec3f, b: vec3f }
 fn basis(n: vec3f) -> Basis {
@@ -704,7 +734,7 @@ struct VOut {
 @vertex fn vs(@location(0) uv: vec2f) -> VOut {
   let p0 = cp.gridO + uv.x * cp.gridU + uv.y * cp.gridV;
   var hw: vec3f;
-  if (cp.source < 0.5) { hw = poolWave(p0.xz); } else { hw = seaWave(p0.xz); }
+  if (cp.source < 0.5) { hw = poolSurface(p0.xz); } else { hw = seaWave(p0.xz); }
   let n = waveNormal(hw);
   let p = vec3f(p0.x, cp.waterY + hw.x, p0.z);
   let ci = dot(n, u.uSunDir);
@@ -1353,9 +1383,20 @@ fn bottomSun(b: vec3f, fade: f32, edge: vec3f, flatSun: f32, inner: f32) -> vec3
   return u.uSunE * c + prismLight(top, up);
 }
 
+// 水盤の水面の波。壁の下が開いているときは、窓の外の海と同じ波（FFT のときは FFT の画像）を、つながる面に近いほど強く入れる
+// （面の所で窓の外の海と波がそろう。光の網目の計算は FFT の画像を読めないので、正弦波の海で代える）
+fn poolSurfaceView(p: vec3f, d: vec3f) -> vec3f {
+  let k = poolSeaInflow(p.xz);
+  if (k < 1e-3) { return poolWave(p.xz); }
+  let fw = distance(u.uCamPos, p) * u.uPixAngle / sqrt(max(-d.y, 1e-3));
+  var s: vec3f;
+  if (u.uOceanOn > 0.5) { s = oceanSurface(p.xz, fw).xyz; } else { s = seaSurface(p.xz, fw).xyz; }
+  return mix(poolWave(p.xz), s, k);
+}
+
 // 水盤：水面で反射する光と、屈折して底から戻る光を、反射の割合（フレネル）で混ぜる
 fn poolRadiance(p: vec3f, d: vec3f, ind: vec3f) -> vec3f {
-  let n = waveNormal(poolWave(p.xz));
+  let n = waveNormal(poolSurfaceView(p, d));
   let F = fresnelWater(dot(-d, n));
   let rd = refract(d, n, 1.0 / IOR);
   let tb = (-u.uPoolDepth - p.y) / min(rd.y, -1e-3);
@@ -1383,8 +1424,16 @@ fn poolRadiance(p: vec3f, d: vec3f, ind: vec3f) -> vec3f {
       inner = smoothstep(0.0, -0.15, pd);
     }
   }
-  let lb = texAlbedo(3, b, vec3f(${POOL_ALBEDO.toFixed(3)}), -1.0) / PI * ((bottomSun(b, fade, edge, flatSun, inner) + PI * ind) * absorb + spotBottom(b) * exp(-WATER_ABS * tb));
-  let rr = reflect(d, n);
+  var lb = texAlbedo(3, b, vec3f(${POOL_ALBEDO.toFixed(3)}), -1.0) / PI * ((bottomSun(b, fade, edge, flatSun, inner) + PI * ind) * absorb + spotBottom(b) * exp(-WATER_ABS * tb));
+  // 海とつながる面を、底に着く前に抜けると、その先は深い海の水（窓の外の海の水の色）。ガラスで仕切るときはガラスの色を掛ける
+  let wall = poolSeaWall(p, rd);
+  if (wall.x < tb) {
+    var deep = u.uSeaBody;
+    if (u.uPoolSea < 1.5) { deep *= u.uGlassTintF[i32(wall.y)]; }
+    lb = deep;
+  }
+  var rr = reflect(d, n);
+  rr.y = abs(rr.y); // 海の波が入った急な波では、跳ね返りが下を向くことがある（窓の外の海と同じく、上へ折り返す）
   let o = vec3f(p.x, EPS, p.z);
   let e = exitRoom(o, rr);
   let q = o + rr * e.t;

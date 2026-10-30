@@ -46,8 +46,8 @@ uniform int uScreenArea;     // スクリーン面を壁と分けて示す（0 �
 uniform int uSeaOn;          // 窓の外に海を描く
 uniform float uSeaY;         // 窓の外の水面の高さ
 uniform vec3 uSeaBody;       // 水の中から出てくる光（水の色）
-uniform float uSeaHaze;
-uniform float uSeaHorizon;   // 水平線：0 = 平らな海、1 = 地球の丸みと遠くの波の傾きを入れる      // 海が空気でかすむ距離（m）
+uniform float uSeaHaze;      // 海が空気でかすむ距離（m）
+uniform float uSeaHorizon;   // 水平線：0 = 平らな海、1 = 地球の丸みと遠くの波の傾きを入れる
 uniform vec2 uSeaLook;       // 海面の細かい粗さ（傾きの 2 乗平均）・波の山が透ける強さ
 uniform float uPixAngle;     // 1 画素が見込む角度（ラジアン）
 uniform vec3 uSeaGlintDir;   // 海に映すきらめきの光の向き（昼は太陽、夜は海に映す月）
@@ -155,6 +155,40 @@ const vec3 WATER_ABS = vec3(${WATER_ABSORPTION.map(f3).join(', ')});
 const vec3 OUTSIDE = vec3(0.02); // 部屋の外（カメラが外にあり、部屋に当たらない方向）
 
 ${WATER_GLSL}
+
+// ---- 水盤と窓の外の海をつなぐ（src/room/gpu.ts と同じ）----
+uniform float uPoolSea;      // 水盤と海のつなぎ方：0 = つながない、1 = ガラスで仕切る、2 = 壁の下が開いている
+uniform float uPoolSeaMask;  // 水盤が海とつながる面（ビットは uGlassMask と同じ）
+uniform float uPoolSeaReach; // 海の波が部屋に入る距離（m）
+// 壁の下が開いているとき：海とつながる面までの距離から、海の波が入る割合（0〜1）。遠いほど静まる
+float poolSeaInflow(vec2 p) {
+  if (uPoolSea < 1.5) return 0.0;
+  int m = int(uPoolSeaMask + 0.5);
+  float dm = 1e9;
+  if ((m & 1) != 0) dm = min(dm, uRoomMax.x - p.x);
+  if ((m & 2) != 0) dm = min(dm, p.x - uRoomMin.x);
+  if ((m & 16) != 0) dm = min(dm, uRoomMax.z - p.y);
+  if ((m & 32) != 0) dm = min(dm, p.y - uRoomMin.z);
+  return exp(-max(dm, 0.0) / uPoolSeaReach);
+}
+// 水盤の波（高さ・x・z の傾き）。壁の下が開いているときは、つながる面に近いほど海の波にする
+vec3 poolSurface(vec2 p) {
+  float k = poolSeaInflow(p);
+  if (k < 1e-3) return poolWave(p);
+  return mix(poolWave(p), seaSurface(p, 0.0).xyz, k);
+}
+// 水の中を o から向き d に進む光線が、海とつながる面を抜けるまでの距離（抜けなければ 1e9）と、その面
+float poolSeaWall(vec3 o, vec3 d, out int face) {
+  int m = int(uPoolSeaMask + 0.5);
+  float r = 1e9;
+  face = -1;
+  if (uPoolSea < 0.5) return r;
+  if ((m & 1) != 0 && d.x > 1e-6) { float t = (uRoomMax.x - o.x) / d.x; if (t < r) { r = t; face = 0; } }
+  if ((m & 2) != 0 && d.x < -1e-6) { float t = (uRoomMin.x - o.x) / d.x; if (t < r) { r = t; face = 1; } }
+  if ((m & 16) != 0 && d.z > 1e-6) { float t = (uRoomMax.z - o.z) / d.z; if (t < r) { r = t; face = 4; } }
+  if ((m & 32) != 0 && d.z < -1e-6) { float t = (uRoomMin.z - o.z) / d.z; if (t < r) { r = t; face = 5; } }
+  return r;
+}
 
 // n を軸にした正規直交基底
 void basis(vec3 n, out vec3 t, out vec3 b) {
@@ -778,7 +812,7 @@ out vec3 vNew;
 out float vW;
 void main() {
   vec3 p0 = uGridO + uv.x * uGridU + uv.y * uGridV;
-  vec3 hw = uSource == 0 ? poolWave(p0.xz) : seaWave(p0.xz);
+  vec3 hw = uSource == 0 ? poolSurface(p0.xz) : seaWave(p0.xz);
   vec3 n = waveNormal(hw);
   vec3 p = vec3(p0.x, uWaterY + hw.x, p0.z);
   float ci = dot(n, uSunDir);
@@ -1453,7 +1487,11 @@ vec3 bottomSun(vec3 b, float fade, vec3 edge, float flatSun, float inner) {
 
 // 水盤：水面で反射する光と、屈折して底から戻る光を、反射の割合（フレネル）で混ぜる
 vec3 poolRadiance(vec3 p, vec3 d, vec3 ind) {
-  vec3 n = waveNormal(poolWave(p.xz));
+  // 壁の下が開いているときは、つながる面に近いほど窓の外の海と同じ波（WebGL2 の海は正弦波）
+  float kSea = poolSeaInflow(p.xz);
+  vec3 hwp = poolWave(p.xz);
+  if (kSea > 1e-3) hwp = mix(hwp, seaSurface(p.xz, distance(uCamPos, p) * uPixAngle / sqrt(max(-d.y, 1e-3))).xyz, kSea);
+  vec3 n = waveNormal(hwp);
   float F = fresnelWater(dot(-d, n));
   // 屈折して底へ。水に吸収されて、深いほど青緑になる（見る光の道のりと、日差しが底まで届く道のり）
   vec3 rd = refract(d, n, 1.0 / IOR);
@@ -1483,8 +1521,13 @@ vec3 poolRadiance(vec3 p, vec3 d, vec3 ind) {
     }
   }
   vec3 lb = texAlbedo(3, b, vec3(${POOL_ALBEDO.toFixed(3)}), -1.0) / PI * ((bottomSun(b, fade, edge, flatSun, inner) + PI * ind) * absorb + spotBottom(b) * exp(-WATER_ABS * tb));
+  // 海とつながる面を、底に着く前に抜けると、その先は深い海の水（窓の外の海の水の色）。ガラスで仕切るときはガラスの色を掛ける
+  int wf;
+  float tw = poolSeaWall(p, rd, wf);
+  if (tw < tb) lb = uPoolSea < 1.5 ? uSeaBody * uGlassTintF[wf] : uSeaBody;
   // 反射：窓の外（空・海と、映り込んだ太陽のきらめき）か、部屋の面
   vec3 rr = reflect(d, n);
+  rr.y = abs(rr.y); // 海の波が入った急な波では、跳ね返りが下を向くことがある（窓の外の海と同じく、上へ折り返す）
   vec3 o = vec3(p.x, EPS, p.z);
   int f2;
   float t2 = exitRoom(o, rr, f2);

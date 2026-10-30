@@ -5,7 +5,7 @@ import type { Clock } from '../clock.ts';
 import { mountCalibMode } from './calib-mode.ts';
 import { WINDOW_SIDES, WINDOW_SIDE_LABEL, type WindowSide } from '../config.ts';
 import { PALETTE_KELVIN_ALTS, PALETTE_SKY_ALTS, type PaletteTable, defaultPalette, kelvinAt, setPalette } from '../palette.ts';
-import { EXHIBIT_SIZE, type GuideOptions, LIGHT_KINDS, type LightKind, MAX_BLOBS, MAX_SHIM_COLORS, MAX_SHIM_PALETTE, MAX_SPOTS, MAX_PRISMS, type MoonSettings, type OrganicLook, PRISM_MOTIONS, PRISM_PATTERNS, type Openings, WINDOW_TOPS, type WindowTop, GLASS_FACES, GLASS_KINDS, GLASS_SURFACES, type GlassFace, TEX_SURFACES, type TexSurface, type SurfaceTexture, type GlassKind, type GlassSpec, type GlassSurface, LIGHTHOUSE_DEFAULTS, LIGHTHOUSE_MODES, SKY_LOOKS, type SkyLook, SEA_HORIZONS, type SeaHorizon, type LighthouseMode, lighthouseWeight, MOON_MODES, MOON_PHASE_PREVIEWS, SEA_WAVES, type SeaWaves, SHIMMER_ANCHORS, SHIMMER_COLOR_MODES, type PrismMotion, type PrismPattern, type PrismSettings, SPOT_MODES, TRAIL_COLOR_MODES, type TrailSettings, type RoomGeometry, type RoomOutput, type RoomRenderSettings, type RoomResolution, type SpotLight, type SpotMode, type SpotSettings, type ViewCalibration, type WindowGeometry, defaultCalibration } from '../room/scene.ts';
+import { EXHIBIT_SIZE, type GuideOptions, LIGHT_KINDS, type LightKind, MAX_BLOBS, MAX_SHIM_COLORS, MAX_SHIM_PALETTE, MAX_SPOTS, MAX_PRISMS, type MoonSettings, type OrganicLook, PRISM_MOTIONS, PRISM_PATTERNS, type Openings, WINDOW_TOPS, type WindowTop, GLASS_FACES, GLASS_KINDS, GLASS_SURFACES, type GlassFace, TEX_SURFACES, type TexSurface, type SurfaceTexture, type GlassKind, type GlassSpec, type GlassSurface, LIGHTHOUSE_DEFAULTS, LIGHTHOUSE_MODES, SKY_LOOKS, type SkyLook, SEA_HORIZONS, type SeaHorizon, POOL_SEAS, type PoolSea, type LighthouseMode, lighthouseWeight, MOON_MODES, MOON_PHASE_PREVIEWS, SEA_WAVES, type SeaWaves, SHIMMER_ANCHORS, SHIMMER_COLOR_MODES, type PrismMotion, type PrismPattern, type PrismSettings, SPOT_MODES, TRAIL_COLOR_MODES, type TrailSettings, type RoomGeometry, type RoomOutput, type RoomRenderSettings, type RoomResolution, type SpotLight, type SpotMode, type SpotSettings, type ViewCalibration, type WindowGeometry, defaultCalibration } from '../room/scene.ts';
 import { SCENES, findScene } from '../scenes/index.ts';
 import type { SceneDef } from '../scenes/types.ts';
 import type { SolarState } from '../solar.ts';
@@ -252,6 +252,9 @@ export function mountRoomUi(
     seaHazeM: num('seaHaze', r0.seaHazeM),
     // ?seaHorizon=real で、地球の丸みと遠くの波の傾きを入れた水平線にして開く
     seaHorizon: oneOf(q.get('seaHorizon') ?? r0.seaHorizon, SEA_HORIZONS, 'flat'),
+    // ?poolSea=glass / open で、床の水盤をガラスの壁の所で窓の外の海とつないで開く（?poolSeaReach=3 で海の波が入る距離）
+    poolSea: oneOf(q.get('poolSea') ?? r0.poolSea, POOL_SEAS, 'off'),
+    poolSeaReachM: num('poolSeaReach', r0.poolSeaReachM),
     window: { ...winBase },
     openings,
     location: locState.id,
@@ -527,6 +530,9 @@ export function mountRoomUi(
   fw.add(settings, 'waveAmp', 0, 3, 0.05).name('波の強さ');
   fw.add(settings, 'poolDepthM', 0.02, 1.5, 0.01).name('水盤の深さ（m）');
   fw.add(settings, 'seaLevelM', -5, 0, 0.05).name('窓の外の水面の高さ（床から m）');
+  // 水盤と海をつなぐ：ガラスにした壁（右・左・手前・奥）の所でつながる。つなぐ間は、窓の外の水面の高さは床（水盤の水面）にそろう
+  fw.add(settings, 'poolSea', { 'つながない': 'off', 'ガラスで仕切る（高さと水の色がつながる）': 'glass', '壁の下が開いている（海の波も入る）': 'open' }).name('水盤と窓の外の海をつなぐ（ガラスの壁の所）');
+  fw.add(settings, 'poolSeaReachM', 0.2, 10, 0.1).name('海の波が部屋に入る距離（m、壁の下が開いているとき）');
   fw.add(settings, 'seaWaves', { 'FFT（海の波の統計から。WebGPU のとき）': 'fft', '正弦波 20 本（前の作り方）': 'sines' }).name('海の波の作り方').onChange(() => showSeaSplit());
   fw.add(settings, 'seaCompare').name('正弦波の海と FFT の海を比べる（手前側：正弦波・奥側：FFT）').onChange(() => showSeaSplit());
   fw.add(settings, 'seaWindMS', 0.5, 20, 0.1).name('海の上の風速（m/s、FFT のとき）');
@@ -1087,7 +1093,7 @@ export function codeDefaults(room: RoomGeometry, configWindow: WindowGeometry) {
       glassSpecs: Object.fromEntries(GLASS_FACES.map((f) => [f, { ...GLASS_SPEC_DEFAULT }])) as Record<GlassFace, GlassSpec>,
       // 面に貼る画像：既定はどの面も貼らない
       textures: Object.fromEntries(TEX_SURFACES.map((g) => [g, { image: 'none', sizeM: 1, gain: 1 }])) as Record<TexSurface, SurfaceTexture>,
-      seaWindMS: 6, seaWaveScale: 1, seaRoughness: 0.004, seaScatter: 0.6, seaHazeM: 600, seaHorizon: 'flat' as SeaHorizon,
+      seaWindMS: 6, seaWaveScale: 1, seaRoughness: 0.004, seaScatter: 0.6, seaHazeM: 600, seaHorizon: 'flat' as SeaHorizon, poolSea: 'off' as PoolSea, poolSeaReachM: 2,
       clouds: false, cloudShadow: ROOM_DEFAULTS.cloudShadow as boolean, cloudAmount: 0.45, cloudOpacity: 0.8,
       cloudSizeM: 1500, cloudHeightM: 1500, windMS: 30, windFromDeg: 270,
       screenArea: false, screen: false, screenGain: 0.6,

@@ -6,7 +6,7 @@ import { type WindowSide, wallWindowSide } from '../config.ts';
 import { type RGB, kelvinToRgb } from '../palette.ts';
 import { DriftBlend } from '../scenes/shader.ts';
 import { SUN_ANGULAR_RADIUS_DEG, directSunFactor, skyBrightness } from './daylight.ts';
-import { MAX_BLOBS, MAX_PRISMS, MAX_SHIM_COLORS, MAX_SHIM_PALETTE, MAX_SPOTS, GLASS_FACES, GLASS_FACE_INDEX, GLASS_SURFACES, type GlassSpec, TEX_SURFACES, moonLightCurve, moonPhaseBrightness, moonSkyCurve, PRISM_PATTERNS, type OrganicLook, type PrismMotion, type RoomGeometry, type RoomInput, type RoomRenderSettings, type RoomScreenImage, type SpotLight, cloudFlowDir, acesInverse, lighthouseProfile, lighthouseWeight, moonDirection, moonWeight, spotPose, spotWeight, toThree, windowRect } from './model.ts';
+import { MAX_BLOBS, MAX_PRISMS, MAX_SHIM_COLORS, MAX_SHIM_PALETTE, MAX_SPOTS, GLASS_FACES, GLASS_FACE_INDEX, GLASS_SURFACES, type GlassSpec, TEX_SURFACES, moonLightCurve, moonPhaseBrightness, moonSkyCurve, PRISM_PATTERNS, type OrganicLook, type PrismMotion, type RoomGeometry, type RoomInput, type RoomRenderSettings, type RoomScreenImage, type SpotLight, cloudFlowDir, acesInverse, effectiveSeaLevel, poolSeaMask, lighthouseProfile, lighthouseWeight, moonDirection, moonWeight, spotPose, spotWeight, toThree, windowRect } from './model.ts';
 import { MAX_ROOM_PRIMS, type RoomMesh, type RoomPrim, type Vec3 } from './step.ts';
 import { MAX_TEXTURES, type TexturePixels, texturePixels } from './textures.ts';
 import { OCEAN_CASCADES, OCEAN_LODS, type OceanSpectrum, buildOceanSpectrum } from './ocean.ts';
@@ -231,10 +231,10 @@ export class RoomCore {
       uSeaOn: { value: 0 },
       uSeaY: { value: -1 },
       uSeaBody: { value: new THREE.Vector3() },
-      uSeaHaze: { value: 600 },
-      uSeaHorizon: { value: 0 },                                   // 水平線：0 = 平らな海、1 = 地球の丸みと遠くの波の傾き                                    // 海が空気でかすむ距離（m）
+      uSeaHaze: { value: 600 },                                  // 海が空気でかすむ距離（m）
+      uSeaHorizon: { value: 0 },                                 // 水平線：0 = 平らな海、1 = 地球の丸みと遠くの波の傾き
       uSeaLook: { value: new THREE.Vector2(0.004, 0.6) },        // 海面の細かい粗さ・波の山が透ける強さ
-      uPixAngle: { value: 1e-3 },
+      uPixAngle: { value: 1e-3 },                                // 1 画素が見込む角度（ラジアン。遠くの細かい波を消すのに使う）
       uSeaGlintDir: { value: new THREE.Vector3(0, 1, 0) },        // 海に映すきらめきの光の向き（昼は太陽、夜は海に映す月）
       uSeaGlintE: { value: new THREE.Vector3() },                 // その光の強さ
       uMoonDisk: { value: new THREE.Vector3() },                  // 窓から見える月：描くか・見かけの半径の sin・満ち欠けの形を描くか
@@ -250,8 +250,11 @@ export class RoomCore {
       uOceanOn: { value: 0 },                                    // 1 = 海の波を FFT の画像から読む（WebGPU のときだけ使う）
       uOceanSize: { value: new THREE.Vector2(OCEAN_CASCADES[0].sizeM, OCEAN_CASCADES[1].sizeM) },
       uOceanRms: { value: 0.1 },                                 // 海面の高さの標準偏差（m）
-      uOceanMss: { value: new Float32Array(OCEAN_CASCADES.length * OCEAN_LODS) }, // 画像の段ごとの、描ききれない波の傾きの 2 乗平均                                // 1 画素が見込む角度（ラジアン。遠くの細かい波を消すのに使う）
+      uOceanMss: { value: new Float32Array(OCEAN_CASCADES.length * OCEAN_LODS) }, // 画像の段ごとの、描ききれない波の傾きの 2 乗平均
       uPoolOn: { value: 0 },
+      uPoolSea: { value: 0 },                                    // 水盤と海のつなぎ方：0 = つながない、1 = ガラスで仕切る、2 = 壁の下が開いている
+      uPoolSeaMask: { value: 0 },                                // 水盤が海とつながる面（ビット）
+      uPoolSeaReach: { value: 2 },                               // 海の波が部屋に入る距離（m）
       uPoolDepth: { value: 0.3 },
       uWaveAmp: { value: 1 },
       uPOOLPh: { value: phases.pool },
@@ -749,7 +752,7 @@ export class RoomCore {
     this.lhAngle = (this.lhAngle + (dt * 2 * Math.PI) / Math.max(1, lh.periodS)) % (2 * Math.PI);
     const off = (lh.offsetDeg * Math.PI) / 180;
     const lhDist = Math.max(50, lh.distanceM);
-    const lhPos = new THREE.Vector3(lhDist * Math.sin(off), settings.seaLevelM + Math.max(1, lh.heightM), -this.room.depthM - lhDist * Math.cos(off));
+    const lhPos = new THREE.Vector3(lhDist * Math.sin(off), effectiveSeaLevel(settings) + Math.max(1, lh.heightM), -this.room.depthM - lhDist * Math.cos(off));
     const lhHalf = (Math.min(60, Math.max(0.5, lh.beamDeg)) * Math.PI) / 360;
     s.uLhOn.value = lhW;
     s.uLhPos.value.copy(lhPos);
@@ -768,7 +771,7 @@ export class RoomCore {
       sp.mode, sp.kind, JSON.stringify(sp.ambient), sp.count, JSON.stringify(sp.lights.slice(0, sp.count)),
       lh.mode, lh.distanceM, lh.offsetDeg, lh.heightM, lh.beams, lh.beamDeg, lh.strength, lh.color,
       moon.on, moon.strength, moon.skyStrength, moon.color, moon.azimuthDeg, moon.altitudeDeg, moon.mode, real ? Math.round(phaseK * 100) : 0, preview, JSON.stringify(moon.skyCurve), JSON.stringify(moon.lightCurve), moon.seaRoadAltDeg, moon.seaRoadOffsetDeg, JSON.stringify(settings.glass), JSON.stringify(settings.glassSpecs), JSON.stringify(settings.openings), JSON.stringify(settings.textures), this.textures.key,
-      settings.bounces, settings.seaView, settings.seaRipples, settings.pool, settings.poolReflect, settings.waveAmp, settings.poolDepthM, settings.seaLevelM, this.winRect.toArray(),
+      settings.bounces, settings.seaView, settings.seaRipples, settings.pool, settings.poolReflect, settings.waveAmp, settings.poolDepthM, settings.seaLevelM, settings.poolSea, settings.poolSeaReachM, this.winRect.toArray(),
       cloudsOn, settings.cloudShadow, settings.cloudAmount, settings.cloudOpacity, settings.cloudSizeM, settings.cloudHeightM,
       settings.screenArea, !!screen, screen?.def.id, settings.screenGain,
     ].join();
@@ -826,7 +829,7 @@ export class RoomCore {
     }
     this.updateTextures(settings);
     s.uSeaOn.value = settings.seaView && (windowSide !== 'ceiling' || glassWall || s.uOpenMask.value > 0) ? 1 : 0;
-    s.uSeaY.value = settings.seaLevelM;
+    s.uSeaY.value = effectiveSeaLevel(settings);
     s.uSeaBody.value.set(0.12, 0.35, 0.42).multiplyScalar(skyL * 0.25);
     s.uSeaLook.value.set(Math.max(1e-4, settings.seaRoughness), Math.max(0, settings.seaScatter));
     s.uSeaHaze.value = Math.max(50, settings.seaHazeM);
@@ -847,6 +850,10 @@ export class RoomCore {
     s.uPixAngle.value = 2 / (Math.max(1e-3, camera.projectionMatrix.elements[5]) * Math.max(1, this.shared.uRes.value.y));
     s.uPoolOn.value = settings.pool ? 1 : 0;
     s.uPoolDepth.value = settings.poolDepthM;
+    // 水盤を海とつなぐ：つながる面（ガラスの壁）がなければ、つながない
+    s.uPoolSeaMask.value = poolSeaMask(settings);
+    s.uPoolSea.value = s.uPoolSeaMask.value ? (settings.poolSea === 'open' ? 2 : 1) : 0;
+    s.uPoolSeaReach.value = Math.max(0.1, settings.poolSeaReachM);
     this.causOn.value = settings.pool || (settings.seaRipples && windowSide !== 'ceiling') ? 1 : 0;
 
     s.uSunDir.value.copy(sunDir);
@@ -930,9 +937,10 @@ export class RoomCore {
       if (settings.poolReflect) for (const target of [0, 1, 2, 4, 5]) passes.push({ grid: 'pool', source: 0, mode: 0, target, o, u, v, y: 0 });
       passes.push({ grid: 'pool', source: 0, mode: 1, target: 6, o, u, v, y: 0 });
     }
-    const patch = sunOn && settings.seaRipples ? this.seaPatch(sunDir, settings.seaLevelM) : null;
+    const seaY = effectiveSeaLevel(settings);
+    const patch = sunOn && settings.seaRipples ? this.seaPatch(sunDir, seaY) : null;
     if (patch) {
-      for (const target of [0, 1, 2, 4, 5]) passes.push({ grid: 'sea', source: 1, mode: 0, target, ...patch, y: settings.seaLevelM });
+      for (const target of [0, 1, 2, 4, 5]) passes.push({ grid: 'sea', source: 1, mode: 0, target, ...patch, y: seaY });
     }
     return passes;
   }

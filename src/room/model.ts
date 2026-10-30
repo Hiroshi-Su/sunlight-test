@@ -96,6 +96,14 @@ export interface RoomRenderSettings {
    * real：地球の丸みで水平線を有限の距離にし、遠くの消した波の傾きも、映す割合と映る空の向きに入れる（水平線の下の海が空より暗い線になる）
    */
   seaHorizon: SeaHorizon;
+  /**
+   * 床の水盤を、ガラスの壁（右・左・手前・奥）の所で窓の外の海とつなぐ。off：つながない（今まで）。
+   * glass：水はガラスで仕切られている。窓の外の海の高さを水盤の水面（床）にそろえ、ガラス越しの水の中に深い海が見える。部屋の中の波は水盤のまま。
+   * open：ガラスは水面より上だけで、下は開いている。glass の見え方に加えて、海の波が部屋に入り、奥へ行くほど静まって水盤のさざ波になる
+   */
+  poolSea: PoolSea;
+  /** open のとき、海の波が部屋に入る距離（m）。つながる壁からこの距離で、海の波が約 37%（1/e）になる */
+  poolSeaReachM: number;
   /** 窓の大きさ（パネルで変えられる。初期値は config/site.json） */
   window: WindowGeometry;
   /** 窓の外の空に雲を浮かべる */
@@ -131,6 +139,23 @@ export interface RoomRenderSettings {
 
 export const SEA_HORIZONS = ['flat', 'real'] as const;
 export type SeaHorizon = (typeof SEA_HORIZONS)[number];
+
+export const POOL_SEAS = ['off', 'glass', 'open'] as const;
+export type PoolSea = (typeof POOL_SEAS)[number];
+
+/**
+ * 水盤が海とつながる面（シェーダーの面の番号のビット。右 0・左 1・手前 4・奥 5）。水盤がオフ、つながないとき、ガラスの壁がないときは 0。
+ * 天井はつながらない
+ */
+export function poolSeaMask(s: Pick<RoomRenderSettings, 'pool' | 'poolSea' | 'glass'>): number {
+  if (!s.pool || s.poolSea === 'off') return 0;
+  return (['right', 'left', 'front', 'back'] as const).reduce((m, f) => m + (s.glass[f] ? 1 << GLASS_FACE_INDEX[f] : 0), 0);
+}
+
+/** 窓の外の海の高さ（床から m）。水盤を海とつなぐときは、水盤の水面（床の高さ 0）にそろえる */
+export function effectiveSeaLevel(s: Pick<RoomRenderSettings, 'pool' | 'poolSea' | 'glass' | 'seaLevelM'>): number {
+  return poolSeaMask(s) ? 0 : s.seaLevelM;
+}
 
 export const SKY_LOOKS = ['real', 'picked'] as const;
 export type SkyLook = (typeof SKY_LOOKS)[number];
