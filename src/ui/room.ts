@@ -271,6 +271,8 @@ export function mountRoomUi(
     // ?spp=1 で、1 フレームに 1 画素あたり追う光線の本数を変えて開く（パネルの「軽くする方法を試す」でも変えられる）
     // ?perf=sub1,sun4,smooth2,half で、軽くする方法を最初から切り替えて開く（1 点・太陽の点 4・ならし 5×5・1 フレームおき）
     perf: ((p) => ({ ...p, spp: q.has('spp') ? Math.min(8, Math.max(1, Math.round(num('spp', p.spp)))) : p.spp }))(perfFromUrl(q.get('perf'), r0.perf)),
+    // ?bounces=0 で、照り返しの回数を変えて開く（0〜6。0 は窓から入る空の光だけ）
+    bounces: q.has('bounces') ? Math.min(6, Math.max(0, Math.round(num('bounces', r0.bounces)))) : r0.bounces,
     window: { ...winBase },
     openings,
     location: locState.id,
