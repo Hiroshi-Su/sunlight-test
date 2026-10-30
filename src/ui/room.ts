@@ -365,7 +365,8 @@ export function mountRoomUi(
   showShape();
   fit();
   const fv = gui.addFolder('光の計算');
-  fv.add(settings, 'bounces', 0, 6, 1).name('照り返しの回数');
+  // 「軽くする方法を試す」にも同じ値を並べるので、どちらで動かしても両方の表示が付いてくるようにする
+  fv.add(settings, 'bounces', 0, 6, 1).name('照り返しの回数').listen();
   fv.add(settings, 'smooth').name('照り返しのざらつきをならす');
   fv.add(settings, 'exposure', 0.1, 8, 0.05).name('露出（明るさ）');
   // 重さ：今の設定で 60 フレーム続けて描き、GPU の処理が終わるまで待って 1 フレームの時間を測る（その間は描画が止まる）
@@ -383,6 +384,7 @@ export function mountRoomUi(
   fperf.add(settings.perf, 'smoothRadius', { '7×7（既定）': 3, '5×5': 2, '3×3': 1 }).name('照り返しをならす範囲');
   fperf.add(settings.perf, 'traceHalf').name('光をたどる計算を 1 フレームおきにする');
   fperf.add(settings.perf, 'spp', 1, 8, 1).name('1 フレームに追う光線の本数（1 画素あたり、既定 2）');
+  fperf.add(settings, 'bounces', 0, 6, 1).name('照り返しの回数（既定 3。1〜2 でもほぼ同じ見た目）').listen();
   fperf.close();
 
   // 解像度：小さく計算して引き伸ばす。展示の投影で細かいざらつき（グレイン）がどこまで見えるかを確かめる
