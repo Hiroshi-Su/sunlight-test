@@ -5,7 +5,7 @@ import type { Clock } from '../clock.ts';
 import { mountCalibMode } from './calib-mode.ts';
 import { WINDOW_SIDES, WINDOW_SIDE_LABEL, type WindowSide } from '../config.ts';
 import { PALETTE_KELVIN_ALTS, PALETTE_SKY_ALTS, type PaletteTable, defaultPalette, kelvinAt, setPalette } from '../palette.ts';
-import { EXHIBIT_SIZE, type GuideOptions, LIGHT_KINDS, type LightKind, MAX_BLOBS, MAX_SHIM_COLORS, MAX_SHIM_PALETTE, MAX_SPOTS, MAX_PRISMS, type MoonSettings, type OrganicLook, PRISM_MOTIONS, PRISM_PATTERNS, type Openings, WINDOW_TOPS, type WindowTop, GLASS_FACES, GLASS_KINDS, GLASS_SURFACES, type GlassFace, TEX_SURFACES, type TexSurface, type SurfaceTexture, type GlassKind, type GlassSpec, type GlassSurface, LIGHTHOUSE_DEFAULTS, LIGHTHOUSE_MODES, SKY_LOOKS, type SkyLook, SEA_HORIZONS, type SeaHorizon, POOL_SEAS, type PoolSea, type LighthouseMode, lighthouseWeight, MOON_MODES, MOON_PHASE_PREVIEWS, SEA_WAVES, type SeaWaves, SHIMMER_ANCHORS, SHIMMER_COLOR_MODES, type PrismMotion, type PrismPattern, type PrismSettings, SPOT_MODES, TRAIL_COLOR_MODES, type TrailSettings, type RoomGeometry, type RoomOutput, type RoomRenderSettings, type RoomResolution, type SpotLight, type SpotMode, type SpotSettings, type ViewCalibration, type WindowGeometry, defaultCalibration } from '../room/scene.ts';
+import { EXHIBIT_SIZE, type GuideOptions, LIGHT_KINDS, type LightKind, MAX_BLOBS, MAX_SHIM_COLORS, MAX_SHIM_PALETTE, MAX_SPOTS, MAX_PRISMS, type MoonSettings, type OrganicLook, PRISM_MOTIONS, PRISM_PATTERNS, type Openings, WINDOW_TOPS, type WindowTop, GLASS_FACES, GLASS_KINDS, GLASS_SURFACES, type GlassFace, TEX_SURFACES, type TexSurface, type SurfaceTexture, type GlassKind, type GlassSpec, type GlassSurface, LIGHTHOUSE_DEFAULTS, LIGHTHOUSE_MODES, SKY_LOOKS, type SkyLook, SEA_HORIZONS, type SeaHorizon, POOL_SEAS, type PoolSea, PERF_DEFAULTS, type PerfSettings, type LighthouseMode, lighthouseWeight, MOON_MODES, MOON_PHASE_PREVIEWS, SEA_WAVES, type SeaWaves, SHIMMER_ANCHORS, SHIMMER_COLOR_MODES, type PrismMotion, type PrismPattern, type PrismSettings, SPOT_MODES, TRAIL_COLOR_MODES, type TrailSettings, type RoomGeometry, type RoomOutput, type RoomRenderSettings, type RoomResolution, type SpotLight, type SpotMode, type SpotSettings, type ViewCalibration, type WindowGeometry, defaultCalibration } from '../room/scene.ts';
 import { SCENES, findScene } from '../scenes/index.ts';
 import type { SceneDef } from '../scenes/types.ts';
 import type { SolarState } from '../solar.ts';
@@ -152,6 +152,19 @@ export interface VenuePreset {
  * @param configSide config/site.json の窓の位置（初期値）
  * @param saved 保存した room の設定（config/room.json の中身。なければ null）。コードの既定に重ね、URL の指定がさらに優先する
  */
+/** ?perf= の値（カンマ区切り：default / sub1 / sunN / smoothN / half）を、軽くする方法の切り替えに当てる。default は保存した切り替えを捨てて既定に戻す（比べる用） */
+function perfFromUrl(v: string | null, base: PerfSettings): PerfSettings {
+  let out = { ...base };
+  for (const t of (v ?? '').split(',')) {
+    if (t === 'default') out = { ...PERF_DEFAULTS };
+    else if (t === 'sub1') out.subsample4 = false;
+    else if (t === 'half') out.traceHalf = true;
+    else if (/^sun\d+$/.test(t)) out.sunPoints = Math.min(12, Math.max(1, Number(t.slice(3))));
+    else if (/^smooth[123]$/.test(t)) out.smoothRadius = Number(t.slice(6));
+  }
+  return out;
+}
+
 export function mountRoomUi(
   clock: Clock,
   configRoom: RoomGeometry,
@@ -255,6 +268,9 @@ export function mountRoomUi(
     // ?poolSea=glass / open で、床の水盤をガラスの壁の所で窓の外の海とつないで開く（?poolSeaReach=3 で海の波が入る距離）
     poolSea: oneOf(q.get('poolSea') ?? r0.poolSea, POOL_SEAS, 'off'),
     poolSeaReachM: num('poolSeaReach', r0.poolSeaReachM),
+    // ?spp=1 で、1 フレームに 1 画素あたり追う光線の本数を変えて開く（パネルの「軽くする方法を試す」でも変えられる）
+    // ?perf=sub1,sun4,smooth2,half で、軽くする方法を最初から切り替えて開く（1 点・太陽の点 4・ならし 5×5・1 フレームおき）
+    perf: ((p) => ({ ...p, spp: q.has('spp') ? Math.min(8, Math.max(1, Math.round(num('spp', p.spp)))) : p.spp }))(perfFromUrl(q.get('perf'), r0.perf)),
     window: { ...winBase },
     openings,
     location: locState.id,
@@ -358,6 +374,14 @@ export function mountRoomUi(
     bench.text = ms === null ? '' : `1 フレーム ${ms.toFixed(1)} ms（最大 ${Math.floor(1000 / ms)} fps 相当）`;
   } }, 'run').name('重さを測る（60 フレーム）');
   fv.add(bench, 'text').name('結果').disable().listen();
+  // 軽くする方法を試す（docs/hardware.md 5.7 節）。既定は今までの計算。切り替えて「重さを測る」で比べる
+  const fperf = fv.addFolder('軽くする方法を試す');
+  fperf.add(settings.perf, 'subsample4').name('1 画素を 4 点に分けて計算する（オフで 1 点）');
+  fperf.add(settings.perf, 'sunPoints', 1, 12, 1).name('直射日光を確かめる太陽の点の数（既定 12）');
+  fperf.add(settings.perf, 'smoothRadius', { '7×7（既定）': 3, '5×5': 2, '3×3': 1 }).name('照り返しをならす範囲');
+  fperf.add(settings.perf, 'traceHalf').name('光をたどる計算を 1 フレームおきにする');
+  fperf.add(settings.perf, 'spp', 1, 8, 1).name('1 フレームに追う光線の本数（1 画素あたり、既定 2）');
+  fperf.close();
 
   // 解像度：小さく計算して引き伸ばす。展示の投影で細かいざらつき（グレイン）がどこまで見えるかを確かめる
   // URL の ?scale=0.5（計算の倍率）・?out=exhibit / actual（出し方）・?upscale=pixel（画素のまま引き伸ばす）でも最初の値を指定できる
@@ -1099,6 +1123,7 @@ export function codeDefaults(room: RoomGeometry, configWindow: WindowGeometry) {
       screenArea: false, screen: false, screenGain: 0.6,
       prism: { ...PRISM_DEFAULTS, streaks: { ...PRISM_DEFAULTS.streaks }, hung: { ...PRISM_DEFAULTS.hung }, panel: { ...PRISM_DEFAULTS.panel }, beams: { ...PRISM_DEFAULTS.beams }, waves: { ...PRISM_DEFAULTS.waves }, organic: { ...PRISM_DEFAULTS.organic }, blobs: { ...PRISM_DEFAULTS.blobs }, shimmer: { ...PRISM_DEFAULTS.shimmer, palette: [...PRISM_DEFAULTS.shimmer.palette] } },
       trails: { ...TRAIL_DEFAULTS },
+      perf: { ...PERF_DEFAULTS },
       moon: { ...MOON_DEFAULTS, skyCurve: { ...MOON_DEFAULTS.skyCurve }, lightCurve: { ...MOON_DEFAULTS.lightCurve } },
       lighthouse: { ...LIGHTHOUSE_DEFAULTS },
     },

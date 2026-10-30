@@ -1308,13 +1308,15 @@ fn sunInterior(o: vec3f) -> f32 {
 fn sunDirect(p: vec3f, n: vec3f) -> vec3f {
   if (u.uSunE.x + u.uSunE.y + u.uSunE.z <= 0.0) { return vec3f(0.0); }
   var sum = 0.0;
+  let np = i32(u.uSunPts); // 太陽の円盤の点の数（既定 12。軽くするときは減らす）
   for (var k = 0; k < 12; k++) {
-    let r = vec2f((f32(k) + 0.5) / 12.0, fract(f32(k) * 0.618034));
+    if (k >= np) { break; }
+    let r = vec2f((f32(k) + 0.5) / f32(np), fract(f32(k) * 0.618034));
     let l = sunDirAt(r);
     let c = dot(n, l);
     if (c > 0.0 && seesOutside(p, l)) { sum += c; }
   }
-  if (sum > 0.0) { return u.uSunE * (sum / 12.0 * cloudTrans(p)); }
+  if (sum > 0.0) { return u.uSunE * (sum / f32(np) * cloudTrans(p)); }
   return vec3f(0.0);
 }
 // 画面に出すときの直射日光（プリズムを含む。C のときは、板で曲がった日差しに置き換える）
@@ -1334,8 +1336,10 @@ fn smoothedIndirect(px: vec2f, face: i32, pc: vec3f) -> vec3f {
   let screenC = onScreen(face, pc);
   var sum = vec3f(0.0);
   var wsum = 0.0;
+  let rad = i32(u.uSmoothR); // ならす範囲の半径（既定 3 = 7×7）
   for (var j = -3; j <= 3; j++) {
     for (var i = -3; i <= 3; i++) {
+      if (abs(i) > rad || abs(j) > rad) { continue; }
       let q = px + vec2f(f32(i), f32(j)) * u.uStride;
       if (q.x < 0.0 || q.y < 0.0 || q.x > u.uRes.x || q.y > u.uRes.y) { continue; }
       let h = primaryHit(q);
@@ -1515,8 +1519,10 @@ fn subSample(q: vec2f, ind: vec3f) -> vec3f {
   // （Windows の GPU では、うねりのあるガラスの所で、まれに壊れた値が出て黒い点や線になった）
   var col = vec3f(0.0);
   var good = 0.0;
+  let ns = i32(u.uSubN); // 4（既定）か 1（軽くするとき。画素の真ん中の 1 点）
   for (var k = 0; k < 4; k++) {
-    let o = vec2f(select(-0.25, 0.25, k == 1 || k == 3), select(-0.25, 0.25, k >= 2));
+    if (k >= ns) { break; }
+    let o = select(vec2f(select(-0.25, 0.25, k == 1 || k == 3), select(-0.25, 0.25, k >= 2)), vec2f(0.0), ns == 1);
     let c = subSample(px + o, ind);
     if (!isBad(c)) { col += c; good += 1.0; }
   }
@@ -1733,14 +1739,16 @@ export class GpuRoomRenderer implements RoomRenderer {
     }
     this.renderCaustics(frame.caustics, encoder);
 
-    // 段階 1：空の光と照り返し
-    const next = 1 - this.current;
-    const trace = encoder.beginRenderPass({ colorAttachments: [{ view: this.accum[next]!.createView(), loadOp: 'clear', storeOp: 'store' }] });
-    trace.setPipeline(this.tracePipeline);
-    trace.setBindGroup(0, this.traceBinds[this.current]!);
-    trace.draw(3);
-    trace.end();
-    this.current = next;
+    // 段階 1：空の光と照り返し（1 フレームおきにするときは、間のフレームは前の結果をそのまま使う）
+    if (frame.trace) {
+      const next = 1 - this.current;
+      const trace = encoder.beginRenderPass({ colorAttachments: [{ view: this.accum[next]!.createView(), loadOp: 'clear', storeOp: 'store' }] });
+      trace.setPipeline(this.tracePipeline);
+      trace.setBindGroup(0, this.traceBinds[this.current]!);
+      trace.draw(3);
+      trace.end();
+      this.current = next;
+    }
 
     // 段階 2：画面に出す
     const display = encoder.beginRenderPass({ colorAttachments: [{ view: this.ctx.getCurrentTexture().createView(), loadOp: 'clear', storeOp: 'store' }] });

@@ -77,6 +77,8 @@ export interface CausticPass {
 
 export interface RoomFrame {
   caustics: CausticPass[];
+  /** このフレームで光をたどる段階を計算するか（1 フレームおきにするとき、間のフレームは false） */
+  trace: boolean;
   /** スクリーンに映す映像（映さないときは null） */
   screen: RoomScreenImage | null;
 }
@@ -132,7 +134,7 @@ export interface TextureSet {
 export class RoomCore {
   readonly windowSide: WindowSide;
   readonly room: RoomGeometry;
-  readonly spp = samplesPerPixel();
+  spp = samplesPerPixel();
   /** プリズムが回る角度の進み（ラジアン） */
   private prismPhase = 0;
   /** 風で揺れるときの揺れの進み（ラジアン。風が強いほど速く進む） */
@@ -158,6 +160,9 @@ export class RoomCore {
     uExposure: { value: 1 },
     uStride: { value: 2 },
     uSigmaP: { value: 0.2 },
+    uSmoothR: { value: 3 },  // ならす範囲の半径（画素の数）
+    uSubN: { value: 4 },     // 1 画素を何点に分けて計算するか（4 か 1）
+    uSunPts: { value: 12 },  // 直射日光を確かめる太陽の円盤の点の数
     uViewProj: { value: new THREE.Matrix4() },
   };
   /** 光の揺らぎを使うか（段階 1・2） */
@@ -766,12 +771,16 @@ export class RoomCore {
     this.lighthouseOn = lhW;
     this.lighthouseFacing = lhW > 0 ? lighthouseProfile(toRoom, this.lhAngle, lhBeams, lh.beamDeg) : 0;
 
+    // 1 画素あたりの光線の本数（変わったら下で重ね直す）
+    this.spp = Math.min(8, Math.max(1, Math.round(settings.perf.spp)));
+    this.trace.uSpp.value = this.spp;
+
     // 重ね合わせのやり直し：視点や設定（窓の大きさを含む）が変わったら最初から
     const key = [
       sp.mode, sp.kind, JSON.stringify(sp.ambient), sp.count, JSON.stringify(sp.lights.slice(0, sp.count)),
       lh.mode, lh.distanceM, lh.offsetDeg, lh.heightM, lh.beams, lh.beamDeg, lh.strength, lh.color,
       moon.on, moon.strength, moon.skyStrength, moon.color, moon.azimuthDeg, moon.altitudeDeg, moon.mode, real ? Math.round(phaseK * 100) : 0, preview, JSON.stringify(moon.skyCurve), JSON.stringify(moon.lightCurve), moon.seaRoadAltDeg, moon.seaRoadOffsetDeg, JSON.stringify(settings.glass), JSON.stringify(settings.glassSpecs), JSON.stringify(settings.openings), JSON.stringify(settings.textures), this.textures.key,
-      settings.bounces, settings.seaView, settings.seaRipples, settings.pool, settings.poolReflect, settings.waveAmp, settings.poolDepthM, settings.seaLevelM, settings.poolSea, settings.poolSeaReachM, this.winRect.toArray(),
+      settings.bounces, settings.seaView, settings.seaRipples, settings.pool, settings.poolReflect, settings.waveAmp, settings.poolDepthM, settings.seaLevelM, settings.perf.spp, settings.poolSea, settings.poolSeaReachM, this.winRect.toArray(),
       cloudsOn, settings.cloudShadow, settings.cloudAmount, settings.cloudOpacity, settings.cloudSizeM, settings.cloudHeightM,
       settings.screenArea, !!screen, screen?.def.id, settings.screenGain,
     ].join();
@@ -889,19 +898,27 @@ export class RoomCore {
     s.uCamPos.value.copy(camera.position);
 
     // 段階 1：空の光と照り返し。前のフレームまでの平均と 1 / (枚数 + 1) の重みで重ねる
+    // 1 フレームおきにするときは、間のフレームは計算せず、前の結果をそのまま使う（重ね直しの最初のフレームは必ず計算する）
+    const perf = settings.perf;
+    const trace = !perf.traceHalf || this.samples === 0 || this.frameNo % 2 === 0;
     this.trace.uBounces.value = Math.round(settings.bounces);
     this.trace.uFrame.value = this.frameNo++ % 1_000_000;
-    this.trace.uBlend.value = 1 / (this.samples + 1);
-    this.samples = Math.min(this.samples + 1, 100_000);
+    if (trace) {
+      this.trace.uBlend.value = 1 / (this.samples + 1);
+      this.samples = Math.min(this.samples + 1, 100_000);
+    }
 
     // 段階 2：画面に出す。ならす範囲は、重ねた枚数が増えるほど狭くする
     const k = Math.min(1, Math.sqrt(32 / (this.samples * this.spp)));
     this.display.uExposure.value = settings.exposure;
     this.display.uStride.value = settings.smooth ? Math.max(1, 3 * k) : 0;
     this.display.uSigmaP.value = 0.05 + 0.25 * k;
+    this.display.uSmoothR.value = Math.min(3, Math.max(1, Math.round(perf.smoothRadius)));
+    this.display.uSubN.value = perf.subsample4 ? 4 : 1;
+    this.display.uSunPts.value = Math.min(12, Math.max(1, Math.round(perf.sunPoints)));
     this.display.uViewProj.value.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
 
-    return { caustics: this.causticPasses(sunDir, sunOn, settings), screen };
+    return { caustics: this.causticPasses(sunDir, sunOn, settings), screen, trace };
   }
 
   /** 面に貼る画像：使う画像を読み込み（読み終えるまでは貼らない）、面のまとまりごとに画像の束の何枚目かを決める */

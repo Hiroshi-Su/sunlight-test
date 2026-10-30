@@ -1004,6 +1004,9 @@ uniform sampler2D uAccum;
 uniform float uExposure;
 uniform float uStride;      // ならす範囲（画素の間隔）。0 ならならさない
 uniform float uSigmaP;      // ならす範囲（部屋の中の距離、m）
+uniform float uSmoothR;     // ならす範囲の半径（画素の数。既定 3 = 7×7）
+uniform float uSubN;        // 1 画素を何点に分けて計算するか（4 か 1）
+uniform float uSunPts;      // 直射日光を確かめる太陽の円盤の点の数（既定 12）
 uniform mat4 uViewProj;
 in vec2 vUv;
 out vec4 fragColor;
@@ -1415,13 +1418,15 @@ float sunInterior(vec3 o) {
 vec3 sunDirect(vec3 p, vec3 n) {
   if (uSunE.x + uSunE.y + uSunE.z <= 0.0) return vec3(0.0);
   float sum = 0.0;
+  int np = int(uSunPts); // 太陽の円盤の点の数（既定 12。軽くするときは減らす）
   for (int k = 0; k < 12; k++) {
-    vec2 u = vec2((float(k) + 0.5) / 12.0, fract(float(k) * 0.618034));
+    if (k >= np) break;
+    vec2 u = vec2((float(k) + 0.5) / float(np), fract(float(k) * 0.618034));
     vec3 l = sunDirAt(u);
     float c = dot(n, l);
     if (c > 0.0 && seesOutside(p, l)) sum += c;
   }
-  return sum > 0.0 ? uSunE * (sum / 12.0 * cloudTrans(p)) : vec3(0.0);
+  return sum > 0.0 ? uSunE * (sum / float(np) * cloudTrans(p)) : vec3(0.0);
 }
 // 画面に出すときの直射日光（プリズムを含む。C のときは、板で曲がった日差しに置き換える）
 vec3 sunLight(vec3 p, vec3 n) {
@@ -1438,8 +1443,10 @@ vec3 smoothedIndirect(vec2 px, int face, vec3 pc) {
   if (uStride <= 0.0) return center;
   vec3 sum = vec3(0.0);
   float wsum = 0.0;
+  int rad = int(uSmoothR); // ならす範囲の半径（既定 3 = 7×7）
   for (int j = -3; j <= 3; j++) {
     for (int i = -3; i <= 3; i++) {
+      if (abs(i) > rad || abs(j) > rad) continue;
       vec2 q = px + vec2(float(i), float(j)) * uStride;
       if (q.x < 0.0 || q.y < 0.0 || q.x > uRes.x || q.y > uRes.y) continue;
       int f; vec3 p, d;
@@ -1617,8 +1624,10 @@ void main() {
   // （Windows の GPU では、うねりのあるガラスの所で、まれに壊れた値が出て黒い点や線になった。WebGPU 版と同じ）
   vec3 col = vec3(0.0);
   float good = 0.0;
+  int ns = int(uSubN); // 4（既定）か 1（軽くするとき。画素の真ん中の 1 点）
   for (int k = 0; k < 4; k++) {
-    vec2 o = vec2(k == 1 || k == 3 ? 0.25 : -0.25, k >= 2 ? 0.25 : -0.25);
+    if (k >= ns) break;
+    vec2 o = ns == 1 ? vec2(0.0) : vec2(k == 1 || k == 3 ? 0.25 : -0.25, k >= 2 ? 0.25 : -0.25);
     vec3 c = subSample(px + o, ind);
     if (!isBad(c)) { col += c; good += 1.0; }
   }
@@ -1771,12 +1780,14 @@ export class GlRoomRenderer implements RoomRenderer {
       }
     }
 
-    // 段階 1：空の光と照り返し
-    this.traceMat.uniforms['uPrev']!.value = this.readT.texture;
-    this.quad.material = this.traceMat;
-    renderer.setRenderTarget(this.writeT);
-    renderer.render(this.quadScene, this.quadCam);
-    [this.readT, this.writeT] = [this.writeT, this.readT];
+    // 段階 1：空の光と照り返し（1 フレームおきにするときは、間のフレームは前の結果をそのまま使う）
+    if (frame.trace) {
+      this.traceMat.uniforms['uPrev']!.value = this.readT.texture;
+      this.quad.material = this.traceMat;
+      renderer.setRenderTarget(this.writeT);
+      renderer.render(this.quadScene, this.quadCam);
+      [this.readT, this.writeT] = [this.writeT, this.readT];
+    }
 
     // 段階 2：画面に出す
     this.displayMat.uniforms['uAccum']!.value = this.readT.texture;

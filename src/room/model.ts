@@ -135,7 +135,25 @@ export interface RoomRenderSettings {
   moon: MoonSettings;
   /** 灯台の光（夜に、沖の灯台の光の帯が海の上を水平に回る） */
   lighthouse: LighthouseSettings;
+  /** 軽くする方法を試すための切り替え（既定は今までの計算。docs/hardware.md 5.7 節） */
+  perf: PerfSettings;
 }
+
+/** 軽くする方法を試すための切り替え */
+export interface PerfSettings {
+  /** 画面に出す段階で、1 画素を 4 点に分けて計算する（縁のギザギザを抑える）。オフで 1 点（この段階の計算が約 1/4） */
+  subsample4: boolean;
+  /** 直射日光を確かめる、太陽の円盤の点の数（1〜12。少ないほど日だまりの縁のぼけが粗くなる） */
+  sunPoints: number;
+  /** 照り返しをならす範囲の半径（画素。3 = 7×7、2 = 5×5、1 = 3×3）。パネルの「照り返しのざらつきをならす」がオフなら、ならさない */
+  smoothRadius: number;
+  /** 光をたどる段階（照り返し・空の光）を 1 フレームおきに計算する。間のフレームは前の結果をそのまま使う */
+  traceHalf: boolean;
+  /** 1 フレームで 1 画素あたり追う光線の本数（1〜8。URL の ?spp= があればそれを使う） */
+  spp: number;
+}
+
+export const PERF_DEFAULTS: PerfSettings = { subsample4: true, sunPoints: 12, smoothRadius: 3, traceHalf: false, spp: 2 };
 
 export const SEA_HORIZONS = ['flat', 'real'] as const;
 export type SeaHorizon = (typeof SEA_HORIZONS)[number];
